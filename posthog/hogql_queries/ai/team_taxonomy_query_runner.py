@@ -11,6 +11,7 @@ from posthog.hogql.parser import parse_select
 from posthog.hogql.printer import to_printed_hogql
 
 from posthog.clickhouse.query_tagging import Product, tags_context
+from posthog.hogql_queries.ai.scan_period import get_scan_period_days
 from posthog.hogql_queries.ai.utils import TaxonomyCacheMixin
 from posthog.hogql_queries.insights.paginators import HogQLHasMorePaginator
 from posthog.hogql_queries.query_runner import AnalyticsQueryRunner
@@ -68,6 +69,7 @@ class TeamTaxonomyQueryRunner(TaxonomyCacheMixin, AnalyticsQueryRunner[TeamTaxon
         )
 
     def to_query(self) -> ast.SelectQuery | ast.SelectSetQuery:
+        scan_days = get_scan_period_days(self.team)
         query = parse_select(
             """
                 SELECT
@@ -75,13 +77,14 @@ class TeamTaxonomyQueryRunner(TaxonomyCacheMixin, AnalyticsQueryRunner[TeamTaxon
                     count() as count
                 FROM events
                 WHERE
-                    timestamp >= now () - INTERVAL 30 DAY
+                    timestamp >= now () - INTERVAL {scan_days} DAY
                 GROUP BY
                     event
                 ORDER BY
                     count DESC,
                     event ASC
-            """
+            """,
+            placeholders={"scan_days": ast.Constant(value=scan_days)},
         )
 
         if IGNORED_EVENT_NAMES:

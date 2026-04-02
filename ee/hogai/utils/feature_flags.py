@@ -94,3 +94,17 @@ def has_sandbox_mode_feature_flag(team: Team, user: User) -> bool:
         group_properties={"organization": {"id": str(team.organization_id)}},
         send_feature_flag_events=False,
     )
+
+
+def is_dynamic_scan_period_enabled(team: Team) -> bool:
+    """
+    Check if dynamic scan period for AI taxonomy is enabled for a team's organization.
+    When disabled, the default 30-day scan period is used.
+    """
+    return posthoganalytics.feature_enabled(
+        "phai-dynamic-taxonomy-scan-period",
+        str(team.organization_id),
+        groups={"organization": str(team.organization_id)},
+        group_properties={"organization": {"id": str(team.organization_id)}},
+        send_feature_flag_events=False,
+    )

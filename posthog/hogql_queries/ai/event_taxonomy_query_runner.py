@@ -15,6 +15,7 @@ from posthog.hogql.property import action_to_expr
 from posthog.hogql.query import execute_hogql_query
 
 from posthog.clickhouse.query_tagging import Product, tags_context
+from posthog.hogql_queries.ai.scan_period import get_scan_period_days
 from posthog.hogql_queries.ai.utils import TaxonomyCacheMixin
 from posthog.hogql_queries.query_runner import AnalyticsQueryRunner
 from posthog.models import Action
@@ -22,8 +23,8 @@ from posthog.models import Action
 
 class EventTaxonomyQueryRunner(TaxonomyCacheMixin, AnalyticsQueryRunner[EventTaxonomyQueryResponse]):
     """
-    Retrieves the event or action taxonomy for the last 30 days: properties and N-most
-    frequent property values for a property.
+    Retrieves the event or action taxonomy: properties and N-most frequent property values
+    for a property. The scan period is dynamically determined by the org's event volume tier.
     """
 
     query: EventTaxonomyQuery
@@ -151,7 +152,11 @@ class EventTaxonomyQueryRunner(TaxonomyCacheMixin, AnalyticsQueryRunner[EventTax
         )
 
     def _get_subquery_filter(self) -> ast.Expr:
-        date_filter = parse_expr("timestamp >= now() - INTERVAL 30 DAY")
+        scan_days = get_scan_period_days(self.team)
+        date_filter = parse_expr(
+            "timestamp >= now() - INTERVAL {scan_days} DAY",
+            placeholders={"scan_days": ast.Constant(value=scan_days)},
+        )
         filter_expr: list[ast.Expr] = [date_filter]
         if self.query.event:
             filter_expr.append(

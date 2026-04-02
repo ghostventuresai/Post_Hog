@@ -37,10 +37,13 @@ from posthog.schema import (
 )
 
 from posthog.event_usage import EventSource
+from posthog.hogql_queries.ai.scan_period import should_use_postgres_for_events
 from posthog.hogql_queries.ai.team_taxonomy_query_runner import TeamTaxonomyQueryRunner
 from posthog.hogql_queries.query_runner import ExecutionMode
 from posthog.models import Team
-from posthog.taxonomy.taxonomy import CORE_FILTER_DEFINITIONS_BY_GROUP
+from posthog.taxonomy.taxonomy import CORE_FILTER_DEFINITIONS_BY_GROUP, IGNORED_EVENT_NAMES
+
+from products.event_definitions.backend.models.event_definition import EventDefinition
 
 from ee.hogai.utils.anthropic import SUPPORTED_ANTHROPIC_BLOCKS
 from ee.hogai.utils.types.base import (
@@ -155,13 +158,46 @@ def convert_tool_messages_to_dict(messages: Sequence[AssistantMessageUnion]) -> 
     return {message.tool_call_id: message for message in messages if isinstance(message, AssistantToolCallMessage)}
 
 
-def _process_events_data(
-    events_in_context: list[MaxEventContext],
+def _fetch_events_from_postgres(
     team: Team,
     limit: int | None = None,
     offset: int | None = None,
-) -> tuple[list[dict], dict[str, str], bool]:
-    """Common logic for processing events and building event data."""
+) -> tuple[list[str], bool]:
+    """
+    Fetch event names from Postgres EventDefinition for low-volume orgs.
+    Events are ordered by last_seen_at (most recently seen first) as a proxy for popularity.
+    """
+    effective_limit = limit or 500
+    effective_offset = offset or 0
+
+    qs = (
+        EventDefinition.objects.filter(team=team)
+        .exclude(name__in=IGNORED_EVENT_NAMES)
+        .order_by("-last_seen_at")
+        .values_list("name", flat=True)
+    )
+
+    # Fetch one extra to determine has_more
+    page = list(qs[effective_offset : effective_offset + effective_limit + 1])
+    has_more = len(page) > effective_limit
+    event_names = page[:effective_limit]
+
+    events: list[str] = ["All events"]
+    for name in event_names:
+        if event_core_definition := CORE_FILTER_DEFINITIONS_BY_GROUP["events"].get(name):
+            if event_core_definition.get("system") or event_core_definition.get("ignored_in_assistant"):
+                continue
+        events.append(name)
+
+    return events, has_more
+
+
+def _fetch_events_from_clickhouse(
+    team: Team,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> tuple[list[str], bool]:
+    """Fetch events from ClickHouse using TeamTaxonomyQueryRunner."""
     query = TeamTaxonomyQuery(limit=limit, offset=offset)
     response = TeamTaxonomyQueryRunner(query, team).run(
         ExecutionMode.RECENT_CACHE_CALCULATE_ASYNC_IF_STALE_AND_BLOCKING_ON_MISS,
@@ -173,17 +209,29 @@ def _process_events_data(
 
     has_more = bool(response.hasMore)
 
-    events: list[str] = [
-        # Add "All events" to the mapping
-        "All events",
-    ]
+    events: list[str] = ["All events"]
     for item in response.results:
         if len(response.results) > 25 and item.count <= 3:
             continue
         if event_core_definition := CORE_FILTER_DEFINITIONS_BY_GROUP["events"].get(item.event):
             if event_core_definition.get("system") or event_core_definition.get("ignored_in_assistant"):
-                continue  # Skip system or ignored events (safety net, already filtered in SQL)
+                continue
         events.append(item.event)
+
+    return events, has_more
+
+
+def _process_events_data(
+    events_in_context: list[MaxEventContext],
+    team: Team,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> tuple[list[dict], dict[str, str], bool]:
+    """Common logic for processing events and building event data."""
+    if should_use_postgres_for_events(team):
+        events, has_more = _fetch_events_from_postgres(team, limit=limit, offset=offset)
+    else:
+        events, has_more = _fetch_events_from_clickhouse(team, limit=limit, offset=offset)
 
     event_to_description: dict[str, str] = {}
     for event in events_in_context:
