@@ -19,6 +19,7 @@ import updateExperiment from './experiments/update'
 import { GENERATED_TOOL_MAP } from './generated'
 // Insights
 import createInsight from './insights/create'
+import createInsightFromDict from './insights/createFromDict'
 import deleteInsight from './insights/delete'
 import getInsight from './insights/get'
 import getAllInsights from './insights/getAll'
@@ -101,6 +102,7 @@ export const TOOL_MAP: Record<string, () => ToolBase<ZodObjectAny>> = {
     'insights-get-all': getAllInsights,
     'insight-get': getInsight,
     'insight-create-from-query': createInsight,
+    'insights-create': createInsightFromDict,
     'insight-update': updateInsight,
     'insight-delete': deleteInsight,
     'insight-query': queryInsight,

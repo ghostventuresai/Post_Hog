@@ -154,6 +154,21 @@
         "summary": "Save a query as an insight.",
         "title": "Create insight from query",
         "required_scopes": ["insight:write"],
+        "new_mcp": false,
+        "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+        }
+    },
+    "insights-create": {
+        "description": "Create an insight from a query object. The query field accepts any valid PostHog query structure as a JSON dict. You should check the query runs with 'query-run' before creating an insight, unless you know the query is correct.",
+        "category": "Insights & analytics",
+        "feature": "insights",
+        "summary": "Create an insight from a query dict.",
+        "title": "Create insight",
+        "required_scopes": ["insight:write"],
         "new_mcp": true,
         "annotations": {
             "destructiveHint": false,

@@ -1,7 +1,12 @@
 import { z } from 'zod'
 
 import { ErrorDetailsSchema, ListErrorsSchema, UpdateIssueStatusSchema } from './errors'
-import { CreateInsightInputSchema, ListInsightsSchema, UpdateInsightInputSchema } from './insights'
+import {
+    CreateInsightFromDictInputSchema,
+    CreateInsightInputSchema,
+    ListInsightsSchema,
+    UpdateInsightInputSchema,
+} from './insights'
 import { LogsListAttributeValuesInputSchema, LogsListAttributesInputSchema, LogsQueryInputSchema } from './logs'
 import { InsightQuerySchema, PropertyFilter } from './query'
 
@@ -244,6 +249,10 @@ export const ExperimentCreateSchema = z.object({
 
 export const InsightCreateSchema = z.object({
     data: CreateInsightInputSchema,
+})
+
+export const InsightCreateFromDictSchema = z.object({
+    data: CreateInsightFromDictInputSchema,
 })
 
 export const InsightDeleteSchema = z.object({

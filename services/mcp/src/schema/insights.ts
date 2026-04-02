@@ -57,6 +57,18 @@ export const CreateInsightInputSchema = z.object({
     tags: z.array(z.string()).optional(),
 })
 
+export const CreateInsightFromDictInputSchema = z.object({
+    name: z.string(),
+    query: z
+        .record(z.string(), z.any())
+        .describe('The query object for the insight. Accepts any valid PostHog query structure as a JSON object.'),
+    description: z.string().optional(),
+    favorited: z.boolean(),
+    tags: z.array(z.string()).optional(),
+})
+
+export type CreateInsightFromDictInput = z.infer<typeof CreateInsightFromDictInputSchema>
+
 export const UpdateInsightInputSchema = z.object({
     name: z.string().optional(),
     description: z.string().optional(),

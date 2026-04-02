@@ -21,7 +21,13 @@ import {
     ExperimentExposureQuerySchema,
     ExperimentUpdateApiPayloadSchema,
 } from '@/schema/experiments'
-import { type CreateInsightInput, CreateInsightInputSchema, type ListInsightsData } from '@/schema/insights'
+import {
+    type CreateInsightFromDictInput,
+    CreateInsightFromDictInputSchema,
+    type CreateInsightInput,
+    CreateInsightInputSchema,
+    type ListInsightsData,
+} from '@/schema/insights'
 import type { ExperimentCreateSchema } from '@/schema/tool-inputs'
 import { isShortId } from '@/tools/insights/utils'
 
@@ -813,6 +819,19 @@ export class ApiClient {
 
             create: async ({ data }: { data: CreateInsightInput }): Promise<Result<Schemas.Insight>> => {
                 const validatedInput = CreateInsightInputSchema.parse(data)
+
+                return this.fetchJson<Schemas.Insight>(`${this.baseUrl}/api/projects/${projectId}/insights/`, {
+                    method: 'POST',
+                    body: JSON.stringify({ ...validatedInput, saved: true }),
+                })
+            },
+
+            createFromDict: async ({
+                data,
+            }: {
+                data: CreateInsightFromDictInput
+            }): Promise<Result<Schemas.Insight>> => {
+                const validatedInput = CreateInsightFromDictInputSchema.parse(data)
 
                 return this.fetchJson<Schemas.Insight>(`${this.baseUrl}/api/projects/${projectId}/insights/`, {
                     method: 'POST',
