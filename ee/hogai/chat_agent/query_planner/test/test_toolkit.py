@@ -305,6 +305,55 @@ class TestTaxonomyAgentToolkit(ClickhouseTestMixin, APIBaseTest):
         self.assertIn("- test_prop – This is a description with multiple lines", output)
         self.assertNotIn("description\nwith", output)
 
+    def test_retrieve_event_or_action_property_values_returns_warning_for_large_ai_properties(self):
+        toolkit = DummyToolkit(self.team)
+
+        result = toolkit.retrieve_event_or_action_property_values("$ai_generation", "$ai_input")
+        self.assertIn("too large to display", result)
+        self.assertIn("$ai_input", result)
+        self.assertIn("SQL query", result)
+
+        result = toolkit.retrieve_event_or_action_property_values("$ai_generation", "$ai_output_choices")
+        self.assertIn("too large to display", result)
+
+        result = toolkit.retrieve_event_or_action_property_values("$ai_span", "$ai_input_state")
+        self.assertIn("too large to display", result)
+
+        result = toolkit.retrieve_event_or_action_property_values("$ai_span", "$ai_output_state")
+        self.assertIn("too large to display", result)
+
+        result = toolkit.retrieve_event_or_action_property_values("$ai_embedding", "$ai_input")
+        self.assertIn("too large to display", result)
+
+    def test_retrieve_event_or_action_property_values_no_warning_for_non_excluded_ai_properties(self):
+        toolkit = DummyToolkit(self.team)
+
+        # $ai_model is not excluded for $ai_generation
+        result = toolkit.retrieve_event_or_action_property_values("$ai_generation", "$ai_model")
+        self.assertNotIn("too large to display", result)
+
+        # $ai_input is not excluded for $ai_span
+        result = toolkit.retrieve_event_or_action_property_values("$ai_span", "$ai_input")
+        self.assertNotIn("too large to display", result)
+
+        # $ai_input_state is not excluded for $ai_generation
+        result = toolkit.retrieve_event_or_action_property_values("$ai_generation", "$ai_input_state")
+        self.assertNotIn("too large to display", result)
+
+    def test_retrieve_event_or_action_property_values_no_warning_for_non_ai_events(self):
+        toolkit = DummyToolkit(self.team)
+
+        # Non-AI events should not trigger the warning even with matching property names
+        result = toolkit.retrieve_event_or_action_property_values("custom_event", "$ai_input")
+        self.assertNotIn("too large to display", result)
+
+    def test_retrieve_event_or_action_property_values_no_warning_for_action_ids(self):
+        toolkit = DummyToolkit(self.team)
+
+        # Action IDs (int) should not trigger the warning
+        result = toolkit.retrieve_event_or_action_property_values(self.action.id, "$ai_input")
+        self.assertNotIn("too large to display", result)
+
 
 class TestFinalAnswerTool(BaseTest):
     def test_normalize_plan(self):

@@ -630,3 +630,141 @@ class TestEventTaxonomyQueryRunner(ClickhouseTestMixin, APIBaseTest):
         ).calculate()
 
         self.assertEqual(len(response.results), 0)
+
+    def test_ai_generation_excludes_large_properties_from_scan(self):
+        _create_person(
+            distinct_ids=["person1"],
+            properties={"email": "person1@example.com"},
+            team=self.team,
+        )
+        _create_event(
+            event="$ai_generation",
+            distinct_id="person1",
+            properties={
+                "$ai_input": '{"role": "user", "content": "very long prompt..."}',
+                "$ai_output_choices": '[{"message": {"content": "very long response..."}}]',
+                "$ai_model": "gpt-4",
+                "$ai_input_tokens": "100",
+            },
+            team=self.team,
+        )
+
+        response = EventTaxonomyQueryRunner(
+            team=self.team, query=EventTaxonomyQuery(event="$ai_generation")
+        ).calculate()
+
+        result_props = {item.property for item in response.results}
+        # Large properties should appear in the listing but with empty sample values
+        self.assertIn("$ai_input", result_props)
+        self.assertIn("$ai_output_choices", result_props)
+        # Regular properties should still have sample values
+        self.assertIn("$ai_model", result_props)
+        self.assertIn("$ai_input_tokens", result_props)
+
+        for item in response.results:
+            if item.property in ("$ai_input", "$ai_output_choices"):
+                self.assertEqual(item.sample_values, [])
+                self.assertEqual(item.sample_count, 0)
+            elif item.property == "$ai_model":
+                self.assertEqual(item.sample_values, ["gpt-4"])
+
+    def test_ai_span_excludes_large_properties_from_scan(self):
+        _create_person(
+            distinct_ids=["person1"],
+            properties={"email": "person1@example.com"},
+            team=self.team,
+        )
+        _create_event(
+            event="$ai_span",
+            distinct_id="person1",
+            properties={
+                "$ai_input_state": '{"context": "very large state"}',
+                "$ai_output_state": '{"result": "very large output"}',
+                "$ai_span_name": "my-span",
+            },
+            team=self.team,
+        )
+
+        response = EventTaxonomyQueryRunner(team=self.team, query=EventTaxonomyQuery(event="$ai_span")).calculate()
+
+        result_props = {item.property for item in response.results}
+        self.assertIn("$ai_input_state", result_props)
+        self.assertIn("$ai_output_state", result_props)
+        self.assertIn("$ai_span_name", result_props)
+
+        for item in response.results:
+            if item.property in ("$ai_input_state", "$ai_output_state"):
+                self.assertEqual(item.sample_values, [])
+                self.assertEqual(item.sample_count, 0)
+            elif item.property == "$ai_span_name":
+                self.assertEqual(item.sample_values, ["my-span"])
+
+    def test_ai_large_properties_excluded_from_specific_property_scan(self):
+        _create_person(
+            distinct_ids=["person1"],
+            properties={"email": "person1@example.com"},
+            team=self.team,
+        )
+        _create_event(
+            event="$ai_generation",
+            distinct_id="person1",
+            properties={
+                "$ai_input": '{"role": "user", "content": "test"}',
+                "$ai_model": "gpt-4",
+            },
+            team=self.team,
+        )
+
+        # When explicitly requesting an excluded property alongside a normal one
+        response = EventTaxonomyQueryRunner(
+            team=self.team,
+            query=EventTaxonomyQuery(event="$ai_generation", properties=["$ai_input", "$ai_model"]),
+        ).calculate()
+
+        result_props = {item.property for item in response.results}
+        self.assertIn("$ai_model", result_props)
+        self.assertIn("$ai_input", result_props)
+
+        for item in response.results:
+            if item.property == "$ai_input":
+                self.assertEqual(item.sample_values, [])
+                self.assertEqual(item.sample_count, 0)
+            elif item.property == "$ai_model":
+                self.assertEqual(item.sample_values, ["gpt-4"])
+
+    def test_ai_large_properties_all_excluded_returns_empty_scan(self):
+        # When all requested properties are excluded, the runner early-returns without querying
+        response = EventTaxonomyQueryRunner(
+            team=self.team,
+            query=EventTaxonomyQuery(event="$ai_generation", properties=["$ai_input", "$ai_output_choices"]),
+        ).calculate()
+
+        result_props = {item.property for item in response.results}
+        self.assertIn("$ai_input", result_props)
+        self.assertIn("$ai_output_choices", result_props)
+        for item in response.results:
+            self.assertEqual(item.sample_values, [])
+            self.assertEqual(item.sample_count, 0)
+
+    def test_non_ai_events_not_affected_by_exclusion(self):
+        _create_person(
+            distinct_ids=["person1"],
+            properties={"email": "person1@example.com"},
+            team=self.team,
+        )
+        _create_event(
+            event="custom_event",
+            distinct_id="person1",
+            properties={"$ai_input": "some_value"},
+            team=self.team,
+        )
+
+        response = EventTaxonomyQueryRunner(team=self.team, query=EventTaxonomyQuery(event="custom_event")).calculate()
+
+        # $ai_input should be scanned normally for non-AI events
+        result_props = {item.property for item in response.results}
+        self.assertIn("$ai_input", result_props)
+        for item in response.results:
+            if item.property == "$ai_input":
+                self.assertEqual(item.sample_values, ["some_value"])
+                self.assertEqual(item.sample_count, 1)
