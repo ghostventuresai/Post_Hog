@@ -39,7 +39,9 @@ from typing import Any
 from django.utils import timezone
 
 import duckdb
+import psycopg
 import structlog
+import posthoganalytics
 from clickhouse_driver import Client
 from clickhouse_driver.errors import Error as ClickHouseError
 from dagster import (
@@ -69,8 +71,8 @@ from posthog.dags.events_backfill_to_ducklake import (
     MAX_RETRY_ATTEMPTS,
 )
 from posthog.ducklake.common import attach_catalog, escape, get_ducklake_catalog_for_team, get_team_config
-from posthog.ducklake.models import DuckLakeCatalog
-from posthog.ducklake.storage import configure_cross_account_connection
+from posthog.ducklake.models import DuckgresServer, DuckLakeCatalog
+from posthog.ducklake.storage import configure_cross_account_connection, connect_to_duckgres, setup_duckgres_session
 
 logger = structlog.get_logger(__name__)
 
@@ -101,6 +103,66 @@ def _connect_duckdb() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(config={"memory_limit": DUCKDB_MEMORY_LIMIT})
     conn.execute("SET temp_directory = '/tmp/duckdb_temp'")
     return conn
+
+
+def _use_duckgres_for_backfill(team_id: int) -> bool:
+    """Check if this team should use duckgres instead of local DuckDB for backfill."""
+    from posthog.models import Team
+
+    try:
+        team = Team.objects.only("uuid", "organization_id").get(id=team_id)
+    except Team.DoesNotExist:
+        return False
+    return bool(
+        posthoganalytics.feature_enabled(
+            "dagster-duckgres-backfill",
+            str(team.uuid),
+            groups={
+                "organization": str(team.organization_id),
+                "project": str(team.id),
+            },
+            group_properties={
+                "organization": {"id": str(team.organization_id)},
+                "project": {"id": str(team.id)},
+            },
+            only_evaluate_locally=True,
+            send_feature_flag_events=False,
+        )
+    )
+
+
+def _get_duckgres_server_for_team(team_id: int) -> DuckgresServer | None:
+    """Look up DuckgresServer for a team via its organization."""
+    from posthog.models import Team
+
+    try:
+        team = Team.objects.only("organization_id").get(id=team_id)
+        return DuckgresServer.objects.get(organization_id=team.organization_id)
+    except (Team.DoesNotExist, DuckgresServer.DoesNotExist):
+        return None
+
+
+def _get_ducklake_connection(
+    catalog: DuckLakeCatalog,
+) -> tuple[duckdb.DuckDBPyConnection | psycopg.Connection, str]:
+    """Return either a duckgres psycopg or local DuckDB connection.
+
+    Returns (connection, alias) where alias is the catalog name to use in SQL.
+    """
+    if _use_duckgres_for_backfill(catalog.team_id):
+        server = _get_duckgres_server_for_team(catalog.team_id)
+        if server:
+            conn = connect_to_duckgres(server)
+            setup_duckgres_session(conn)
+            return conn, "ducklake"
+
+    # Fallback: local DuckDB (single-tenant or flag off)
+    conn = _connect_duckdb()
+    destination = catalog.to_cross_account_destination()
+    catalog_config = get_team_config(catalog.team_id)
+    configure_cross_account_connection(conn, destinations=[destination])
+    attach_catalog(conn, catalog_config, alias="ducklake")
+    return conn, "ducklake"
 
 
 # Columns to export from ClickHouse events table for duckling backfill.
@@ -517,15 +579,8 @@ def ensure_events_table_exists(
     is idempotent and handles race conditions gracefully. Partitioning is also
     idempotent - calling SET PARTITIONED BY multiple times with the same keys succeeds.
     """
-    destination = catalog.to_cross_account_destination()
-    catalog_config = get_team_config(catalog.team_id)
-    alias = "ducklake"
-
-    conn = _connect_duckdb()
+    conn, alias = _get_ducklake_connection(catalog)
     try:
-        configure_cross_account_connection(conn, destinations=[destination])
-        attach_catalog(conn, catalog_config, alias=alias)
-
         if table_exists(conn, alias, "posthog", "events"):
             context.log.info("Events table already exists in duckling catalog")
             # Ensure partitioning is set even on existing tables (idempotent)
@@ -1172,17 +1227,10 @@ def register_file_with_duckling(
         context.log.info(f"[DRY RUN] Would register {s3_path} with DuckLake at {catalog.db_host}")
         return False
 
-    destination = catalog.to_cross_account_destination()
-    alias = "ducklake"
-    catalog_config = get_team_config(catalog.team_id)
-
     last_exception: Exception | None = None
     for attempt in range(MAX_RETRY_ATTEMPTS):
-        conn = _connect_duckdb()
+        conn, alias = _get_ducklake_connection(catalog)
         try:
-            configure_cross_account_connection(conn, destinations=[destination])
-            attach_catalog(conn, catalog_config, alias=alias)
-
             context.log.info(f"Registering file with DuckLake: {s3_path}")
             conn.execute(f"CALL ducklake_add_data_files('{alias}', 'events', '{escape(s3_path)}', schema => 'posthog')")
 
