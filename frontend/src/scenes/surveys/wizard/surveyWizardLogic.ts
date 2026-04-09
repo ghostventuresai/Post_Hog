@@ -405,7 +405,7 @@ export const surveyWizardLogic = kea<surveyWizardLogicType>([
 
         return () => {
             actions.resetWizard()
-            if (props.id === 'new') {
+            if (props.id === 'new' && !router.values.searchParams.fromTemplate) {
                 actions.resetSurvey()
             }
         }
