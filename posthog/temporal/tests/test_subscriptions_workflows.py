@@ -732,7 +732,68 @@ async def test_scheduled_delivery_updates_next_delivery_date(
 @patch("posthog.temporal.subscriptions.activities.send_email_subscription_report")
 @freeze_time("2022-02-02T08:55:00.000Z")
 @pytest.mark.asyncio
-async def test_export_user_error_counts_as_slo_success(
+async def test_failed_delivery_does_not_advance_next_delivery_date(
+    mock_send_email: MagicMock,
+    mock_metric_meter: MagicMock,
+    mock_slo_analytics: MagicMock,
+    mock_exporter: MagicMock,
+    temporal_client: Client,
+    team,
+    user,
+):
+    insight = await sync_to_async(Insight.objects.create)(team=team, short_id="fail1", name="Fail Test")
+    subscription = await sync_to_async(create_subscription)(team=team, insight=insight, created_by=user)
+    original_next_delivery = subscription.next_delivery_date
+
+    mock_exporter.export_asset_direct = MagicMock(side_effect=RuntimeError("Chrome crashed"))
+
+    with pytest.raises(Exception):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=settings.TEMPORAL_TASK_QUEUE,
+                workflows=[ProcessSubscriptionWorkflow],
+                activities=[
+                    create_export_assets,
+                    export_asset_activity,
+                    deliver_subscription,
+                    advance_next_delivery_date,
+                ],
+                interceptors=[SloInterceptor()],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+                activity_executor=ThreadPoolExecutor(max_workers=10),
+                debug_mode=True,
+            ):
+                await env.client.execute_workflow(
+                    ProcessSubscriptionWorkflow.run,
+                    ProcessSubscriptionWorkflowInputs(
+                        subscription_id=subscription.id,
+                        team_id=subscription.team_id,
+                        distinct_id=str(subscription.created_by.distinct_id),
+                        slo=SloConfig(
+                            operation=SloOperation.SUBSCRIPTION_DELIVERY,
+                            area=SloArea.ANALYTIC_PLATFORM,
+                            team_id=subscription.team_id,
+                            resource_id=str(subscription.id),
+                            distinct_id=str(subscription.created_by.distinct_id),
+                        ),
+                    ),
+                    id=str(uuid.uuid4()),
+                    task_queue=settings.TEMPORAL_TASK_QUEUE,
+                )
+
+    # next_delivery_date should NOT be updated when delivery fails
+    await sync_to_async(subscription.refresh_from_db)()
+    assert subscription.next_delivery_date == original_next_delivery
+
+
+@patch("posthog.temporal.exports.activities.exporter")
+@patch("posthog.slo.events.posthoganalytics")
+@patch("ee.tasks.subscriptions.get_metric_meter")
+@patch("posthog.temporal.subscriptions.activities.send_email_subscription_report")
+@freeze_time("2022-02-02T08:55:00.000Z")
+@pytest.mark.asyncio
+async def test_export_user_error_classified_correctly_in_slo_events(
     mock_send_email: MagicMock,
     mock_metric_meter: MagicMock,
     mock_slo_analytics: MagicMock,

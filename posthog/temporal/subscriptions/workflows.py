@@ -275,8 +275,9 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
             # Don't re-raise — let finally run cleanup activities first
 
         finally:
-            # Advance schedule — always for scheduled deliveries, even on failure
-            if inputs.previous_value is None:
+            # Advance schedule — only when the delivery didn't fail completely.
+            # On failure, keep next_delivery_date so the scheduler retries next tick.
+            if inputs.previous_value is None and caught_error is None:
                 await temporalio.workflow.execute_activity(
                     advance_next_delivery_date,
                     inputs.subscription_id,
