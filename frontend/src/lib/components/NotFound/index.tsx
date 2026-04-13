@@ -6,22 +6,24 @@ import posthog from 'posthog-js'
 import { useState } from 'react'
 
 import { IconArrowRight, IconCheckCircle } from '@posthog/icons'
-import { LemonButton, LemonCheckbox, ProfilePicture, SpinnerOverlay, lemonToast } from '@posthog/lemon-ui'
+import { LemonButton, LemonCheckbox, LemonTag, ProfilePicture, SpinnerOverlay, lemonToast } from '@posthog/lemon-ui'
 
 import { getCookie } from 'lib/api'
+import { OrganizationMembershipLevel } from 'lib/constants'
 import { useOnMountEffect } from 'lib/hooks/useOnMountEffect'
 import { LemonMenuOverlay } from 'lib/lemon-ui/LemonMenu/LemonMenu'
 import { Link } from 'lib/lemon-ui/Link'
 import { capitalizeFirstLetter } from 'lib/utils'
 import { cn } from 'lib/utils/css-classes'
 import { getAppContext } from 'lib/utils/getAppContext'
+import { membershipLevelToName } from 'lib/utils/permissioning'
 import { getDefaultEventsSceneQuery } from 'scenes/activity/explore/defaults'
 import { useNotebookNode } from 'scenes/notebooks/Nodes/NotebookNodeContext'
 import { preflightLogic } from 'scenes/PreflightCheck/preflightLogic'
 import { urls } from 'scenes/urls'
 
 import { ImpersonationReasonModal } from '~/layout/navigation/ImpersonationNotice/ImpersonationReasonModal'
-import { ActivityTab, PropertyFilterType, PropertyOperator, UserBasicType } from '~/types'
+import { ActivityTab, OrganizationMemberType, PropertyFilterType, PropertyOperator, UserBasicType } from '~/types'
 
 import { ScrollableShadows } from '../ScrollableShadows/ScrollableShadows'
 import { supportLogic } from '../Support/supportLogic'
@@ -137,7 +139,31 @@ export function NotFound({ object, caption, meta, className }: NotFoundProps): J
     )
 }
 
-export function LogInAsSuggestions({ suggestedUsers }: { suggestedUsers: UserBasicType[] }): JSX.Element {
+function roleBadge(level: OrganizationMembershipLevel): JSX.Element | null {
+    if (level <= OrganizationMembershipLevel.Member) {
+        return null
+    }
+    return (
+        <LemonTag size="small" type={level === OrganizationMembershipLevel.Owner ? 'warning' : 'muted'}>
+            {capitalizeFirstLetter(membershipLevelToName.get(level) ?? '')}
+        </LemonTag>
+    )
+}
+
+interface LogInAsSuggestionsProps {
+    /** Simple user list (from suggested_users_with_access) */
+    suggestedUsers?: UserBasicType[]
+    /** Org members with level info (for switch user in impersonation) */
+    orgMembers?: OrganizationMemberType[]
+    /** Use the switch-impersonation endpoint instead of the login-as endpoint */
+    isSwitching?: boolean
+}
+
+export function LogInAsSuggestions({
+    suggestedUsers,
+    orgMembers,
+    isSwitching = false,
+}: LogInAsSuggestionsProps): JSX.Element {
     const [isLoginInProgress, setIsLoginInProgress] = useState(false)
     const [successfulUserId, setSuccessfulUserId] = useState<number | null>(null)
     const [selectedUser, setSelectedUser] = useState<UserBasicType | null>(null)
@@ -198,23 +224,37 @@ export function LogInAsSuggestions({ suggestedUsers }: { suggestedUsers: UserBas
                 })
             }
 
-            // Now proceed with the login-as request
-            const loginResponse = await fetch(`/admin/login/user/${user.id}/`, {
-                method: 'POST',
-                credentials: 'same-origin',
-                mode: 'cors',
-                headers: {
-                    'X-CSRFToken': getCookie('posthog_csrftoken') as string,
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    read_only: readOnly ? 'true' : 'false',
-                    reason: reason,
-                }),
-            })
+            // Use the switch endpoint when already impersonating, otherwise use the login-as endpoint
+            const loginResponse = isSwitching
+                ? await fetch('/admin/impersonation/switch/', {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      headers: {
+                          'X-CSRFToken': getCookie('posthog_csrftoken') as string,
+                          'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                          user_id: user.id,
+                          read_only: readOnly,
+                          reason: reason,
+                      }),
+                  })
+                : await fetch(`/admin/login/user/${user.id}/`, {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      mode: 'cors',
+                      headers: {
+                          'X-CSRFToken': getCookie('posthog_csrftoken') as string,
+                          'Content-Type': 'application/x-www-form-urlencoded',
+                      },
+                      body: new URLSearchParams({
+                          read_only: readOnly ? 'true' : 'false',
+                          reason: reason,
+                      }),
+                  })
 
             if (!loginResponse.ok) {
-                throw new Error(`django-loginas request resulted in status ${loginResponse.status}`)
+                throw new Error(`Login-as request resulted in status ${loginResponse.status}`)
             }
 
             setSuccessfulUserId(user.id)
@@ -225,13 +265,29 @@ export function LogInAsSuggestions({ suggestedUsers }: { suggestedUsers: UserBas
         }
     }
 
+    // Build the items list from either suggestedUsers or orgMembers
+    const items = orgMembers
+        ? orgMembers.map((member) => ({
+              user: member.user,
+              level: member.level,
+          }))
+        : (suggestedUsers ?? []).map((user) => ({
+              user,
+              level: undefined as OrganizationMembershipLevel | undefined,
+          }))
+
     return (
         <>
             <ScrollableShadows direction="vertical" className="bg-surface-primary border rounded mt-1 max-h-64 *:p-1">
                 <LemonMenuOverlay
-                    items={suggestedUsers.map((user) => ({
+                    items={items.map(({ user, level }) => ({
                         icon: <ProfilePicture user={user} size="md" />,
-                        label: `${user.first_name} ${user.last_name} (${user.email})`,
+                        label: (
+                            <span className="flex items-center gap-1">
+                                {user.first_name} {user.last_name} ({user.email})
+                                {level !== undefined && roleBadge(level)}
+                            </span>
+                        ),
                         tooltip: `Log in as ${user.first_name}`,
                         sideIcon: user.id === successfulUserId ? <IconCheckCircle /> : <IconArrowRight />,
                         onClick: () => {

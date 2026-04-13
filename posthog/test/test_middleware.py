@@ -736,6 +736,13 @@ class TestImpersonationReadOnlyMiddleware(APIBaseTest):
             follow=True,
         )
 
+    def switch_impersonation(self, target_user, read_only=True):
+        return self.client.post(
+            reverse("impersonation-switch"),
+            data=json.dumps({"user_id": target_user.id, "read_only": read_only, "reason": "Switching user"}),
+            content_type="application/json",
+        )
+
     def test_read_only_impersonation_blocks_write(self):
         """Verify read-only impersonation blocks DELETE requests with correct error."""
         dashboard = Dashboard.objects.create(team=self.team, name="Test Dashboard")
@@ -889,6 +896,115 @@ class TestImpersonationReadOnlyMiddleware(APIBaseTest):
 
         assert response.status_code == 403
         assert response.json()["code"] == "impersonation_read_only"
+
+    def test_switch_user_during_read_only_impersonation(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+
+        self.login_as_other_user_read_only()
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+        response = self.switch_impersonation(third_user, read_only=True)
+        assert response.status_code == 200
+        assert self.client.get("/api/users/@me").json()["email"] == "third-user@posthog.com"
+
+    def test_switch_user_during_read_write_impersonation(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+
+        self.login_as_other_user()
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+        response = self.switch_impersonation(third_user, read_only=False)
+        assert response.status_code == 200
+        assert self.client.get("/api/users/@me").json()["email"] == "third-user@posthog.com"
+
+    def test_switch_user_preserves_original_staff_user(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+
+        self.login_as_other_user()
+        self.switch_impersonation(third_user, read_only=False)
+        assert self.client.get("/api/users/@me").json()["email"] == "third-user@posthog.com"
+
+        # Logging out should restore the original staff user, not the intermediate user
+        self.client.get("/logout")
+        assert self.client.get("/api/users/@me").json()["email"] == self.user.email
+
+    def test_switch_respects_read_only_mode_change(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+
+        # Start read-only
+        self.login_as_other_user_read_only()
+        assert self.client.get("/api/users/@me").json()["is_impersonated_read_only"] is True
+
+        # Switch to read-write
+        self.switch_impersonation(third_user, read_only=False)
+        me = self.client.get("/api/users/@me").json()
+        assert me["email"] == "third-user@posthog.com"
+        assert me["is_impersonated_read_only"] is False
+
+    def test_switch_blocked_when_target_disallows_impersonation(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+        third_user.allow_impersonation = False
+        third_user.save()
+
+        self.login_as_other_user()
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+        response = self.switch_impersonation(third_user)
+        assert response.status_code == 400
+        # Should still be impersonating the original user
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+    def test_switch_requires_reason(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+
+        self.login_as_other_user()
+        response = self.client.post(
+            reverse("impersonation-switch"),
+            data=json.dumps({"user_id": third_user.id, "read_only": True, "reason": ""}),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+    def test_switch_to_same_user_is_noop(self):
+        self.login_as_other_user()
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+        response = self.client.post(
+            reverse("impersonation-switch"),
+            data=json.dumps({"user_id": self.other_user.id, "read_only": True, "reason": "Test"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        assert self.client.get("/api/users/@me").json()["email"] == "other-user@posthog.com"
+
+    def test_switch_rollback_preserves_original_read_only_mode(self):
+        third_user = User.objects.create_and_join(self.organization, email="third-user@posthog.com", password="123456")
+        third_user.allow_impersonation = False
+        third_user.save()
+
+        # Start as read-write
+        self.login_as_other_user()
+        me = self.client.get("/api/users/@me").json()
+        assert me["email"] == "other-user@posthog.com"
+        assert me["is_impersonated_read_only"] is False
+
+        # Attempt to switch with read-only — should fail and rollback
+        response = self.switch_impersonation(third_user, read_only=True)
+        assert response.status_code == 400
+
+        # Rollback should preserve the original read-write mode
+        me = self.client.get("/api/users/@me").json()
+        assert me["email"] == "other-user@posthog.com"
+        assert me["is_impersonated_read_only"] is False
+
+    def test_switch_fails_when_not_impersonating(self):
+        response = self.client.post(
+            reverse("impersonation-switch"),
+            data=json.dumps({"user_id": self.other_user.id, "read_only": True, "reason": "Test"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 404
 
 
 @override_settings(IMPERSONATION_TIMEOUT_SECONDS=100)

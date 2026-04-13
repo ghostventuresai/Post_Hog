@@ -15,6 +15,7 @@ import { userLogic } from 'scenes/userLogic'
 
 import { impersonationNoticeLogic } from './impersonationNoticeLogic'
 import { ImpersonationReasonModal } from './ImpersonationReasonModal'
+import { SwitchImpersonationModal } from './SwitchImpersonationModal'
 
 function CountDown({ datetime, callback }: { datetime: dayjs.Dayjs; callback?: () => void }): JSX.Element {
     const [now, setNow] = useState(() => dayjs())
@@ -52,10 +53,24 @@ export function ImpersonationNotice(): JSX.Element | null {
     const { user, userLoading } = useValues(userLogic)
     const { logout, loadUser } = useActions(userLogic)
 
-    const { isMinimized, isUpgradeModalOpen, isReadOnly, isImpersonated, isImpersonationUpgradeInProgress } =
-        useValues(impersonationNoticeLogic)
-    const { minimize, maximize, openUpgradeModal, closeUpgradeModal, upgradeImpersonation, setPageVisible } =
-        useActions(impersonationNoticeLogic)
+    const {
+        isMinimized,
+        isUpgradeModalOpen,
+        isSwitchUserModalOpen,
+        isReadOnly,
+        isImpersonated,
+        isImpersonationUpgradeInProgress,
+    } = useValues(impersonationNoticeLogic)
+    const {
+        minimize,
+        maximize,
+        openUpgradeModal,
+        closeUpgradeModal,
+        openSwitchUserModal,
+        closeSwitchUserModal,
+        upgradeImpersonation,
+        setPageVisible,
+    } = useActions(impersonationNoticeLogic)
 
     const { isVisible: isPageVisible } = usePageVisibility()
 
@@ -110,18 +125,26 @@ export function ImpersonationNotice(): JSX.Element | null {
                                 <span className="ImpersonationNotice__title">
                                     {isReadOnly ? 'Read-only impersonation' : 'Read-write impersonation'}
                                 </span>
-                                {isReadOnly && (
-                                    <LemonMenu
-                                        items={[
-                                            {
-                                                label: 'Upgrade to read-write',
-                                                onClick: openUpgradeModal,
-                                            },
-                                        ]}
-                                    >
+                                <LemonMenu
+                                    items={[
+                                        {
+                                            label: 'Switch user',
+                                            onClick: openSwitchUserModal,
+                                        },
+                                        ...(isReadOnly
+                                            ? [
+                                                  {
+                                                      label: 'Upgrade to read-write',
+                                                      onClick: openUpgradeModal,
+                                                  },
+                                              ]
+                                            : []),
+                                    ]}
+                                >
+                                    <Tooltip title="Impersonate another user from this organization">
                                         <LemonButton size="xsmall" icon={<IconEllipsis />} />
-                                    </LemonMenu>
-                                )}
+                                    </Tooltip>
+                                </LemonMenu>
                                 <LemonButton size="xsmall" icon={<IconCollapse />} onClick={handleMinimize} />
                             </div>
                             <div className="ImpersonationNotice__content">
@@ -174,6 +197,8 @@ export function ImpersonationNotice(): JSX.Element | null {
                 confirmText="Upgrade"
                 loading={isImpersonationUpgradeInProgress}
             />
+
+            <SwitchImpersonationModal isOpen={isSwitchUserModalOpen} onClose={closeSwitchUserModal} />
         </>
     )
 }

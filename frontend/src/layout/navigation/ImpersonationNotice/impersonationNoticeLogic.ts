@@ -1,8 +1,10 @@
 import { actions, connect, kea, listeners, path, reducers, selectors } from 'kea'
+import { loaders } from 'kea-loaders'
 
+import api from 'lib/api'
 import { userLogic } from 'scenes/userLogic'
 
-import { UserType } from '~/types'
+import { OrganizationMemberType, UserType } from '~/types'
 
 import type { impersonationNoticeLogicType } from './impersonationNoticeLogicType'
 
@@ -19,8 +21,22 @@ export const impersonationNoticeLogic = kea<impersonationNoticeLogicType>([
         maximize: true,
         openUpgradeModal: true,
         closeUpgradeModal: true,
+        openSwitchUserModal: true,
+        closeSwitchUserModal: true,
         setPageVisible: (visible: boolean) => ({ visible }),
         clearPageHiddenAt: true,
+    }),
+
+    loaders({
+        orgMembers: [
+            [] as OrganizationMemberType[],
+            {
+                loadOrgMembers: async () => {
+                    const members = await api.organizationMembers.listAll()
+                    return members.sort((a, b) => b.level - a.level)
+                },
+            },
+        ],
     }),
 
     reducers({
@@ -36,6 +52,13 @@ export const impersonationNoticeLogic = kea<impersonationNoticeLogicType>([
             {
                 openUpgradeModal: () => true,
                 closeUpgradeModal: () => false,
+            },
+        ],
+        isSwitchUserModalOpen: [
+            false,
+            {
+                openSwitchUserModal: () => true,
+                closeSwitchUserModal: () => false,
             },
         ],
         pageHiddenAt: [
@@ -59,6 +82,9 @@ export const impersonationNoticeLogic = kea<impersonationNoticeLogicType>([
             if (values.isUpgradeModalOpen && !values.isReadOnly) {
                 actions.closeUpgradeModal()
             }
+        },
+        openSwitchUserModal: () => {
+            actions.loadOrgMembers()
         },
         setPageVisible: ({ visible }) => {
             if (!visible) {
