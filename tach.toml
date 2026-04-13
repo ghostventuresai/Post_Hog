@@ -430,6 +430,7 @@ path = "products.web_analytics"
 depends_on = [
     "ee",
     "posthog",
+    "products.signals",
 ]
 layer = "non_isolated"
 
