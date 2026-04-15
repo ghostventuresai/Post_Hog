@@ -1,0 +1,200 @@
+name: AI sandboxed harness smoke test
+# Triggered on a curated path list covering everything the harness fixtures
+# directly reach into — the fixtures themselves, the task backend + docker
+# sandbox provider, the LLM gateway and MCP transports, plus the Django
+# modules (temporal worker, sandbox/task settings, S3 log polling) that
+# autouse fixtures import at runtime. We deliberately DO NOT gate on
+# blanket posthog/** or products/*/backend/** because this job runs the
+# full docker-compose stack for ~15 minutes and almost all changes under
+# those trees have no bearing on whether the sandboxed eval harness boots.
+# ``workflow_dispatch`` is kept so the job can be re-run on demand when
+# debugging a drift regression that slipped past the path filter.
+on:
+    pull_request:
+        paths:
+            # The harness itself + its parent eval conftest.
+            - 'ee/hogai/eval/sandboxed/**'
+            - 'ee/hogai/eval/conftest.py'
+            - 'ee/hogai/eval/data_setup.py'
+            # Everything the task sandbox and custom prompt runner touch.
+            - 'products/tasks/backend/**'
+            # Direct transport deps the fixtures boot as subprocesses.
+            - 'services/llm-gateway/**'
+            - 'services/mcp/**'
+            # Django bits the autouse fixtures reach into directly:
+            # temporal worker, sandbox/task settings, S3 log polling.
+            - 'posthog/temporal/**'
+            - 'posthog/settings/**'
+            - 'posthog/storage/**'
+            # Dep / infra churn that silently rewires what the fixtures
+            # import at runtime.
+            - 'pyproject.toml'
+            - 'uv.lock'
+            - 'docker-compose.dev.yml'
+            - 'docker-compose.profiles.yml'
+            - 'docker/temporal/**'
+            # The workflow itself.
+            - '.github/workflows/ci-ai-sandboxed-harness.yml'
+    push:
+        branches:
+            - master
+        paths:
+            - 'ee/hogai/eval/sandboxed/**'
+            - 'ee/hogai/eval/conftest.py'
+            - 'ee/hogai/eval/data_setup.py'
+            - 'products/tasks/backend/**'
+            - 'services/llm-gateway/**'
+            - 'services/mcp/**'
+            - 'posthog/temporal/**'
+            - 'posthog/settings/**'
+            - 'posthog/storage/**'
+            - 'pyproject.toml'
+            - 'uv.lock'
+            - 'docker-compose.dev.yml'
+            - 'docker-compose.profiles.yml'
+            - 'docker/temporal/**'
+            - '.github/workflows/ci-ai-sandboxed-harness.yml'
+    workflow_dispatch: {}
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+    smoke:
+        timeout-minutes: 30
+        name: Sandboxed harness smoke test
+        runs-on: ubuntu-latest
+        # The smoke test uses session-scoped fixtures from
+        # ee/hogai/eval/sandboxed/conftest.py that need the full PostHog
+        # docker-compose stack (Postgres/Redis/Kafka/ClickHouse/Temporal/
+        # object storage) to come up. It does NOT call Anthropic, so no LLM
+        # API keys or Braintrust creds are needed.
+        if: github.repository == 'PostHog/posthog'
+
+        permissions:
+            contents: read
+
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+              with:
+                  fetch-depth: 1
+                  filter: blob:none
+
+            - name: Clean up data directories with container permissions
+              run: |
+                  # Use docker to clean up files created by containers
+                  [ -d "data" ] && docker run --rm -v "$(pwd)/data:/data" alpine sh -c "rm -rf /data/seaweedfs /data/minio" || true
+              continue-on-error: true
+
+            - name: Stop/Start stack with Docker Compose
+              env:
+                  COMPOSE_FILE: docker-compose.dev.yml:docker-compose.profiles.yml
+              run: |
+                  bin/ci-wait-for-docker launch --down
+
+            - name: Wait for Docker services
+              env:
+                  COMPOSE_FILE: docker-compose.dev.yml:docker-compose.profiles.yml
+              run: bin/ci-wait-for-docker wait
+
+            - name: Pre-pull curl probe image
+              # Pinned tag matches _CURL_IMAGE in test_harness_smoke.py.
+              # Pulling here keeps the in-test `docker run` off the critical path.
+              run: docker pull curlimages/curl:8.10.1
+
+            - name: Set up Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+              with:
+                  python-version-file: 'pyproject.toml'
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b # v7.3.0
+              with:
+                  version: '0.10.2' # pinned: unpinned setup-uv calls GH API on every job, exhausts rate limit
+                  enable-cache: true
+                  cache-dependency-glob: uv.lock
+                  save-cache: ${{ github.ref == 'refs/heads/master' }}
+
+            - name: Install Python dependencies
+              shell: bash
+              run: UV_PROJECT_ENVIRONMENT=$pythonLocation uv sync --frozen --dev
+
+            - name: Install Rust
+              # posthog/conftest.py's _django_db_setup shells out to `sqlx`
+              # to run the persons-DB migrations. The eval fixtures transitively
+              # depend on it via set_up_evals, so we need sqlx-cli on PATH before
+              # pytest ever runs.
+              uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e
+              with:
+                  toolchain: 1.91.1
+                  components: cargo
+
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+              with:
+                  shared-key: 'v2-rust-backend'
+                  workspaces: rust
+                  save-if: ${{ github.ref == 'refs/heads/master' }}
+
+            - name: Install sqlx-cli
+              run: cargo install sqlx-cli --version 0.8.0 --features postgres --no-default-features --locked
+
+            - name: Install LLM gateway venv
+              # Mirrors `bin/start-llm-gateway`. The _llm_gateway fixture
+              # execs `services/llm-gateway/.venv/bin/uvicorn` directly.
+              shell: bash
+              working-directory: services/llm-gateway
+              run: |
+                  uv venv .venv
+                  uv pip install -e .
+
+            - name: Set up Node
+              uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+              with:
+                  node-version-file: '.nvmrc'
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+              with:
+                  run_install: false
+
+            - name: Install MCP server dependencies
+              # The _mcp_server fixture will also attempt this, but doing it
+              # here keeps any dependency-resolution noise out of the test
+              # log and lets the cached node_modules short-circuit the fixture.
+              shell: bash
+              working-directory: services/mcp
+              run: pnpm install --frozen-lockfile
+
+            - name: Add service hostnames to /etc/hosts
+              run: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+
+            - name: Sandboxed harness smoke test
+              # ee/hogai/eval/pytest.ini pins python_files=eval_*.py /
+              # python_functions=eval_* for the whole eval subtree so real
+              # Braintrust runs never accidentally pick up anything named
+              # test_*. That also means without the -o overrides below,
+              # pytest would collect zero tests from this smoke file.
+              run: |
+                  pytest ee/hogai/eval/sandboxed/ci/test_harness_smoke.py -vv \
+                      -o python_files=test_*.py \
+                      -o python_functions=test_* \
+                      -o python_classes=Test* \
+                      --junitxml=junit.xml
+              env:
+                  # The LLM gateway reads its Anthropic key from the parent env.
+                  # The smoke test never triggers an LLM call, so a stub is fine
+                  # — it just prevents pydantic BaseSettings from raising at
+                  # subprocess startup if the gateway requires the variable.
+                  LLM_GATEWAY_ANTHROPIC_API_KEY: sk-ant-smoke-test-not-a-real-key
+
+            - name: Upload harness logs
+              if: always()
+              uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+              with:
+                  name: sandboxed-harness-smoke-logs
+                  path: |
+                      ee/hogai/eval/sandboxed/logs/
+                      junit.xml
+                  if-no-files-found: ignore
