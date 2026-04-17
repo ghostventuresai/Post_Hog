@@ -6210,7 +6210,6 @@ class ChartAxis(BaseModel):
     column: str
     settings: Settings | None = None
 
-
 class ClickhouseQueryProgress(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -12074,6 +12073,7 @@ class ChartSettings(BaseModel):
     showLegend: bool | None = None
     showNullsAsZero: bool | None = None
     showTotalRow: bool | None = None
+    showValuesOnSeries: bool | None = None
     showXAxisBorder: bool | None = None
     showXAxisTicks: bool | None = None
     showYAxisBorder: bool | None = None
