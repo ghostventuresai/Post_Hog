@@ -2092,6 +2092,7 @@ class ExternalDataSourceType(StrEnum):
     GRANOLA = "Granola"
     BUILD_BETTER = "BuildBetter"
     CONVEX = "Convex"
+    WORK_OS = "WorkOS"
 
 
 class ExternalQueryErrorCode(StrEnum):
