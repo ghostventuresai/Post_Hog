@@ -206,7 +206,10 @@ async def backfill_precalculated_events_activity(
     if not filters:
         logger.info("No event filters found, aborting backfill")
         return BackfillPrecalculatedEventsResult(
-            events_processed=0, events_produced=0, events_flushed=0, duration_seconds=0.0
+            events_processed=0,
+            events_produced=0,
+            events_flushed=0,
+            duration_seconds=0.0,
         )
 
     # Build a lookup from event_name to its filters for fallback evaluation

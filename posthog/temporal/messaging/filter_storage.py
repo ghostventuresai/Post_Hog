@@ -113,7 +113,9 @@ def store_filters(filters: list[PersonPropertyFilter], team_id: int, ttl: int = 
     return storage_key
 
 
-def get_filters_and_properties(storage_key: str) -> tuple[list[PersonPropertyFilter], list[str], list[Any]] | None:
+def get_filters_and_properties(
+    storage_key: str,
+) -> tuple[list[PersonPropertyFilter], list[str], list[Any]] | None:
     """
     Retrieve filters, person properties, and combined bytecode using a storage key.
 

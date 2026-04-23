@@ -459,7 +459,12 @@ class TestBackfillPrecalculatedEventsCommand(BaseTest):
             "posthog.management.commands.backfill_precalculated_events.Command.run_temporal_workflow"
         ) as mock_workflow:
             mock_workflow.return_value = "test-workflow-id"
-            call_command("backfill_precalculated_events", "--team-id", str(self.team.id), stdout=self.command_output)
+            call_command(
+                "backfill_precalculated_events",
+                "--team-id",
+                str(self.team.id),
+                stdout=self.command_output,
+            )
 
         self.assertTrue(mock_workflow.called)
         call_args = mock_workflow.call_args[1]
@@ -520,7 +525,12 @@ class TestBackfillPrecalculatedEventsCommand(BaseTest):
             "posthog.management.commands.backfill_precalculated_events.Command.run_temporal_workflow"
         ) as mock_workflow:
             mock_workflow.return_value = "test-workflow-id"
-            call_command("backfill_precalculated_events", "--team-id", str(self.team.id), stdout=self.command_output)
+            call_command(
+                "backfill_precalculated_events",
+                "--team-id",
+                str(self.team.id),
+                stdout=self.command_output,
+            )
 
         call_args = mock_workflow.call_args[1]
         cohort_ids = call_args["cohort_ids"]
@@ -624,13 +634,23 @@ class TestBackfillPrecalculatedEventsCommand(BaseTest):
             "posthog.management.commands.backfill_precalculated_events.Command.run_temporal_workflow"
         ) as mock_workflow:
             mock_workflow.return_value = "test-workflow-id"
-            call_command("backfill_precalculated_events", "--team-id", str(self.team.id), stdout=self.command_output)
+            call_command(
+                "backfill_precalculated_events",
+                "--team-id",
+                str(self.team.id),
+                stdout=self.command_output,
+            )
 
         call_args = mock_workflow.call_args[1]
         self.assertEqual(call_args["effective_days"], 60)
 
     def test_no_realtime_cohorts_shows_warning(self):
-        call_command("backfill_precalculated_events", "--team-id", str(self.team.id), stdout=self.command_output)
+        call_command(
+            "backfill_precalculated_events",
+            "--team-id",
+            str(self.team.id),
+            stdout=self.command_output,
+        )
 
         output = self.command_output.getvalue()
         self.assertIn("No realtime cohorts found", output)

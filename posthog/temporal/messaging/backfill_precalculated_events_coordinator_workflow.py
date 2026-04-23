@@ -33,7 +33,9 @@ class EventDateCheckResult:
 
 
 @temporalio.activity.defn
-async def check_day_already_backfilled_activity(inputs: EventDateCheckInputs) -> EventDateCheckResult:
+async def check_day_already_backfilled_activity(
+    inputs: EventDateCheckInputs,
+) -> EventDateCheckResult:
     """Check whether all conditions for a given day already have data in precalculated_events.
 
     This is a cheap COUNT query that catches the common re-run case without per-event lookups.

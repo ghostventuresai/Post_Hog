@@ -56,7 +56,12 @@ def backfill_precalculated_events_view(request):
             if form.cleaned_data.get("days"):
                 command_args.extend(["--days", str(form.cleaned_data["days"])])
 
-            command_args.extend(["--concurrent-workflows", str(form.cleaned_data["concurrent_workflows"])])
+            command_args.extend(
+                [
+                    "--concurrent-workflows",
+                    str(form.cleaned_data["concurrent_workflows"]),
+                ]
+            )
 
             try:
                 call_command("backfill_precalculated_events", *command_args)
