@@ -1932,6 +1932,8 @@ export interface TrendsFilterApi {
     /** @nullable */
     showConfidenceIntervals?: boolean | null
     /** @nullable */
+    showFirstDifferences?: boolean | null
+    /** @nullable */
     showLabelsOnSeries?: boolean | null
     /** @nullable */
     showLegend?: boolean | null

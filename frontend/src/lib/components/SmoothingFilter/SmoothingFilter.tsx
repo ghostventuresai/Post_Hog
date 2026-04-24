@@ -7,7 +7,11 @@ import { insightLogic } from 'scenes/insights/insightLogic'
 import { insightVizDataLogic } from 'scenes/insights/insightVizDataLogic'
 import { trendsDataLogic } from 'scenes/trends/trendsDataLogic'
 
+import { TrendsFilter } from '~/queries/schema/schema-general'
+
 import { smoothingOptions } from './smoothings'
+
+type TrendsFilterWithTransforms = TrendsFilter & { showFirstDifferences?: boolean }
 
 export function SmoothingFilter(): JSX.Element | null {
     const { insightProps, editingDisabledReason } = useValues(insightLogic)
@@ -18,13 +22,37 @@ export function SmoothingFilter(): JSX.Element | null {
         return null
     }
 
-    const { smoothingIntervals } = trendsFilter || {}
+    const trendsFilterWithTransforms = (trendsFilter || {}) as TrendsFilterWithTransforms
+    const { smoothingIntervals } = trendsFilterWithTransforms
+    const showFirstDifferences = trendsFilterWithTransforms.showFirstDifferences === true
 
-    // Put a little icon next to the selected item
-    const options = smoothingOptions[interval].map(({ value, label }) => ({
+    const baseOptions = smoothingOptions[interval].map(({ value, label }) => ({
+        value,
+        label: value === 1 ? 'No transformations' : label,
+    }))
+
+    const optionsWithFallback =
+        baseOptions.length > 0
+            ? baseOptions
+            : [
+                  {
+                      value: 1,
+                      label: 'No transformations',
+                  },
+              ]
+
+    const selectedValue = showFirstDifferences ? 'first_differences' : smoothingIntervals || 1
+
+    const options = [
+        ...optionsWithFallback,
+        {
+            value: 'first_differences' as const,
+            label: 'First differences',
+        },
+    ].map(({ value, label }) => ({
         value,
         label:
-            value === smoothingIntervals ? (
+            value === selectedValue ? (
                 <>
                     <IconPulse className="mr-1.5 text-secondary" />
                     {label}
@@ -38,14 +66,23 @@ export function SmoothingFilter(): JSX.Element | null {
     return options.length ? (
         <LemonSelect
             key={interval}
-            value={smoothingIntervals || 1}
+            value={selectedValue}
             dropdownMatchSelectWidth={false}
             onChange={(key) => {
+                if (key === 'first_differences') {
+                    updateInsightFilter({
+                        smoothingIntervals: 1,
+                        showFirstDifferences: true,
+                    } as Partial<TrendsFilterWithTransforms>)
+                    return
+                }
+
                 updateInsightFilter({
                     smoothingIntervals: key,
-                })
+                    showFirstDifferences: false,
+                } as Partial<TrendsFilterWithTransforms>)
             }}
-            data-attr="smoothing-filter"
+            data-attr="series-transform-filter"
             options={options}
             size="small"
             disabledReason={editingDisabledReason}

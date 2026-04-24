@@ -94,7 +94,6 @@ export function InsightDisplayConfig(): JSX.Element {
         ((isTrends || isStickiness) && !(display && NON_TIME_SERIES_DISPLAY_TYPES.includes(display)))
     const showSmoothing =
         isTrends &&
-        !hasBreakdownFilter(breakdownFilter) &&
         (!display || display === ChartDisplayType.ActionsLineGraph || display === ChartDisplayType.ActionsAreaGraph)
     const showMultipleYAxesConfig = (isTrends || isStickiness) && !isNonTimeSeriesDisplay
     const showAlertThresholdLinesConfig = isTrends && !isNonTimeSeriesDisplay
@@ -109,6 +108,7 @@ export function InsightDisplayConfig(): JSX.Element {
     )
 
     const isBoxPlot = display === ChartDisplayType.BoxPlot
+
     const advancedOptions: LemonMenuItems = [
         ...((isTrends && display !== ChartDisplayType.CalendarHeatmap) ||
         isRetention ||

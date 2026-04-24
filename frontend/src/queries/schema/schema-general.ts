@@ -1394,6 +1394,7 @@ export type TrendsFilter = {
     confidenceLevel?: number
     showTrendLines?: boolean
     showMovingAverage?: boolean
+    showFirstDifferences?: boolean
     movingAverageIntervals?: number
     /** detailed results table */
     detailedResultsAggregationType?: 'total' | 'average' | 'median'
@@ -1421,6 +1422,7 @@ export const TRENDS_FILTER_PROPERTIES = new Set<keyof TrendsFilter>([
     'showValuesOnSeries',
     'showLabelsOnSeries',
     'showPercentStackView',
+    'showFirstDifferences',
     'yAxisScaleType',
     'hiddenLegendIndexes',
     'excludeBoxPlotOutliers',

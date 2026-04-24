@@ -66,6 +66,8 @@ function truncateString(str: string, num: number): string {
 
 const INCOMPLETE_SEGMENT_BORDER_DASH = [10, 10]
 
+type TrendsFilterWithTransforms = TrendsFilter & { showFirstDifferences?: boolean }
+
 export function onTooltipClick(
     datasetIndex: number,
     dataIndex: number,
@@ -442,6 +444,29 @@ export function LineGraph_({
         if (isLog10 && Array.isArray(adjustedData)) {
             // In log scale, transform zeros to our special value
             adjustedData = adjustedData.map((value) => (value === 0 ? LOG_ZERO : value))
+        }
+
+        // Show first differences (x_t - x_{t-1}) when requested.
+        // Applied before the percentage transform so diffs are always on raw values.
+        // Keep series length unchanged by setting the first point to null.
+        const trendsFilterWithTransforms = trendsFilter as TrendsFilterWithTransforms | null | undefined
+        if (trendsFilterWithTransforms?.showFirstDifferences && Array.isArray(adjustedData)) {
+            let previousNumericValue: number | null = null
+            adjustedData = adjustedData.map((value) => {
+                if (typeof value !== 'number') {
+                    previousNumericValue = null
+                    return null
+                }
+
+                if (previousNumericValue === null) {
+                    previousNumericValue = value
+                    return null
+                }
+
+                const diff = value - previousNumericValue
+                previousNumericValue = value
+                return diff
+            })
         }
 
         // Transform data to percentages if showPercentView is enabled

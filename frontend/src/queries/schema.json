@@ -37168,6 +37168,9 @@
                 "showConfidenceIntervals": {
                     "type": "boolean"
                 },
+                "showFirstDifferences": {
+                    "type": "boolean"
+                },
                 "showLabelsOnSeries": {
                     "type": "boolean"
                 },
