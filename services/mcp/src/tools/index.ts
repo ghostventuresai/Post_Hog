@@ -35,6 +35,8 @@ import generateHogQLFromQuestion from './query/generateHogQLFromQuestion'
 import queryRun from './query/run'
 // Search
 import entitySearch from './search/entitySearch'
+// Session replay
+import visuallyAnalyzeSessionSegment from './sessionReplay/visuallyAnalyzeSegment'
 // Misc
 import {
     type ToolFilterOptions,
@@ -75,6 +77,9 @@ export const TOOL_MAP: Record<string, () => ToolBase<ZodObjectAny>> = {
 
     // Search
     'entity-search': entitySearch,
+
+    // Session replay
+    'visually-analyze-session-segment': visuallyAnalyzeSessionSegment,
 
     // Debug
     'debug-mcp-ui-apps': debugMcpUiApps,
