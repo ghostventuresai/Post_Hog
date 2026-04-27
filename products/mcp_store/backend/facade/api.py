@@ -4,6 +4,8 @@ Facade API for mcp_store.
 This is the ONLY module other apps are allowed to import.
 """
 
+from django.db import DatabaseError
+
 import structlog
 
 from products.mcp_store.backend.facade.contracts import ActiveInstallationInfo
@@ -20,10 +22,12 @@ def _resolve_name(installation: MCPServerInstallation) -> str:
     return installation.url
 
 
-def _is_oauth_ready(installation: MCPServerInstallation) -> bool:
+def _is_oauth_ready(installation: MCPServerInstallation, sensitive: dict) -> bool:
+    # `sensitive` is passed in (rather than read here) so the caller can share
+    # the value with any follow-up logging — avoids a second decrypt of the
+    # EncryptedJSONField for installations that aren't ready.
     if installation.auth_type != "oauth":
         return True
-    sensitive = installation.sensitive_configuration or {}
     if sensitive.get("needs_reauth"):
         return False
     if not sensitive.get("access_token"):
@@ -41,16 +45,25 @@ def get_active_installations(team_id: int, user_id: int) -> list[ActiveInstallat
         installations = MCPServerInstallation.objects.filter(
             team_id=team_id, user_id=user_id, is_enabled=True
         ).select_related("template")
-    except Exception as e:
-        logger.warning("Error fetching MCP installations", error=str(e), team_id=team_id)
+    except DatabaseError:
+        # Narrowed from blanket `Exception` so programming errors surface rather
+        # than silently returning an empty list to callers.
+        logger.exception("Error fetching MCP installations", team_id=team_id, user_id=user_id)
         return []
 
     results: list[ActiveInstallationInfo] = []
     for installation in installations:
-        if not _is_oauth_ready(installation):
-            logger.debug(
+        # Read the encrypted field once per installation and share it with the
+        # readiness check + the skip-log to avoid double-decrypting.
+        sensitive = installation.sensitive_configuration or {}
+        if not _is_oauth_ready(installation, sensitive):
+            # INFO (not DEBUG) so operators can answer "why doesn't my agent see my server?"
+            # without re-deploying with elevated log levels.
+            logger.info(
                 "Skipping MCP installation not ready",
                 installation_id=str(installation.id),
+                team_id=team_id,
+                reason="needs_reauth" if sensitive.get("needs_reauth") else "pending_oauth",
             )
             continue
 
