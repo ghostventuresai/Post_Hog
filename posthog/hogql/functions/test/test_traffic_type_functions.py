@@ -139,6 +139,20 @@ class TestIsBotFunction:
         assert isinstance(result.right, ast.Constant)
         assert result.right.value == 0
 
+    def test_is_bot_excludes_empty_ua_pattern(self):
+        node = ast.Call(name="__preview_isBot", args=[])
+        user_agent_arg = ast.Field(chain=["properties", "$user_agent"])
+
+        result = is_bot(node=node, args=[user_agent_arg])
+        assert isinstance(result, ast.CompareOperation)
+        assert isinstance(result.left, ast.Call)
+        patterns_array = result.left.args[1]
+        assert isinstance(patterns_array, ast.Array)
+        pattern_values = [expr.value for expr in patterns_array.exprs if isinstance(expr, ast.Constant)]
+        # is_bot should NOT include ^$ pattern — empty UA is not a confirmed bot
+        assert "^$" not in pattern_values
+        assert len(pattern_values) == len(BOT_DEFINITIONS)
+
 
 class TestGetBotTypeFunction:
     def test_get_bot_type_returns_if_with_array_lookup(self):
