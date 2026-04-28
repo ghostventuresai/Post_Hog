@@ -73,6 +73,7 @@ class TaskEvent(StrEnum):
     CI_FOLLOW_UP = "ci_follow_up"
 
 
+MAX_RUNTIME = timedelta(minutes=55)
 INACTIVITY_TIMEOUT = timedelta(minutes=5)
 CI_FOLLOW_UP_DELAY = timedelta(minutes=15)
 RELAY_SANDBOX_EVENTS_START_TO_CLOSE_TIMEOUT = timedelta(hours=24)
@@ -140,6 +141,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
         # exception handler onto the right card.
         self._current_progress_step: Optional[tuple[str, str, str]] = None
         self._pr_fingerprint: Optional[str] = None
+        self._start_time: Optional[datetime] = None
 
     @property
     def context(self) -> TaskProcessingContext:
@@ -187,6 +189,25 @@ class ProcessTaskWorkflow(PostHogWorkflow):
             await workflow.sleep(CI_FOLLOW_UP_DELAY.total_seconds())
         return TaskEvent.CI_FOLLOW_UP
 
+    async def _wait_for_max_runtime(self):
+        if self._start_time:
+            elapsed = workflow.now() - self._start_time
+            remaining = MAX_RUNTIME - elapsed
+            if remaining.total_seconds() > 0:
+                workflow.logger.info(
+                    "Waiting for max runtime limit",
+                    run_id=self.context.run_id,
+                    delay_seconds=remaining.total_seconds(),
+                )
+                await workflow.sleep(remaining.total_seconds())
+        else:
+            workflow.logger.warning(
+                "Max runtime timer started without start time set",
+                run_id=self.context.run_id,
+            )
+            await workflow.sleep(MAX_RUNTIME.total_seconds())
+        return TaskEvent.TIMEOUT_REACHED
+
     async def _wait_for_event(self) -> TaskEvent:
         ci_follow_up_scheduled = (
             self._context is not None
@@ -205,6 +226,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
         possible_events: list[asyncio.Task[TaskEvent]] = [
             asyncio.create_task(self._wait_for_task_external_event()),
             asyncio.create_task(self._wait_for_inactivity(inactivity_timeout)),
+            asyncio.create_task(self._wait_for_max_runtime()),
         ]
         if ci_follow_up_scheduled:
             possible_events.append(asyncio.create_task(self._wait_for_ci_follow_up()))
@@ -328,7 +350,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
 
             sandbox_output = await self._get_sandbox_for_repository()
             sandbox_id = sandbox_output.sandbox_id
-
+            self._start_time = workflow.now()
             # TODO(tasks): Re-enable snapshot creation
             # if sandbox_output.should_create_snapshot and self.context.repository and self.context.github_integration_id:
             #     await self._trigger_snapshot_workflow()
