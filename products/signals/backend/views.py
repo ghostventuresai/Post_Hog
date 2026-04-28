@@ -40,6 +40,7 @@ from rest_framework.views import APIView
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from posthog.api.github import get_github_login, get_org_member_github_logins_by_user_uuid
 from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.auth import InternalAPIAuthentication, OAuthAccessTokenAuthentication, PersonalAPIKeyAuthentication
 from posthog.models import Team
@@ -58,10 +59,7 @@ from products.signals.backend.models import (
     SignalTeamConfig,
     SignalUserAutonomyConfig,
 )
-from products.signals.backend.report_generation.resolve_reviewers import (
-    get_org_member_github_login_to_user_map,
-    get_org_member_github_logins_by_user_uuid,
-)
+from products.signals.backend.report_generation.resolve_reviewers import get_org_member_github_login_to_user_map
 from products.signals.backend.serializers import (
     SignalReportArtefactSerializer,
     SignalReportSerializer,
@@ -410,7 +408,7 @@ class SignalReportViewSet(
             raise serializers.ValidationError({"suggested_reviewers": f"Invalid user UUID: {e}"})
 
         reviewer_github_logins = list(
-            get_org_member_github_logins_by_user_uuid(self.team.id, reviewer_user_uuids).values()
+            get_org_member_github_logins_by_user_uuid(self.team.organization_id, reviewer_user_uuids).values()
         )
         if not reviewer_github_logins:
             return queryset.none()
@@ -624,7 +622,7 @@ class SignalReportViewSet(
 
     @staticmethod
     def _get_github_login(user) -> str | None:
-        login = user.get_github_login()
+        login = get_github_login(user)
         return login.lower() if login else None
 
     def get_serializer_context(self):
@@ -657,6 +655,7 @@ class SignalReportViewSet(
         login_to_user = get_org_member_github_login_to_user_map(self.team.id) or {}
         query = (request.query_params.get("query") or "").strip().lower()
 
+        user_to_login: dict[int, str] = {user.id: login for login, user in login_to_user.items()}
         users_by_uuid = {str(user.uuid): user for user in login_to_user.values()}
 
         filtered_users = [
@@ -671,6 +670,7 @@ class SignalReportViewSet(
             user_uuid: {
                 "name": f"{user.first_name} {user.last_name}".strip(),
                 "email": user.email or "",
+                "github_login": user_to_login.get(user.id, ""),
             }
             for user_uuid, user in sorted(
                 filtered_users,

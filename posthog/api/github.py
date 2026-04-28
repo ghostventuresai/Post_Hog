@@ -1,6 +1,7 @@
 import base64
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.db.models import Q
@@ -17,9 +18,11 @@ from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from social_django.models import UserSocialAuth
 
 from posthog.api.personal_api_key import PersonalAPIKeySerializer
-from posthog.models import Team
+from posthog.models import OrganizationMembership, Team, User
+from posthog.models.integration import Integration
 from posthog.models.oauth import find_oauth_access_token, find_oauth_refresh_token, revoke_oauth_session
 from posthog.models.personal_api_key import find_personal_api_key
 from posthog.models.utils import mask_key_value
@@ -41,6 +44,95 @@ GITHUB_TYPE_FOR_PERSONAL_API_KEY = "posthog_feature_flags_secure_api_key"
 GITHUB_TYPE_FOR_SECURE_API_KEY = "posthog_personal_api_key"
 GITHUB_TYPE_FOR_OAUTH_ACCESS_TOKEN = "posthog_oauth_access_token"
 GITHUB_TYPE_FOR_OAUTH_REFRESH_TOKEN = "posthog_oauth_refresh_token"
+
+
+def get_github_login(user: User) -> str | None:
+    """Resolve this user's GitHub login.
+
+    Checks GitHub App integrations created by this user first (populated during
+    GitHub App installation with user authorization), then falls back to social auth.
+
+    When ``_prefetched_github_integrations`` is set on the user, that prefetch is
+    used. Otherwise, queries are issued.
+    """
+    # 1. Check GitHub integrations created by this user.
+    # Use prefetch data when available to avoid N+1 queries.
+    prefetched_integrations = getattr(user, "_prefetched_github_integrations", None)
+    if prefetched_integrations is not None:
+        for integration in prefetched_integrations:
+            integration_login = (integration.config or {}).get("connecting_user_github_login")
+            if integration_login:
+                return str(integration_login)
+    else:
+        integration_login = (
+            Integration.objects.filter(kind="github", created_by=user)
+            .exclude(config__connecting_user_github_login=None)
+            .values_list("config__connecting_user_github_login", flat=True)
+            .first()
+        )
+        if integration_login:
+            return str(integration_login)
+    # 2. Check social auth
+    social_auth_login = (
+        user.social_auth.filter(provider="github")
+        .exclude(extra_data__login=None)
+        .order_by("id")
+        .values_list("extra_data__login", flat=True)
+        .first()
+    )
+    if social_auth_login:
+        return str(social_auth_login)
+    return None
+
+
+def get_org_member_github_logins_by_user_uuid(org_id: str | UUID, user_uuids: list[str]) -> dict[str, str]:
+    """Build a mapping of PostHog user UUID string -> GitHub login for org members on the team.
+
+    Resolution matches ``get_github_login``: first GitHub integration by ``id`` with a
+    stored login, else first GitHub social auth by ``id`` (same as iterating
+    ``user.social_auth.all()`` and taking the first ``provider="github"`` row per user).
+    """
+    if not user_uuids:
+        return {}
+
+    user_id_to_uuid: dict[int, str] = {}
+    for user_id, user_uuid in OrganizationMembership.objects.filter(
+        organization_id=org_id,
+        user__uuid__in=user_uuids,
+    ).values_list("user_id", "user__uuid"):
+        user_id_to_uuid[user_id] = str(user_uuid)
+    if not user_id_to_uuid:
+        return {}
+
+    user_id_to_github_login: dict[int, str] = {}
+    for created_by_id, github_login in (
+        Integration.objects.filter(kind="github", created_by_id__in=user_id_to_uuid.keys())
+        .exclude(config__connecting_user_github_login=None)
+        .order_by("created_by_id", "id")
+        .distinct("created_by_id")
+        .values_list("created_by_id", "config__connecting_user_github_login")
+    ):
+        user_id_to_github_login[created_by_id] = github_login
+
+    user_ids_to_check_for_social_auth = [uid for uid in user_id_to_uuid if uid not in user_id_to_github_login]
+    if user_ids_to_check_for_social_auth:
+        for social_auth_user_id, github_login in (
+            UserSocialAuth.objects.filter(
+                provider="github",
+                user_id__in=user_ids_to_check_for_social_auth,
+            )
+            .exclude(extra_data__login=None)
+            .order_by("user_id", "id")
+            .distinct("user_id")
+            .values_list("user_id", "extra_data__login")
+        ):
+            user_id_to_github_login[social_auth_user_id] = github_login
+
+    user_uuid_to_github_login = {
+        user_id_to_uuid[uid]: github_login for uid, github_login in user_id_to_github_login.items()
+    }
+
+    return user_uuid_to_github_login
 
 
 class SignatureVerificationError(Exception):
