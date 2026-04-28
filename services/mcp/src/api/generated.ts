@@ -15044,13 +15044,15 @@ export namespace Schemas {
     } as const;
 
     /**
-     * * `duckdb` - duckdb
+     * * `clickhouse` - clickhouse
+    * `duckdb` - duckdb
     * `postgres` - postgres
      */
     export type EngineEnum = typeof EngineEnum[keyof typeof EngineEnum];
 
 
     export const EngineEnum = {
+      Clickhouse: 'clickhouse',
       Duckdb: 'duckdb',
       Postgres: 'postgres',
     } as const;
@@ -16863,6 +16865,7 @@ export namespace Schemas {
       readonly prefix: string | null;
       /** Backend engine detected for the direct connection.
 
+    * `clickhouse` - clickhouse
     * `duckdb` - duckdb
     * `postgres` - postgres */
       readonly engine: EngineEnum | NullEnum | null;
@@ -17075,6 +17078,7 @@ export namespace Schemas {
       readonly access_method: AccessMethodEnum;
       /** Backend engine detected for the direct connection.
 
+    * `clickhouse` - clickhouse
     * `duckdb` - duckdb
     * `postgres` - postgres */
       readonly engine: EngineEnum | NullEnum | null;
@@ -27044,6 +27048,7 @@ export namespace Schemas {
       readonly access_method?: AccessMethodEnum;
       /** Backend engine detected for the direct connection.
 
+    * `clickhouse` - clickhouse
     * `duckdb` - duckdb
     * `postgres` - postgres */
       readonly engine?: EngineEnum | NullEnum | null;

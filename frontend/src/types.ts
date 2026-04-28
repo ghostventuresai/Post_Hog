@@ -5697,7 +5697,7 @@ export interface ExternalDataSourceCreatePayload {
 export interface ExternalDataSourceConnectionMetadata {
     database?: string | null
     version?: string | null
-    engine?: 'duckdb' | 'postgres' | null
+    engine?: 'clickhouse' | 'duckdb' | 'postgres' | null
     function_source?: string | null
     available_functions?: string[]
 }
@@ -5705,7 +5705,7 @@ export interface ExternalDataSourceConnectionMetadata {
 export interface ExternalDataSourceConnectionOption {
     id: string
     prefix: string | null
-    engine?: 'duckdb' | 'postgres' | null
+    engine?: 'clickhouse' | 'duckdb' | 'postgres' | null
 }
 
 export interface ExternalDataSource {
