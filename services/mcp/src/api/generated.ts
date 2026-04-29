@@ -16251,7 +16251,7 @@ export namespace Schemas {
        */
       description?: string | null;
       filters?: unknown;
-      readonly created_by: UserBasic;
+      readonly created_by: UserBasic | null;
       readonly created_at: string;
       readonly updated_at: string;
     }
@@ -16463,7 +16463,7 @@ export namespace Schemas {
       /** Unique key for the experiment's feature flag. Letters, numbers, hyphens, and underscores only. Search existing flags with the feature-flags-get-all tool first — reuse an existing flag when possible. */
       feature_flag_key: string;
       readonly feature_flag: MinimalFeatureFlag;
-      readonly holdout: ExperimentHoldout;
+      readonly holdout: ExperimentHoldout | null;
       /**
        * ID of a holdout group to exclude from the experiment.
        * @nullable
@@ -16485,7 +16485,7 @@ export namespace Schemas {
       archived?: boolean;
       /** @nullable */
       deleted?: boolean | null;
-      readonly created_by: UserBasic;
+      readonly created_by: UserBasic | null;
       readonly created_at: string;
       readonly updated_at: string;
       /** Experiment type: web for frontend UI changes, product for backend/API changes.
@@ -16657,7 +16657,7 @@ export namespace Schemas {
        */
       description?: string | null;
       query: unknown;
-      readonly created_by: UserBasic;
+      readonly created_by: UserBasic | null;
       readonly created_at: string;
       readonly updated_at: string;
       tags?: unknown[];
@@ -17169,9 +17169,9 @@ export namespace Schemas {
 
     export type FeatureFlagExperimentSetMetadataItem = {[key: string]: unknown};
 
-    export type FeatureFlagSurveys = {[key: string]: unknown};
+    export type FeatureFlagSurveysItem = { [key: string]: unknown };
 
-    export type FeatureFlagFeatures = {[key: string]: unknown};
+    export type FeatureFlagFeaturesItem = { [key: string]: unknown };
 
     /**
      * * `feature_flags` - feature_flags
@@ -17215,8 +17215,8 @@ export namespace Schemas {
       ensure_experience_continuity?: boolean | null;
       readonly experiment_set: readonly number[];
       readonly experiment_set_metadata: readonly FeatureFlagExperimentSetMetadataItem[];
-      readonly surveys: FeatureFlagSurveys;
-      readonly features: FeatureFlagFeatures;
+      readonly surveys: readonly FeatureFlagSurveysItem[];
+      readonly features: readonly FeatureFlagFeaturesItem[];
       rollback_conditions?: unknown | null;
       /** @nullable */
       performed_rollback?: boolean | null;
@@ -26991,7 +26991,7 @@ export namespace Schemas {
       /** Unique key for the experiment's feature flag. Letters, numbers, hyphens, and underscores only. Search existing flags with the feature-flags-get-all tool first — reuse an existing flag when possible. */
       feature_flag_key?: string;
       readonly feature_flag?: MinimalFeatureFlag;
-      readonly holdout?: ExperimentHoldout;
+      readonly holdout?: ExperimentHoldout | null;
       /**
        * ID of a holdout group to exclude from the experiment.
        * @nullable
@@ -27013,7 +27013,7 @@ export namespace Schemas {
       archived?: boolean;
       /** @nullable */
       deleted?: boolean | null;
-      readonly created_by?: UserBasic;
+      readonly created_by?: UserBasic | null;
       readonly created_at?: string;
       readonly updated_at?: string;
       /** Experiment type: web for frontend UI changes, product for backend/API changes.
@@ -27067,7 +27067,7 @@ export namespace Schemas {
        */
       description?: string | null;
       filters?: unknown;
-      readonly created_by?: UserBasic;
+      readonly created_by?: UserBasic | null;
       readonly created_at?: string;
       readonly updated_at?: string;
     }
@@ -27085,7 +27085,7 @@ export namespace Schemas {
        */
       description?: string | null;
       query?: unknown;
-      readonly created_by?: UserBasic;
+      readonly created_by?: UserBasic | null;
       readonly created_at?: string;
       readonly updated_at?: string;
       tags?: unknown[];
