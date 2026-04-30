@@ -321,34 +321,31 @@ class TestEarlyAccessFeature(APIBaseTest):
         assert FeatureFlag.objects.filter(key=response_data["feature_flag"]["key"]).exists()
 
         flag.refresh_from_db()
-        self.assertEqual(
-            flag.filters,
-            {
-                "groups": [
-                    {
-                        "properties": [{"key": "xyz", "value": "ok", "type": "person"}],
-                        "rollout_percentage": None,
-                        "aggregation_group_type_index": None,
-                    }
-                ],
-                "payloads": {"true": '"Hick bondoogling? ????"'},
-                "super_groups": [
-                    {
-                        "properties": [
-                            {
-                                "key": "$feature_enrollment/hick-bondoogling",
-                                "operator": "exact",
-                                "type": "person",
-                                "value": ["true"],
-                            }
-                        ],
-                        "rollout_percentage": 100,
-                    }
-                ],
-                "aggregation_group_type_index": None,
-                "feature_enrollment": True,
-            },
-        )
+        assert flag.filters == {
+            "groups": [
+                {
+                    "properties": [{"key": "xyz", "value": "ok", "type": "person"}],
+                    "rollout_percentage": None,
+                    "aggregation_group_type_index": None,
+                }
+            ],
+            "payloads": {"true": '"Hick bondoogling? ????"'},
+            "super_groups": [
+                {
+                    "properties": [
+                        {
+                            "key": "$feature_enrollment/hick-bondoogling",
+                            "operator": "exact",
+                            "type": "person",
+                            "value": ["true"],
+                        }
+                    ],
+                    "rollout_percentage": 100,
+                }
+            ],
+            "aggregation_group_type_index": None,
+            "feature_enrollment": True,
+        }
 
     def test_cant_create_early_access_feature_with_duplicate_key(self):
         FeatureFlag.objects.create(
@@ -371,10 +368,7 @@ class TestEarlyAccessFeature(APIBaseTest):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response_data
 
-        self.assertEqual(
-            response_data["detail"],
-            "There is already a feature flag with this key.",
-        )
+        assert response_data["detail"] == "There is already a feature flag with this key."
 
     def test_can_create_new_early_access_feature_with_soft_deleted_flag(self):
         FeatureFlag.objects.create(
@@ -449,21 +443,18 @@ class TestEarlyAccessFeature(APIBaseTest):
         assert response.status_code == status.HTTP_204_NO_CONTENT
         flag = FeatureFlag.objects.filter(key=response_data["feature_flag"]["key"]).all()[0]
 
-        self.assertEqual(
-            flag.filters,
-            {
-                "groups": [
-                    {
-                        "properties": [{"key": "xyz", "value": "ok", "type": "person"}],
-                        "rollout_percentage": None,
-                        "aggregation_group_type_index": None,
-                    }
-                ],
-                "super_groups": None,
-                "aggregation_group_type_index": None,
-                "feature_enrollment": None,
-            },
-        )
+        assert flag.filters == {
+            "groups": [
+                {
+                    "properties": [{"key": "xyz", "value": "ok", "type": "person"}],
+                    "rollout_percentage": None,
+                    "aggregation_group_type_index": None,
+                }
+            ],
+            "super_groups": None,
+            "aggregation_group_type_index": None,
+            "feature_enrollment": None,
+        }
 
     def test_cant_soft_delete_flag_with_early_access_feature(self):
         existing_flag = FeatureFlag.objects.create(
@@ -535,10 +526,7 @@ class TestEarlyAccessFeature(APIBaseTest):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response_data
 
-        self.assertEqual(
-            response_data["detail"],
-            "Group-based feature flags are not supported for Early Access Features.",
-        )
+        assert response_data["detail"] == "Group-based feature flags are not supported for Early Access Features."
 
     def test_cant_create_early_access_feature_with_multivariate_flag(self):
         flag = FeatureFlag.objects.create(
@@ -583,10 +571,7 @@ class TestEarlyAccessFeature(APIBaseTest):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response_data
 
-        self.assertEqual(
-            response_data["detail"],
-            "Multivariate feature flags are not supported for Early Access Features.",
-        )
+        assert response_data["detail"] == "Multivariate feature flags are not supported for Early Access Features."
 
     def test_cant_create_early_access_feature_with_flag_with_existing_early_access_feature(self):
         flag = FeatureFlag.objects.create(
@@ -624,10 +609,7 @@ class TestEarlyAccessFeature(APIBaseTest):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response_data
 
-        self.assertEqual(
-            response_data["detail"],
-            "Linked feature flag hick-bondoogling already has a feature attached to it.",
-        )
+        assert response_data["detail"] == "Linked feature flag hick-bondoogling already has a feature attached to it."
 
     def test_can_edit_feature(self):
         feature = EarlyAccessFeature.objects.create(
@@ -937,23 +919,20 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(2):
             response = self._get_features()
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get("access-control-allow-origin"), "http://127.0.0.1:8000")
+            assert response.status_code == 200
+            assert response.get("access-control-allow-origin") == "http://127.0.0.1:8000"
 
-            self.assertListEqual(
-                response.json()["earlyAccessFeatures"],
-                [
-                    {
-                        "id": str(feature.id),
-                        "name": "Sprocket",
-                        "description": "A fancy new sprocket.",
-                        "stage": "beta",
-                        "documentationUrl": "",
-                        "payload": {},
-                        "flagKey": "sprocket",
-                    }
-                ],
-            )
+            assert response.json()["earlyAccessFeatures"] == [
+                {
+                    "id": str(feature.id),
+                    "name": "Sprocket",
+                    "description": "A fancy new sprocket.",
+                    "stage": "beta",
+                    "documentationUrl": "",
+                    "payload": {},
+                    "flagKey": "sprocket",
+                }
+            ]
 
     @snapshot_postgres_queries
     def test_early_access_features_with_pre_env_cached_team(self):
@@ -994,23 +973,20 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(1):
             response = self._get_features()
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get("access-control-allow-origin"), "http://127.0.0.1:8000")
+            assert response.status_code == 200
+            assert response.get("access-control-allow-origin") == "http://127.0.0.1:8000"
 
-            self.assertListEqual(
-                response.json()["earlyAccessFeatures"],
-                [
-                    {
-                        "id": str(feature.id),
-                        "name": "Sprocket",
-                        "description": "A fancy new sprocket.",
-                        "stage": "beta",
-                        "documentationUrl": "",
-                        "payload": {},
-                        "flagKey": "sprocket",
-                    }
-                ],
-            )
+            assert response.json()["earlyAccessFeatures"] == [
+                {
+                    "id": str(feature.id),
+                    "name": "Sprocket",
+                    "description": "A fancy new sprocket.",
+                    "stage": "beta",
+                    "documentationUrl": "",
+                    "payload": {},
+                    "flagKey": "sprocket",
+                }
+            ]
 
     @snapshot_postgres_queries
     def test_early_access_features_with_cached_team(self):
@@ -1040,23 +1016,20 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(1):
             response = self._get_features()
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get("access-control-allow-origin"), "http://127.0.0.1:8000")
+            assert response.status_code == 200
+            assert response.get("access-control-allow-origin") == "http://127.0.0.1:8000"
 
-            self.assertListEqual(
-                response.json()["earlyAccessFeatures"],
-                [
-                    {
-                        "id": str(feature.id),
-                        "name": "Sprocket",
-                        "description": "A fancy new sprocket.",
-                        "stage": "beta",
-                        "documentationUrl": "",
-                        "payload": {},
-                        "flagKey": "sprocket",
-                    }
-                ],
-            )
+            assert response.json()["earlyAccessFeatures"] == [
+                {
+                    "id": str(feature.id),
+                    "name": "Sprocket",
+                    "description": "A fancy new sprocket.",
+                    "stage": "beta",
+                    "documentationUrl": "",
+                    "payload": {},
+                    "flagKey": "sprocket",
+                }
+            ]
 
     def test_early_access_features_beta_only(self):
         Person.objects.create(
@@ -1109,33 +1082,30 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(2):
             response = self._get_features()
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get("access-control-allow-origin"), "http://127.0.0.1:8000")
+            assert response.status_code == 200
+            assert response.get("access-control-allow-origin") == "http://127.0.0.1:8000"
 
-            self.assertListEqual(
-                response.json()["earlyAccessFeatures"],
-                [
-                    {
-                        "id": str(feature.id),
-                        "name": "Sprocket",
-                        "description": "A fancy new sprocket.",
-                        "stage": "beta",
-                        "documentationUrl": "",
-                        "payload": {},
-                        "flagKey": "sprocket",
-                    }
-                ],
-            )
+            assert response.json()["earlyAccessFeatures"] == [
+                {
+                    "id": str(feature.id),
+                    "name": "Sprocket",
+                    "description": "A fancy new sprocket.",
+                    "stage": "beta",
+                    "documentationUrl": "",
+                    "payload": {},
+                    "flagKey": "sprocket",
+                }
+            ]
 
     def test_early_access_features_errors_out_on_random_token(self):
         self.client.logout()
 
         with self.assertNumQueries(1):
             response = self._get_features(token="random_token")
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(
-                response.json()["detail"],
-                "Project token invalid. You can find your project token in PostHog project settings.",
+            assert response.status_code == 401
+            assert (
+                response.json()["detail"]
+                == "Project token invalid. You can find your project token in PostHog project settings."
             )
 
     def test_early_access_features_errors_out_on_no_token(self):
@@ -1143,10 +1113,10 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(0):
             response = self.client.get(f"/api/early_access_features/")
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(
-                response.json()["detail"],
-                "Project token not provided. You can find your project token in PostHog project settings.",
+            assert response.status_code == 401
+            assert (
+                response.json()["detail"]
+                == "Project token not provided. You can find your project token in PostHog project settings."
             )
 
     def test_early_access_features_preserves_documentation_url(self):
@@ -1169,12 +1139,9 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
         self.client.logout()
 
         response = self._get_features()
-        self.assertEqual(response.status_code, 200)
+        assert response.status_code == 200
         feature_data = response.json()["earlyAccessFeatures"][0]
-        self.assertEqual(
-            feature_data["documentationUrl"],
-            documentation_url,
-        )
+        assert feature_data["documentationUrl"] == documentation_url
 
     @snapshot_postgres_queries
     def test_early_access_features_includes_payload_in_preview(self):
@@ -1204,20 +1171,17 @@ class TestPreviewList(BaseTest, QueryMatchingTest):
 
         with self.assertNumQueries(2):
             response = self._get_features()
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get("access-control-allow-origin"), "http://127.0.0.1:8000")
+            assert response.status_code == 200
+            assert response.get("access-control-allow-origin") == "http://127.0.0.1:8000"
 
-            self.assertListEqual(
-                response.json()["earlyAccessFeatures"],
-                [
-                    {
-                        "id": str(feature.id),
-                        "name": "Sprocket",
-                        "description": "A fancy new sprocket.",
-                        "stage": "beta",
-                        "documentationUrl": "",
-                        "payload": payload,
-                        "flagKey": "sprocket",
-                    }
-                ],
-            )
+            assert response.json()["earlyAccessFeatures"] == [
+                {
+                    "id": str(feature.id),
+                    "name": "Sprocket",
+                    "description": "A fancy new sprocket.",
+                    "stage": "beta",
+                    "documentationUrl": "",
+                    "payload": payload,
+                    "flagKey": "sprocket",
+                }
+            ]

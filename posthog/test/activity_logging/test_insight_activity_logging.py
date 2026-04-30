@@ -53,7 +53,7 @@ class TestChangesBetweenInsights(BaseTest):
             ),
         ]
 
-        self.assertCountEqual(actual, expected)
+        assert sorted(actual, key=str) == sorted(expected, key=str)
 
     def test_insight_change_of_tags_can_be_logged(self) -> None:
         actual = changes_between(
@@ -71,7 +71,7 @@ class TestChangesBetweenInsights(BaseTest):
             ),
         ]
 
-        self.assertCountEqual(actual, expected)
+        assert sorted(actual, key=str) == sorted(expected, key=str)
 
     def test_insight_change_of_derived_name_can_be_logged(self) -> None:
         actual = changes_between(
@@ -89,7 +89,7 @@ class TestChangesBetweenInsights(BaseTest):
             ),
         ]
 
-        self.assertCountEqual(actual, expected)
+        assert sorted(actual, key=str) == sorted(expected, key=str)
 
     def test_insight_change_of_description_can_be_logged(self) -> None:
         actual = changes_between(
@@ -107,7 +107,7 @@ class TestChangesBetweenInsights(BaseTest):
             ),
         ]
 
-        self.assertCountEqual(actual, expected)
+        assert sorted(actual, key=str) == sorted(expected, key=str)
 
     def _an_insight_with(self, tagged_items=None, **kwargs) -> Insight:
         if tagged_items is None:

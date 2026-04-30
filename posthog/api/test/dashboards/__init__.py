@@ -26,9 +26,8 @@ class DashboardAPI:
             {"deleted": True, **extra_data},
         )
         assert api_response.status_code == status.HTTP_200_OK
-        self.assertEqual(
-            self.client.get(f"/api/projects/{self.team.id}/{model_type}/{model_id}").status_code,
-            expected_get_status,
+        assert (
+            self.client.get(f"/api/projects/{self.team.id}/{model_type}/{model_id}").status_code == expected_get_status
         )
 
     def create_dashboard(
@@ -40,7 +39,7 @@ class DashboardAPI:
         if team_id is None:
             team_id = self.team.id
         response = self.client.post(f"/api/projects/{team_id}/dashboards/", data)
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         dashboard_id = response_json["id"] if response.status_code == status.HTTP_201_CREATED else -1
@@ -56,7 +55,7 @@ class DashboardAPI:
         if team_id is None:
             team_id = self.team.id
         response = self.client.patch(f"/api/projects/{team_id}/dashboards/{dashboard_id}", data)
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         dashboard_id = response_json["id"] if response.status_code == status.HTTP_200_OK else -1
@@ -73,7 +72,7 @@ class DashboardAPI:
             team_id = self.team.id
 
         response = self.client.get(f"/api/projects/{team_id}/dashboards/{dashboard_id}", query_params)
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         return response_json
@@ -93,7 +92,7 @@ class DashboardAPI:
             query_params = {}
 
         response = self.client.get(f"/api/{parent}s/{team_id}/dashboards/", query_params)
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         return response_json
@@ -114,7 +113,7 @@ class DashboardAPI:
             f"/api/projects/{team_id}/insights/",
             {"basic": True, "limit": 30, **query_params},
         )
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         return response_json
@@ -133,7 +132,7 @@ class DashboardAPI:
             query_params = {}
 
         response = self.client.get(f"/api/projects/{team_id}/insights/{insight_id}", query_params)
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
 
         response_json = response.json()
         return response_json
@@ -154,7 +153,7 @@ class DashboardAPI:
             f"/api/projects/{team_id}/insights",
             data=data,
         )
-        self.assertEqual(response.status_code, expected_status, response.json())
+        assert response.status_code == expected_status, response.json()
 
         response_json = response.json()
         return response_json.get("id", None), response_json
@@ -170,7 +169,7 @@ class DashboardAPI:
             team_id = self.team.id
 
         response = self.client.patch(f"/api/projects/{team_id}/insights/{insight_id}", data=data)
-        self.assertEqual(response.status_code, expected_status, response.json())
+        assert response.status_code == expected_status, response.json()
 
         response_json = response.json()
         return response_json.get("id", None), response_json
@@ -194,7 +193,7 @@ class DashboardAPI:
             {"tiles": [{"text": {"body": text}, **extra_data}]},
         )
 
-        self.assertEqual(response.status_code, expected_status, response.json())
+        assert response.status_code == expected_status, response.json()
 
         response_json = response.json()
         return response_json.get("id", None), response_json
@@ -214,7 +213,7 @@ class DashboardAPI:
             url = f"/api/projects/{team_id}/insights/{insight_id}/activity"
 
         activity = self.client.get(url)
-        self.assertEqual(activity.status_code, expected_status)
+        assert activity.status_code == expected_status
         return activity.json()
 
     def create_button_tile(
@@ -251,7 +250,7 @@ class DashboardAPI:
             },
         )
 
-        self.assertEqual(response.status_code, expected_status, response.json())
+        assert response.status_code == expected_status, response.json()
 
         response_json = response.json()
         return response_json.get("id", None), response_json
@@ -268,7 +267,7 @@ class DashboardAPI:
 
         response = self.client.patch(f"/api/projects/{team_id}/dashboards/{dashboard_id}", {"tiles": [tile]})
 
-        self.assertEqual(response.status_code, expected_status, response.json())
+        assert response.status_code == expected_status, response.json()
 
         response_json = response.json()
         return response_json.get("id", None), response_json
@@ -308,7 +307,7 @@ class DashboardAPI:
                 },
                 format="json",
             )
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            assert response.status_code == status.HTTP_200_OK
 
     def add_insight_to_dashboard(
         self,
@@ -320,4 +319,4 @@ class DashboardAPI:
             f"/api/projects/{self.team.id}/insights/{insight_id}",
             {"dashboards": dashboard_ids},
         )
-        self.assertEqual(response.status_code, expected_status)
+        assert response.status_code == expected_status
