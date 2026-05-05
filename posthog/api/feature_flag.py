@@ -1415,6 +1415,17 @@ class FeatureFlagSerializer(
         # Prevent DRF from attempting to set reverse FK relation directly
         validated_data.pop("evaluation_contexts", None)
 
+        # Capture state-at-entry for hash-key-override cleanup. We snapshot here
+        # because validated_data["key"] may be rewritten downstream (e.g. soft-delete
+        # appends ":deleted:<id>"), and we need the original key the override rows
+        # are stored under. The hooks below cover only product-driven paths
+        # (rename / soft-delete via PATCH); admin-tool hard-deletes are out of
+        # scope and any orphans they create are swept by the offline backfill
+        # management command (separate PR).
+        original_key_at_entry = instance.key
+        original_team_id_at_entry = instance.team_id
+        was_already_deleted = instance.deleted
+
         if "deleted" in validated_data and validated_data["deleted"] is True:
             # Check for linked early access features
             if instance.features.count() > 0:
@@ -1567,6 +1578,53 @@ class FeatureFlagSerializer(
                 except deletion.RestrictedError:
                     raise exceptions.ValidationError(
                         "Feature flag with this key already exists and is used in an experiment. Please delete the experiment before renaming the flag."
+                    )
+
+            # Schedule async cleanup of FeatureFlagHashKeyOverride rows on commit.
+            # Registered BEFORE super().update() so that any failure in the write
+            # itself (e.g. IntegrityError, DatabaseError) rolls back the atomic
+            # block AND drops the on_commit registration — Django only fires
+            # on_commit callbacks if the enclosing transaction successfully commits.
+            # The tasks themselves write to the persons DB via
+            # `using(PERSONS_DB_FOR_WRITE)`.
+            #
+            # Imported inline to match the convention used elsewhere in this
+            # file (see ``update_team_flags_cache`` / ``update_team_remote_config``
+            # below). No active circular import today, but hoisting these to
+            # the top adds a load-order risk that the inline pattern avoids.
+            from posthog.tasks.feature_flags import (
+                delete_hash_key_overrides_for_flag,
+                rewrite_hash_key_overrides_for_flag,
+            )
+
+            became_soft_deleted = validated_data.get("deleted") is True and not was_already_deleted
+            if became_soft_deleted:
+                # Use the key as it was at entry — soft-delete may append ":deleted:<id>"
+                # to free up the original key slot, but the override rows are still
+                # stored under the pre-rename key.
+                transaction.on_commit(
+                    functools.partial(
+                        delete_hash_key_overrides_for_flag.delay,
+                        team_id=original_team_id_at_entry,
+                        key=original_key_at_entry,
+                    )
+                )
+            else:
+                # Detect a user-initiated key rename. The became_soft_deleted
+                # branch above already excluded soft-delete renames; an existing
+                # PATCH against an already-deleted flag with deleted=True falls
+                # through to here and is correctly classified as not-a-rename
+                # because validated_data["key"] is not the user's value.
+                new_key = validated_data.get("key")
+                is_rename = new_key is not None and new_key != original_key_at_entry
+                if is_rename:
+                    transaction.on_commit(
+                        functools.partial(
+                            rewrite_hash_key_overrides_for_flag.delay,
+                            team_id=original_team_id_at_entry,
+                            old_key=original_key_at_entry,
+                            new_key=new_key,
+                        )
                     )
 
             with ImpersonatedContext(request):

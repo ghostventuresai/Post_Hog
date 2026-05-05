@@ -1,13 +1,15 @@
 import time
 
 from django.conf import settings
+from django.db import DatabaseError, OperationalError, transaction
 from django.db.models import Count, F, Func, IntegerField, Max, Sum, TextField
 from django.db.models.functions import Cast
 
 import structlog
-from celery import shared_task
+from celery import Task, shared_task
 from prometheus_client import Gauge
 
+from posthog.exceptions_capture import capture_exception
 from posthog.models.feature_flag.feature_flag import FeatureFlag
 from posthog.models.feature_flag.flags_cache import (
     cleanup_stale_expiry_tracking,
@@ -20,11 +22,37 @@ from posthog.models.feature_flag.local_evaluation import (
     FLAG_DEFINITIONS_NO_COHORTS_HYPERCACHE_MANAGEMENT_CONFIG,
     update_flag_caches,
 )
+from posthog.models.person.util import (
+    count_hash_key_overrides_above_threshold,
+    delete_hash_key_overrides_by_ids,
+    get_colliding_hash_key_override_ids,
+    get_hash_key_override_ids,
+    rename_hash_key_overrides_by_ids,
+)
 from posthog.models.team import Team
+from posthog.person_db_router import PERSONS_DB_FOR_WRITE
 from posthog.storage.hypercache_manager import HYPERCACHE_SIGNAL_UPDATE_COUNTER
 from posthog.tasks.utils import CeleryQueue, PushGatewayTask
 
 logger = structlog.get_logger(__name__)
+
+# Override-cleanup tasks bound their work to teams whose row count for the
+# target (team_id, feature_flag_key) tuple is below this threshold. The
+# table's heaviest team holds ~40% of all rows, so an unbounded UPDATE on a
+# rename for that team would scan hundreds of millions of rows on the persons
+# DB — the same path that serves /decide. Skipped renames/deletes are picked
+# up by the management-command backfill (separate PR).
+HASH_KEY_OVERRIDE_LARGE_TEAM_THRESHOLD = 50_000
+
+# Per-batch cap for the chunked UPDATE/DELETE loops below. Each batch runs
+# inside its own transaction so row-level locks are released between chunks
+# and concurrent INSERTs from set_feature_flag_hash_key_overrides aren't
+# blocked for the duration of the whole task.
+HASH_KEY_OVERRIDE_BATCH_SIZE = 10_000
+
+# Total retries (initial attempt + max_retries). Used to detect "this is the
+# last attempt" so we can capture to Sentry before the task gives up.
+HASH_KEY_OVERRIDE_MAX_RETRIES = 3
 
 
 @shared_task(ignore_result=True, queue=CeleryQueue.FEATURE_FLAGS.value)
@@ -396,3 +424,156 @@ def cleanup_stale_flag_definitions_expiry_tracking_task(self: PushGatewayTask) -
 
     entries_cleaned_gauge.set(total_removed)
     logger.info("Completed flag definitions expiry tracking cleanup", total_removed_count=total_removed)
+
+
+def _exceeds_large_team_threshold(team_id: int, feature_flag_key: str) -> bool:
+    """Bounded probe — checks whether (team_id, feature_flag_key) holds more
+    rows than ``HASH_KEY_OVERRIDE_LARGE_TEAM_THRESHOLD``. Stops scanning once
+    the threshold is exceeded, so this stays cheap even on the heaviest teams.
+    """
+    return count_hash_key_overrides_above_threshold(team_id, feature_flag_key, HASH_KEY_OVERRIDE_LARGE_TEAM_THRESHOLD)
+
+
+def _capture_if_final_attempt(celery_task: Task, exc: Exception, **context: object) -> None:
+    """Send ``exc`` to Sentry/PostHog on the final retry so silent regressions
+    surface in dashboards rather than only in retry logs. The caller always
+    re-raises — this only adds the capture side-effect."""
+    # ``request.retries`` is 0 on the first attempt and increments before each
+    # retry, so it equals ``max_retries`` only on the very last attempt.
+    if celery_task.request.retries >= HASH_KEY_OVERRIDE_MAX_RETRIES:
+        capture_exception(exc, additional_properties=context)
+        logger.exception(
+            "hash_key_override_cleanup_retries_exhausted",
+            **context,
+        )
+
+
+@shared_task(
+    bind=True,
+    ignore_result=True,
+    queue=CeleryQueue.FEATURE_FLAGS_LONG_RUNNING.value,
+    autoretry_for=(DatabaseError, OperationalError),
+    retry_kwargs={"max_retries": HASH_KEY_OVERRIDE_MAX_RETRIES, "countdown": 60},
+)
+def rewrite_hash_key_overrides_for_flag(self: Task, team_id: int, old_key: str, new_key: str) -> None:
+    """Rewrite ``FeatureFlagHashKeyOverride`` rows from ``old_key`` -> ``new_key``
+    for one team.
+
+    Fired on commit when a feature flag's key is renamed via the API. Without this,
+    override rows still reference the old key and become orphaned (silently
+    inflating the table forever).
+
+    The rewrite mirrors the "first override wins" semantics from
+    ``set_feature_flag_hash_key_overrides`` (INSERT ... ON CONFLICT DO NOTHING):
+    if a person already has a row under ``new_key``, the corresponding
+    ``old_key`` row is dropped instead of renamed, so the bulk UPDATE never
+    collides with the unique constraint on (team, person, feature_flag_key).
+
+    Idempotent: re-running with the same args is a no-op (the second run finds no
+    rows under ``old_key``). Safe to retry on transient DB errors.
+    """
+    if old_key == new_key:
+        return
+
+    if _exceeds_large_team_threshold(team_id, old_key):
+        # Defer to the offline backfill management command (separate PR). The
+        # write-time path is best-effort; the backfill is the safety net.
+        logger.warning(
+            "rewrite_hash_key_overrides_for_flag_skipped_large_team",
+            team_id=team_id,
+            old_key=old_key,
+            new_key=new_key,
+            threshold=HASH_KEY_OVERRIDE_LARGE_TEAM_THRESHOLD,
+        )
+        return
+
+    try:
+        total_pre_deleted = 0
+        total_updated = 0
+
+        # Step 1 — drop ``old_key`` rows for any person who already has a
+        # ``new_key`` row, in batches so we don't hold locks on the full set.
+        while True:
+            with transaction.atomic(using=PERSONS_DB_FOR_WRITE):
+                colliding_ids = get_colliding_hash_key_override_ids(
+                    team_id, old_key, new_key, limit=HASH_KEY_OVERRIDE_BATCH_SIZE
+                )
+                if not colliding_ids:
+                    break
+                total_pre_deleted += delete_hash_key_overrides_by_ids(colliding_ids)
+
+        # Step 2 — rename the surviving ``old_key`` rows in batches. With the
+        # collisions cleared above, each batched UPDATE is collision-free.
+        while True:
+            with transaction.atomic(using=PERSONS_DB_FOR_WRITE):
+                ids = get_hash_key_override_ids(team_id, old_key, limit=HASH_KEY_OVERRIDE_BATCH_SIZE)
+                if not ids:
+                    break
+                total_updated += rename_hash_key_overrides_by_ids(ids, new_key=new_key)
+
+        logger.info(
+            "rewrite_hash_key_overrides_for_flag",
+            team_id=team_id,
+            old_key=old_key,
+            new_key=new_key,
+            rows_pre_deleted=total_pre_deleted,
+            rows_updated=total_updated,
+        )
+    except (DatabaseError, OperationalError) as exc:
+        _capture_if_final_attempt(
+            self,
+            exc,
+            task="rewrite_hash_key_overrides_for_flag",
+            team_id=team_id,
+            old_key=old_key,
+            new_key=new_key,
+        )
+        raise
+
+
+@shared_task(
+    bind=True,
+    ignore_result=True,
+    queue=CeleryQueue.FEATURE_FLAGS_LONG_RUNNING.value,
+    autoretry_for=(DatabaseError, OperationalError),
+    retry_kwargs={"max_retries": HASH_KEY_OVERRIDE_MAX_RETRIES, "countdown": 60},
+)
+def delete_hash_key_overrides_for_flag(self: Task, team_id: int, key: str) -> None:
+    """Delete ``FeatureFlagHashKeyOverride`` rows for one (team, flag key) tuple.
+
+    Fired on commit when a feature flag is soft-deleted via the API. Idempotent:
+    re-running deletes nothing extra. Safe to retry on transient DB errors.
+    """
+    if _exceeds_large_team_threshold(team_id, key):
+        logger.warning(
+            "delete_hash_key_overrides_for_flag_skipped_large_team",
+            team_id=team_id,
+            key=key,
+            threshold=HASH_KEY_OVERRIDE_LARGE_TEAM_THRESHOLD,
+        )
+        return
+
+    try:
+        total_deleted = 0
+        while True:
+            with transaction.atomic(using=PERSONS_DB_FOR_WRITE):
+                ids = get_hash_key_override_ids(team_id, key, limit=HASH_KEY_OVERRIDE_BATCH_SIZE)
+                if not ids:
+                    break
+                total_deleted += delete_hash_key_overrides_by_ids(ids)
+
+        logger.info(
+            "delete_hash_key_overrides_for_flag",
+            team_id=team_id,
+            key=key,
+            rows_deleted=total_deleted,
+        )
+    except (DatabaseError, OperationalError) as exc:
+        _capture_if_final_attempt(
+            self,
+            exc,
+            task="delete_hash_key_overrides_for_flag",
+            team_id=team_id,
+            key=key,
+        )
+        raise
