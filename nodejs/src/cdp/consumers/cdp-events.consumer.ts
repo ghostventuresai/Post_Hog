@@ -1,6 +1,8 @@
 import { DateTime } from 'luxon'
 import { Message } from 'node-rdkafka'
 
+import { InternalFetchService } from '~/common/services/internal-fetch'
+import { NotificationService } from '~/common/services/notification.service'
 import { instrumentFn, instrumented } from '~/common/tracing/tracing-utils'
 
 import { convertToHogFunctionInvocationGlobals } from '../../cdp/utils'
@@ -36,6 +38,7 @@ export class CdpEventsConsumer<
     protected kafkaConsumer: KafkaConsumerInterface
 
     private hogRateLimiter: HogRateLimiterService
+    private notificationService: NotificationService
 
     constructor(
         config: TConfig,
@@ -53,6 +56,10 @@ export class CdpEventsConsumer<
                 ttl: config.CDP_RATE_LIMITER_TTL,
             },
             this.redis
+        )
+        this.notificationService = new NotificationService(
+            this.redis,
+            new InternalFetchService(config.INTERNAL_API_BASE_URL, config.INTERNAL_API_SECRET)
         )
     }
 
@@ -330,6 +337,15 @@ export class CdpEventsConsumer<
                             hogFlowName: item.hogFlow.name,
                             eventUuid,
                             personId,
+                        })
+
+                        await this.notificationService.notify('hog_flow', {
+                            type: 'workflow_rate_limited',
+                            teamId: item.teamId,
+                            functionId: item.functionId,
+                            functionName: item.hogFlow.name,
+                            createdById: item.hogFlow.created_by_id ?? null,
+                            priority: 'critical',
                         })
 
                         return

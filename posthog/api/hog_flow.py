@@ -1243,3 +1243,49 @@ class InternalHogFlowViewSet(TeamAndOrgViewSetMixin, LogEntryMixin, AppMetricsMi
         except Exception as e:
             logger.exception("Error in internal_process_due_schedules", error=str(e))
             return Response({"error": "Internal server error"}, status=500)
+
+    def internal_notify(self, request: Request, team_id: str) -> Response:
+        """
+        Internal endpoint called by CDP consumers to send workflow notifications.
+        Dispatches to the appropriate handler based on the 'type' field.
+        """
+        from products.workflows.backend.services.notifications import handle_workflow_rate_limited
+
+        try:
+            Team.objects.get(id=int(team_id))
+        except (Team.DoesNotExist, ValueError):
+            return Response({"error": "Team not found"}, status=404)
+
+        notification_type = request.data.get("type")
+        hog_flow_id = request.data.get("hog_flow_id")
+        hog_flow_name = request.data.get("hog_flow_name", "")
+        created_by_id = request.data.get("created_by_id")
+        priority = request.data.get("priority", "normal")
+        target = request.data.get("target", "owner")
+
+        if not notification_type:
+            return Response({"error": "Missing type"}, status=400)
+        if not hog_flow_id:
+            return Response({"error": "Missing hog_flow_id"}, status=400)
+
+        handlers = {
+            "workflow_rate_limited": handle_workflow_rate_limited,
+        }
+
+        handler = handlers.get(notification_type)
+        if not handler:
+            return Response({"error": f"Unknown notification type: {notification_type}"}, status=400)
+
+        try:
+            handler(
+                team_id=int(team_id),
+                hog_flow_id=hog_flow_id,
+                hog_flow_name=hog_flow_name,
+                created_by_id=created_by_id,
+                priority=priority,
+                target=target,
+            )
+            return Response({"status": "ok"})
+        except Exception as e:
+            logger.exception("Error in internal_notify", error=str(e), notification_type=notification_type)
+            return Response({"error": "Internal server error"}, status=500)

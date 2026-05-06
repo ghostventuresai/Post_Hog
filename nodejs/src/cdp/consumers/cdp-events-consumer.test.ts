@@ -978,6 +978,47 @@ describe('hog flow processing', () => {
             })
         })
 
+        describe('rate limit notifications', () => {
+            let hogFlow: HogFlow
+            let mockNotify: jest.SpyInstance
+
+            beforeEach(async () => {
+                hogFlow = await insertHogFlow(
+                    new FixtureHogFlowBuilder()
+                        .withTeamId(team.id)
+                        .withSimpleWorkflow({
+                            trigger: {
+                                type: 'event',
+                                filters: HOG_FILTERS_EXAMPLES.no_filters.filters ?? {},
+                            },
+                        })
+                        .build()
+                )
+
+                // Mock rate limiter to return isRateLimited: true
+                jest.spyOn(processor['hogRateLimiter'], 'rateLimitMany').mockResolvedValue([
+                    [hogFlow.id, { isRateLimited: true, tokens: 0 }],
+                ])
+
+                // Mock the notification service
+                mockNotify = jest.spyOn(processor['notificationService'], 'notify').mockResolvedValue(undefined)
+            })
+
+            it('should call notificationService.notify on rate limit', async () => {
+                const invocations = await processor['createHogFlowInvocations']([globals])
+
+                expect(invocations).toHaveLength(0)
+                expect(mockNotify).toHaveBeenCalledWith('hog_flow', {
+                    type: 'workflow_rate_limited',
+                    teamId: team.id,
+                    functionId: hogFlow.id,
+                    functionName: hogFlow.name,
+                    createdById: expect.any(Number),
+                    priority: 'critical',
+                })
+            })
+        })
+
         it('should load group properties before building invocations', async () => {
             await insertHogFlow(
                 new FixtureHogFlowBuilder()
