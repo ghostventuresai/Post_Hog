@@ -46,7 +46,7 @@ from posthog.models import User
 from posthog.models.instance_setting import get_instance_setting
 from posthog.oauth2_urls import urlpatterns as oauth2_urls
 from posthog.temporal.codec_server import decode_payloads
-
+from products.tasks.backend.webhooks import handle_github_webhook
 from products.data_warehouse.backend.api.public_source_configs import PublicSourceConfigViewSet
 from products.early_access_features.backend.api import early_access_features
 from products.legal_documents.backend.presentation.webhook import legal_document_pandadoc_webhook
@@ -56,6 +56,7 @@ from products.signals.backend import views as signals_views
 from products.signals.backend.views import SignalUserAutonomyConfigView as signals_user_autonomy_view
 from products.slack_app.backend.api import posthog_code_event_handler, posthog_code_interactivity_handler
 from products.surveys.backend.api.survey import public_survey_page
+from products.conversations.backend.api.github_events import dispatch_github_event
 
 from .utils import opt_slash_path, render_template
 from .views import (
@@ -114,18 +115,15 @@ def github_webhook(request: HttpRequest) -> HttpResponse:
         return HttpResponse("Invalid JSON", status=400)
 
     event_type = request.headers.get("X-GitHub-Event", "")
-
+    products_response = None
+    tasks_response = None
     if event_type in ("issues", "issue_comment"):
-        from products.conversations.backend.api.github_events import dispatch_github_event
+        products_response = dispatch_github_event(request, event_type, payload)
 
-        return dispatch_github_event(request, event_type, payload)
+    if event_type in ("issue_comment", "pull_request_review_comment", "pull_request_review", "pull_request", "check_run"):
+        tasks_response = handle_github_webhook(event_type, payload)
 
-    if event_type == "pull_request":
-        from products.tasks.backend.webhooks import handle_pull_request_event
-
-        return handle_pull_request_event(payload)
-
-    return HttpResponse(status=200)
+    return products_response or tasks_response or HttpResponse(status=200)
 
 
 @requires_csrf_token

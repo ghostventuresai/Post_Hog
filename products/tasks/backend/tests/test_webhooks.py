@@ -5,6 +5,7 @@ from typing import ClassVar
 
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.test import TestCase
 
 from parameterized import parameterized
@@ -68,7 +69,7 @@ class TestGitHubPRWebhook(TestCase):
         signature = generate_github_signature(payload_bytes, self.webhook_secret)
 
         return self.client.post(
-            "/webhooks/github/pr/",
+            "/webhooks/github/",
             data=payload_bytes,
             content_type="application/json",
             headers={"x-hub-signature-256": signature, "x-github-event": event_type},
@@ -149,7 +150,7 @@ class TestGitHubPRWebhook(TestCase):
         payload_bytes = json.dumps(payload).encode("utf-8")
 
         response = self.client.post(
-            "/webhooks/github/pr/",
+            "/webhooks/github/",
             data=payload_bytes,
             content_type="application/json",
             headers={"x-hub-signature-256": "sha256=invalid", "x-github-event": "pull_request"},
@@ -165,7 +166,7 @@ class TestGitHubPRWebhook(TestCase):
         payload = {"action": "closed", "pull_request": {"html_url": "https://github.com/org/repo/pull/1"}}
 
         response = self.client.post(
-            "/webhooks/github/pr/",
+            "/webhooks/github/",
             data=json.dumps(payload),
             content_type="application/json",
             headers={"x-github-event": "pull_request"},
@@ -225,7 +226,7 @@ class TestGitHubPRWebhook(TestCase):
             payload = {"action": "closed", "pull_request": {"html_url": "https://github.com/org/repo/pull/1"}}
 
             response = self.client.post(
-                "/webhooks/github/pr/",
+                "/webhooks/github/",
                 data=json.dumps(payload),
                 content_type="application/json",
                 headers={"x-github-event": "pull_request"},
@@ -235,7 +236,7 @@ class TestGitHubPRWebhook(TestCase):
 
     def test_method_not_allowed(self):
         """Test that non-POST methods are rejected."""
-        response = self.client.get("/webhooks/github/pr/")
+        response = self.client.get("/webhooks/github/")
         self.assertEqual(response.status_code, 405)
 
     @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
@@ -266,6 +267,37 @@ class TestGitHubPRWebhook(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_capture.assert_not_called()
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    def test_malformed_json_returns_400(self, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+        body = b"not json{"
+        signature = generate_github_signature(body, self.webhook_secret)
+        response = self.client.post(
+            "/webhooks/github/",
+            data=body,
+            content_type="application/json",
+            headers={"x-hub-signature-256": signature, "x-github-event": "pull_request"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    def test_type_mismatch_returns_400(self, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+        # check_run.pull_requests must be a list — a string is uncoercible.
+        payload = {
+            "action": "completed",
+            "check_run": {"name": "lint", "conclusion": "failure", "pull_requests": "not a list"},
+        }
+        payload_bytes = json.dumps(payload).encode("utf-8")
+        signature = generate_github_signature(payload_bytes, self.webhook_secret)
+        response = self.client.post(
+            "/webhooks/github/",
+            data=payload_bytes,
+            content_type="application/json",
+            headers={"x-hub-signature-256": signature, "x-github-event": "check_run"},
+        )
+        self.assertEqual(response.status_code, 400)
 
 
 class TestFindTaskRun(TestCase):
@@ -391,7 +423,7 @@ class TestFindTaskRun(TestCase):
 
 class TestGitHubWebhookFanout(TestCase):
     """Verify that the unified ``github_webhook`` dispatcher routes events
-    to the correct product handler. Tests both ``/webhooks/github/pr/``
+    to the correct product handler. Tests both ``/webhooks/github/``
     (legacy) and ``/webhooks/github/`` (new unified URL)."""
 
     organization: ClassVar[Organization]
@@ -439,7 +471,7 @@ class TestGitHubWebhookFanout(TestCase):
         self.webhook_secret = "test-webhook-secret"
 
     def _make_request(
-        self, payload: dict, event_type: str = "issues", delivery_id: str = "del-1", url: str = "/webhooks/github/pr/"
+        self, payload: dict, event_type: str = "issues", delivery_id: str = "del-1", url: str = "/webhooks/github/"
     ):
         payload_bytes = json.dumps(payload).encode("utf-8")
         signature = generate_github_signature(payload_bytes, self.webhook_secret)
@@ -525,7 +557,7 @@ class TestGitHubWebhookFanout(TestCase):
 
     @parameterized.expand(
         [
-            ("legacy_url", "/webhooks/github/pr/"),
+            ("legacy_url", "/webhooks/github/"),
             ("unified_url", "/webhooks/github/"),
         ]
     )
@@ -577,3 +609,273 @@ class TestGitHubWebhookFanout(TestCase):
     def test_unified_url_get_returns_405(self):
         response = self.client.get("/webhooks/github/")
         self.assertEqual(response.status_code, 405)
+
+
+class TestGitHubCommentWebhook(TestCase):
+    PR_URL = "https://github.com/posthog/posthog/pull/456"
+
+    organization: ClassVar[Organization]
+    team: ClassVar[Team]
+    user: ClassVar[User]
+    task: ClassVar[Task]
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.organization = Organization.objects.create(name="Comment Org")
+        cls.team = Team.objects.create(organization=cls.organization, name="Comment Team")
+        cls.user = User.objects.create(email="comment@example.com", distinct_id="comment-user-123")
+        cls.task = Task.objects.create(
+            team=cls.team,
+            created_by=cls.user,
+            title="Comment Task",
+            description="Task for comment tests",
+            origin_product=Task.OriginProduct.USER_CREATED,
+            repository="posthog/posthog",
+        )
+
+    def setUp(self):
+        self.client = APIClient()
+        self.webhook_secret = "test-webhook-secret"
+        # Cache is process-wide; clear between tests so the resume-run cooldown
+        # in webhooks.py doesn't carry over and short-circuit the next test.
+        cache.clear()
+
+    def _make_webhook_request(self, payload: dict, event_type: str = "issue_comment"):
+        payload_bytes = json.dumps(payload).encode("utf-8")
+        signature = generate_github_signature(payload_bytes, self.webhook_secret)
+        return self.client.post(
+            "/webhooks/github/",
+            data=payload_bytes,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=signature,
+            HTTP_X_GITHUB_EVENT=event_type,
+        )
+
+    def _make_issue_comment_payload(
+        self,
+        pr_url: str = PR_URL,
+        body: str = "Fix this bug",
+        login: str = "reviewer",
+        user_type: str = "User",
+        action: str = "created",
+    ) -> dict:
+        return {
+            "action": action,
+            "comment": {
+                "body": body,
+                "user": {"login": login, "type": user_type},
+            },
+            "issue": {
+                "pull_request": {"html_url": pr_url},
+            },
+        }
+
+    def _make_review_comment_payload(
+        self,
+        pr_url: str = PR_URL,
+        body: str = "Needs refactor",
+        login: str = "reviewer",
+        user_type: str = "User",
+        action: str = "created",
+        file_path: str = "src/app.py",
+        line: int = 42,
+        diff_hunk: str = "@@ -10,3 +10,4 @@\n old line\n+new line",
+    ) -> dict:
+        return {
+            "action": action,
+            "comment": {
+                "body": body,
+                "user": {"login": login, "type": user_type},
+                "path": file_path,
+                "line": line,
+                "diff_hunk": diff_hunk,
+            },
+            "pull_request": {
+                "html_url": pr_url,
+                "head": {"ref": "feature/my-branch"},
+            },
+        }
+
+    @patch("products.tasks.backend.webhooks.posthoganalytics.feature_enabled", return_value=True)
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._signal_running_workflow")
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_issue_comment_signals_running_workflow(
+        self, mock_capture, mock_signal, mock_get_secret, mock_feature_enabled
+    ):
+        mock_get_secret.return_value = self.webhook_secret
+        task_run = TaskRun.objects.create(
+            task=self.task,
+            team=self.team,
+            status=TaskRun.Status.IN_PROGRESS,
+            output={"pr_url": self.PR_URL},
+        )
+
+        response = self._make_webhook_request(self._make_issue_comment_payload())
+
+        self.assertEqual(response.status_code, 200)
+        mock_signal.assert_called_once()
+        signal_run = mock_signal.call_args[0][0]
+        signal_message = mock_signal.call_args[0][1]
+        self.assertEqual(signal_run.id, task_run.id)
+        self.assertIn("[GitHub Comment from @reviewer]", signal_message)
+        self.assertIn("Fix this bug", signal_message)
+
+    @patch("products.tasks.backend.webhooks.posthoganalytics.feature_enabled", return_value=True)
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._create_resume_run")
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_issue_comment_creates_resume_run_for_terminal(
+        self, mock_capture, mock_resume, mock_get_secret, mock_feature_enabled
+    ):
+        mock_get_secret.return_value = self.webhook_secret
+        TaskRun.objects.create(
+            task=self.task,
+            team=self.team,
+            status=TaskRun.Status.COMPLETED,
+            output={"pr_url": self.PR_URL},
+        )
+
+        response = self._make_webhook_request(self._make_issue_comment_payload())
+
+        self.assertEqual(response.status_code, 200)
+        mock_resume.assert_called_once()
+        _, resume_message, resume_pr_url = mock_resume.call_args[0]
+        self.assertIn("Fix this bug", resume_message)
+        self.assertEqual(resume_pr_url, self.PR_URL)
+
+    @patch("products.tasks.backend.webhooks.posthoganalytics.feature_enabled", return_value=True)
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._signal_running_workflow")
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_review_comment_includes_file_and_line_context(
+        self, mock_capture, mock_signal, mock_get_secret, mock_feature_enabled
+    ):
+        mock_get_secret.return_value = self.webhook_secret
+        TaskRun.objects.create(
+            task=self.task,
+            team=self.team,
+            status=TaskRun.Status.IN_PROGRESS,
+            output={"pr_url": self.PR_URL},
+        )
+
+        response = self._make_webhook_request(
+            self._make_review_comment_payload(),
+            event_type="pull_request_review_comment",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_signal.assert_called_once()
+        signal_message = mock_signal.call_args[0][1]
+        self.assertIn("[GitHub Review Comment from @reviewer on `src/app.py` (line 42)]", signal_message)
+        self.assertIn("```diff", signal_message)
+        self.assertIn("Needs refactor", signal_message)
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._forward_comment_to_task")
+    def test_bot_comments_ignored(self, mock_forward, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+
+        response = self._make_webhook_request(self._make_issue_comment_payload(user_type="Bot"))
+
+        self.assertEqual(response.status_code, 200)
+        mock_forward.assert_not_called()
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._forward_comment_to_task")
+    def test_non_pr_issue_comment_ignored(self, mock_forward, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+        payload = {
+            "action": "created",
+            "comment": {
+                "body": "This is an issue comment",
+                "user": {"login": "someone", "type": "User"},
+            },
+            "issue": {
+                "html_url": "https://github.com/posthog/posthog/issues/789",
+            },
+        }
+
+        response = self._make_webhook_request(payload)
+
+        self.assertEqual(response.status_code, 200)
+        mock_forward.assert_not_called()
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._forward_comment_to_task")
+    def test_comment_edit_ignored(self, mock_forward, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+
+        response = self._make_webhook_request(self._make_issue_comment_payload(action="edited"))
+
+        self.assertEqual(response.status_code, 200)
+        mock_forward.assert_not_called()
+
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_comment_no_matching_task_run(self, mock_capture, mock_get_secret):
+        mock_get_secret.return_value = self.webhook_secret
+
+        response = self._make_webhook_request(
+            self._make_issue_comment_payload(pr_url="https://github.com/unknown/repo/pull/999")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_capture.assert_not_called()
+
+    @patch("products.tasks.backend.webhooks.posthoganalytics.feature_enabled", return_value=True)
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.webhooks._create_resume_run")
+    @patch("products.tasks.backend.webhooks._signal_running_workflow", return_value=False)
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_non_terminal_falls_through_to_resume_when_workflow_unreachable(
+        self, mock_capture, mock_signal, mock_resume, mock_get_secret, mock_feature_enabled
+    ):
+        # Regression for Josh's review note: TaskRun.is_terminal == False does not
+        # imply a live workflow exists. When _signal_running_workflow reports the
+        # workflow is gone, we must still create a resume run so the comment is
+        # not silently dropped.
+        mock_get_secret.return_value = self.webhook_secret
+        TaskRun.objects.create(
+            task=self.task,
+            team=self.team,
+            status=TaskRun.Status.IN_PROGRESS,
+            output={"pr_url": self.PR_URL},
+        )
+
+        response = self._make_webhook_request(self._make_issue_comment_payload())
+
+        self.assertEqual(response.status_code, 200)
+        mock_signal.assert_called_once()
+        mock_resume.assert_called_once()
+
+    @patch("products.tasks.backend.webhooks.posthoganalytics.feature_enabled", return_value=True)
+    @patch("products.tasks.backend.webhooks.get_github_webhook_secret")
+    @patch("products.tasks.backend.temporal.client.execute_task_processing_workflow")
+    @patch("products.tasks.backend.models.posthoganalytics.capture")
+    def test_resume_includes_pr_context(self, mock_capture, mock_execute, mock_get_secret, mock_feature_enabled):
+        mock_get_secret.return_value = self.webhook_secret
+        TaskRun.objects.create(
+            task=self.task,
+            team=self.team,
+            status=TaskRun.Status.COMPLETED,
+            output={"pr_url": self.PR_URL},
+            state={"snapshot_external_id": "snap-123"},
+        )
+
+        response = self._make_webhook_request(self._make_issue_comment_payload(body="Please fix the tests"))
+
+        self.assertEqual(response.status_code, 200)
+        mock_execute.assert_called_once()
+        call_kwargs = mock_execute.call_args[1]
+        self.assertEqual(call_kwargs["team_id"], self.team.id)
+        self.assertEqual(call_kwargs["user_id"], self.user.id)
+        self.assertTrue(call_kwargs["skip_user_check"])
+
+        # Verify the new run was created with proper state
+        new_run = TaskRun.objects.filter(task=self.task).order_by("-created_at").first()
+        self.assertIsNotNone(new_run)
+        assert new_run is not None  # narrow Optional for mypy
+        self.assertEqual(new_run.state.get("snapshot_external_id"), "snap-123")
+        self.assertIn("[CONTEXT:", new_run.state.get("pending_user_message", ""))
+        self.assertIn("Please fix the tests", new_run.state.get("pending_user_message", ""))
