@@ -9957,6 +9957,16 @@ export namespace Schemas {
       uploads: UploadTarget[];
     }
 
+    export interface CreateTextSource {
+      /**
+       * Short human label for the source. Shown in the settings list and in agent citations.
+       * @maxLength 255
+       */
+      name: string;
+      /** Raw text to index. Capped at 1 MB; larger payloads should be split into multiple sources or wait for URL/file support in Stage 2/3. */
+      text: string;
+    }
+
     /**
      * * `web` - web
     * `api` - api
@@ -21840,6 +21850,33 @@ export namespace Schemas {
       '20': '2.0',
     } as const;
 
+    export type KnowledgeSourceDTOCrawlConfig = { [key: string]: unknown };
+
+    export interface KnowledgeSourceDTO {
+      id: string;
+      team_id: number;
+      name: string;
+      source_type: string;
+      status: string;
+      error_message: string;
+      document_count: number;
+      chunk_count: number;
+      created_at: string;
+      /** @nullable */
+      updated_at: string | null;
+      source_url?: string;
+      /** @nullable */
+      last_refresh_at?: string | null;
+      last_refresh_status?: string;
+      last_refresh_error?: string;
+      crawl_mode?: string;
+      crawl_config?: KnowledgeSourceDTOCrawlConfig;
+      original_filename?: string;
+      file_content_type?: string;
+      /** @nullable */
+      file_size_bytes?: number | null;
+    }
+
     export interface LLMModelInfo {
       /** Provider-specific model identifier (e.g. 'gpt-4o-mini', 'claude-3-5-sonnet-20241022'). */
       id: string;
@@ -24457,6 +24494,15 @@ export namespace Schemas {
       /** @nullable */
       previous?: string | null;
       results: IntegrationConfig[];
+    }
+
+    export interface PaginatedKnowledgeSourceDTOList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: KnowledgeSourceDTO[];
     }
 
     export interface PaginatedLLMPromptListList {
@@ -32437,6 +32483,20 @@ export namespace Schemas {
       baseline_file_paths?: PatchedUpdateRepoRequestInputBaselineFilePaths;
       /** @nullable */
       enable_pr_comments?: boolean | null;
+    }
+
+    /**
+     * PATCH payload for text sources. Both fields optional, at least one
+    required. `text` triggers a re-chunk; `name` alone does not.
+     */
+    export interface PatchedUpdateTextSource {
+      /**
+       * New human label for the source.
+       * @maxLength 255
+       */
+      name?: string;
+      /** Replacement text. Omit to keep the existing content. */
+      text?: string;
     }
 
     /**
@@ -41696,6 +41756,21 @@ export namespace Schemas {
      * The initial index from which to return the results.
      */
     offset?: number;
+    };
+
+    export type BusinessKnowledgeSourcesListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
+    };
+
+    export type BusinessKnowledgeSourcesTextRetrieve200 = {
+      text?: string;
     };
 
     export type ChangeRequestsListParams = {

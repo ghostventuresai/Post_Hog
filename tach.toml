@@ -36,6 +36,7 @@ path = "ee"
 depends_on = [
     "posthog",
     "products.alerts",
+    "products.business_knowledge",
     "products.dashboards",
     "products.data_warehouse",
     "products.error_tracking",
@@ -61,6 +62,7 @@ depends_on = [
     "products.access_control",
     "products.analytics_platform",
     "products.batch_exports",
+    "products.business_knowledge",
     "products.conversations",
     "products.customer_analytics",
     "products.dashboards",
@@ -137,6 +139,7 @@ path = "products.conversations"
 depends_on = [
     "ee",
     "posthog",
+    "products.business_knowledge",
 ]
 layer = "modules"
 
@@ -491,7 +494,7 @@ expose = [
     "backend\\.presentation\\.views.*",
 ]
 from = [
-    "products\\.(experiments|mcp_analytics|mcp_store|metrics|notifications|tracing|visual_review)",
+    "products\\.(business_knowledge|experiments|mcp_analytics|mcp_store|metrics|notifications|tracing|visual_review)",
 ]
 
 # TODO: Experiments-specific temporary interface
@@ -553,8 +556,16 @@ layer = "modules"
 [[modules]]
 path = "products.access_control"
 depends_on = [
-    "posthog",
     "ee",
+    "posthog",
+]
+layer = "modules"
+
+[[modules]]
+path = "products.business_knowledge"
+depends_on = [
+    "ee",
+    "posthog",
 ]
 layer = "modules"
 

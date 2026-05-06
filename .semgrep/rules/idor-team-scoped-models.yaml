@@ -140,6 +140,9 @@ rules:
                               |Insight
                               |InsightVariable
                               |Integration
+                              |KnowledgeChunk
+                              |KnowledgeDocument
+                              |KnowledgeSource
                               |IntegrationRepositoryCacheEntry
                               |Link
                               |LiveDebuggerBreakpoint
@@ -351,6 +354,9 @@ rules:
                         |Insight
                         |InsightVariable
                         |Integration
+                        |KnowledgeChunk
+                        |KnowledgeDocument
+                        |KnowledgeSource
                         |IntegrationRepositoryCacheEntry
                         |Link
                         |LiveDebuggerBreakpoint
