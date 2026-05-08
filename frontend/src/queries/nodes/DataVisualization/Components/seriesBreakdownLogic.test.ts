@@ -74,6 +74,14 @@ describe('seriesBreakdownLogic', () => {
     let logic: ReturnType<typeof seriesBreakdownLogic.build>
     let builtDataVizLogic: ReturnType<typeof dataVisualizationLogic.build>
 
+    function remountWithQuery(query: DataVisualizationNode): void {
+        builtDataVizLogic.unmount()
+        globalQuery = query
+        dummyDataVisualizationLogicProps.query = globalQuery
+        builtDataVizLogic = dataVisualizationLogic(dummyDataVisualizationLogicProps)
+        builtDataVizLogic.mount()
+    }
+
     beforeEach(() => {
         initKeaTests()
 
@@ -172,17 +180,10 @@ describe('seriesBreakdownLogic', () => {
     })
 
     it('adds a series breakdown after mount if one already selected in query', async () => {
-        builtDataVizLogic.unmount()
-        globalQuery = {
+        remountWithQuery({
             ...makeInitialQuery(),
-            chartSettings: {
-                goalLines: undefined,
-                seriesBreakdownColumn: 'test_column',
-            },
-        }
-        dummyDataVisualizationLogicProps.query = globalQuery
-        builtDataVizLogic = dataVisualizationLogic(dummyDataVisualizationLogicProps)
-        builtDataVizLogic.mount()
+            chartSettings: { goalLines: undefined, seriesBreakdownColumn: 'test_column' },
+        })
 
         logic = seriesBreakdownLogic({ key: testUniqueKey })
         logic.mount()
@@ -249,6 +250,92 @@ describe('seriesBreakdownLogic', () => {
         })
     })
 
+    it('storedBreakdownColors is undefined by default', async () => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: undefined,
+        })
+    })
+
+    it('loads stored breakdown colors from existing query on mount', async () => {
+        remountWithQuery({
+            ...makeInitialQuery(),
+            chartSettings: {
+                goalLines: undefined,
+                seriesBreakdownColumn: 'browser',
+                seriesBreakdownColors: { Safari: '#ff0000', Chrome: '#00ff00' },
+            },
+        })
+
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: { Safari: '#ff0000', Chrome: '#00ff00' },
+        })
+    })
+
+    it.each([
+        ['a new color for a series', 'Safari', '#ff0000', { Safari: '#ff0000' }],
+        ['a color using a named color', 'Firefox', 'blue', { Firefox: 'blue' }],
+    ])('updateBreakdownSeriesColor stores %s', async (_desc, seriesName, color, expectedColors) => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        logic.actions.updateBreakdownSeriesColor(seriesName, color)
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: expectedColors,
+        })
+
+        expect(globalQuery).toEqual({
+            ...makeInitialQuery(),
+            chartSettings: {
+                goalLines: undefined,
+                seriesBreakdownColumn: undefined,
+                seriesBreakdownColors: expectedColors,
+            },
+        })
+    })
+
+    it('updateBreakdownSeriesColor merges colors without overwriting others', async () => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        logic.actions.updateBreakdownSeriesColor('Safari', '#ff0000')
+        logic.actions.updateBreakdownSeriesColor('Chrome', '#00ff00')
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: { Safari: '#ff0000', Chrome: '#00ff00' },
+        })
+    })
+
+    it('updateBreakdownSeriesColor overwrites the color for the same series', async () => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        logic.actions.updateBreakdownSeriesColor('Safari', '#ff0000')
+        logic.actions.updateBreakdownSeriesColor('Safari', '#0000ff')
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: { Safari: '#0000ff' },
+        })
+    })
+
+    it('deleteSeriesBreakdown clears stored breakdown colors', async () => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        logic.actions.updateBreakdownSeriesColor('Safari', '#ff0000')
+        logic.actions.deleteSeriesBreakdown()
+
+        await expectLogic(logic).toMatchValues({
+            storedBreakdownColors: undefined,
+        })
+    })
+
     it('computes the correct data', async () => {
         logic = seriesBreakdownLogic({ key: testUniqueKey })
         logic.mount()
@@ -258,6 +345,12 @@ describe('seriesBreakdownLogic', () => {
             query: globalQuery.source,
         })
         builtDataNodeLogic.mount()
+
+        builtDataVizLogic.actions.updateXSeries('event')
+        builtDataVizLogic.actions.addYSeries('total_count')
+
+        logic.actions.addSeriesBreakdown('browser')
+
         builtDataNodeLogic.actions.setResponse({
             results: [
                 ['signed_up', 'Safari', 11],
@@ -302,7 +395,7 @@ describe('seriesBreakdownLogic', () => {
                         data: [11, 32, 282],
                         settings: {
                             formatting: { prefix: '', suffix: '' },
-                            display: { displayType: undefined, yAxisPosition: undefined },
+                            display: { color: undefined, displayType: undefined, yAxisPosition: undefined },
                         },
                     },
                     {
@@ -310,7 +403,7 @@ describe('seriesBreakdownLogic', () => {
                         data: [22, 60, 820],
                         settings: {
                             formatting: { prefix: '', suffix: '' },
-                            display: { displayType: undefined, yAxisPosition: undefined },
+                            display: { color: undefined, displayType: undefined, yAxisPosition: undefined },
                         },
                     },
                     {
@@ -445,9 +538,59 @@ describe('seriesBreakdownLogic', () => {
                         data: [0, 0, 820],
                         settings: {
                             formatting: { prefix: '', suffix: '' },
-                            display: { displayType: undefined, yAxisPosition: undefined },
+                            display: { color: undefined, displayType: undefined, yAxisPosition: undefined },
                         },
                     },
+                ],
+                isUnaggregated: false,
+            },
+        })
+    })
+
+    it('seriesBreakdownData reflects stored colors, falling back to undefined for unstyled series', async () => {
+        logic = seriesBreakdownLogic({ key: testUniqueKey })
+        logic.mount()
+
+        const builtDataNodeLogic = dataNodeLogic({
+            key: testUniqueKey,
+            query: globalQuery.source,
+        })
+        builtDataNodeLogic.mount()
+
+        builtDataVizLogic.actions.updateXSeries('event')
+        builtDataVizLogic.actions.addYSeries('total_count')
+        logic.actions.addSeriesBreakdown('browser')
+        logic.actions.updateBreakdownSeriesColor('Safari', '#ff0000')
+
+        builtDataNodeLogic.actions.setResponse({
+            results: [
+                ['signed_up', 'Safari', 11],
+                ['signed_up', 'Chrome', 59],
+            ],
+            columns: ['event', 'browser', 'total_count'],
+            types: [
+                ['event', 'String'],
+                ['browser', 'Nullable(String)'],
+                ['total_count', 'UInt64'],
+            ],
+        })
+
+        await expectLogic(logic).toMatchValues({
+            seriesBreakdownData: {
+                xData: expect.objectContaining({ data: ['signed_up'] }),
+                seriesData: [
+                    expect.objectContaining({
+                        name: 'Safari',
+                        settings: expect.objectContaining({
+                            display: expect.objectContaining({ color: '#ff0000' }),
+                        }),
+                    }),
+                    expect.objectContaining({
+                        name: 'Chrome',
+                        settings: expect.objectContaining({
+                            display: expect.objectContaining({ color: undefined }),
+                        }),
+                    }),
                 ],
                 isUnaggregated: false,
             },

@@ -81,6 +81,7 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
     actions(({ values }) => ({
         addSeriesBreakdown: (columnName: string | null) => ({ columnName, response: values.response }),
         deleteSeriesBreakdown: () => ({}),
+        updateBreakdownSeriesColor: (seriesName: string, color: string) => ({ seriesName, color }),
     })),
     selectors({
         selectedSeriesBreakdownColumn: [
@@ -88,6 +89,10 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
             (query): string | null | undefined => {
                 return query?.chartSettings?.seriesBreakdownColumn
             },
+        ],
+        storedBreakdownColors: [
+            (s) => [s.query],
+            (query): Record<string, string> | undefined => query?.chartSettings?.seriesBreakdownColors,
         ],
         showSeriesBreakdown: [
             (s) => [s.selectedSeriesBreakdownColumn],
@@ -119,6 +124,7 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
                 s.selectedXAxis,
                 s.response,
                 s.columns,
+                s.storedBreakdownColors,
                 s.chartSettings,
             ],
             (
@@ -128,6 +134,7 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
                 xSeries,
                 response,
                 columns,
+                storedBreakdownColors,
                 chartSettings
             ): BreakdownSeriesData<number | null> => {
                 if (
@@ -232,6 +239,7 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
                                 display: {
                                     yAxisPosition: selectedYAxis.settings?.display?.yAxisPosition,
                                     displayType: selectedYAxis.settings?.display?.displayType,
+                                    color: storedBreakdownColors?.[seriesName],
                                 },
                             },
                         }
@@ -266,9 +274,22 @@ export const seriesBreakdownLogic = kea<seriesBreakdownLogicType>([
                     chartSettings: {
                         ...query.chartSettings,
                         seriesBreakdownColumn: undefined,
+                        seriesBreakdownColors: undefined,
                     },
                 }
             })
+        },
+        updateBreakdownSeriesColor: ({ seriesName, color }) => {
+            actions.setQuery((query) => ({
+                ...query,
+                chartSettings: {
+                    ...query.chartSettings,
+                    seriesBreakdownColors: {
+                        ...query.chartSettings?.seriesBreakdownColors,
+                        [seriesName]: color,
+                    },
+                },
+            }))
         },
         clearAxis: () => {
             actions.setQuery((query) => ({
