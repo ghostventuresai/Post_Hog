@@ -1,7 +1,7 @@
 import { useActions, useValues } from 'kea'
 import posthog from 'posthog-js'
 
-import { IconFlag, IconHeart, IconHeartFilled } from '@posthog/icons'
+import { IconDashboard, IconFlag, IconHeart, IconHeartFilled } from '@posthog/icons'
 import { LemonDropdown, ProfilePicture } from '@posthog/lemon-ui'
 
 import { TagSelect } from 'lib/components/TagSelect'
@@ -16,8 +16,21 @@ import { membersLogic } from 'scenes/organization/membersLogic'
 import { INSIGHT_TYPE_OPTIONS } from 'scenes/saved-insights/SavedInsights'
 import { SavedInsightFilters } from 'scenes/saved-insights/savedInsightsLogic'
 
-export type QuickFilterKind = 'insightType' | 'tags' | 'createdBy' | 'favorites' | 'featureFlags'
-const ALL_QUICK_FILTERS: QuickFilterKind[] = ['insightType', 'tags', 'createdBy', 'favorites', 'featureFlags']
+export type QuickFilterKind =
+    | 'insightType'
+    | 'tags'
+    | 'createdBy'
+    | 'favorites'
+    | 'featureFlags'
+    | 'dashboardMembership'
+const ALL_QUICK_FILTERS: QuickFilterKind[] = [
+    'insightType',
+    'tags',
+    'createdBy',
+    'favorites',
+    'featureFlags',
+    'dashboardMembership',
+]
 
 export function SavedInsightsFilters({
     filters,
@@ -31,7 +44,7 @@ export function SavedInsightsFilters({
     /** When true, inactive filters appear borderless. */
     borderless?: boolean
 }): JSX.Element {
-    const { search, hideFeatureFlagInsights, favorited, tags, insightType, createdBy } = filters
+    const { search, hideFeatureFlagInsights, hideOnDashboard, favorited, tags, insightType, createdBy } = filters
     const { meFirstMembers, filteredMembers, membersLoading, search: memberSearch } = useValues(membersLogic)
     const { setSearch: setMemberSearch, ensureAllMembersLoaded } = useActions(membersLogic)
     const quickFilterSet = new Set(quickFilters)
@@ -220,6 +233,18 @@ export function SavedInsightsFilters({
                             onToggle={(checked) => setFilters({ hideFeatureFlagInsights: checked })}
                         />
                     )}
+                    {quickFilterSet.has('dashboardMembership') && (
+                        <DashboardMembershipToggle
+                            hideOnDashboard={hideOnDashboard ?? undefined}
+                            onToggle={(checked) => {
+                                setFilters({ hideOnDashboard: checked })
+                                posthog.capture('saved insights filtered', {
+                                    filter_type: 'hide_on_dashboard',
+                                    value: checked,
+                                })
+                            }}
+                        />
+                    )}
                 </div>
             )}
         </div>
@@ -255,6 +280,40 @@ const FeatureFlagInsightsToggle = ({
                 size="small"
             >
                 Hide feature flag insights: <LemonSwitch checked={hideFeatureFlagInsights || false} className="ml-1" />
+            </LemonButton>
+        </Tooltip>
+    )
+}
+
+const DashboardMembershipToggle = ({
+    hideOnDashboard,
+    onToggle,
+}: {
+    hideOnDashboard?: boolean
+    onToggle: (checked: boolean) => void
+}): JSX.Element => {
+    return (
+        <Tooltip
+            title={
+                <div>
+                    <p>
+                        Hide insights that are already attached to a dashboard, so you can focus on insights that
+                        aren't on any dashboard yet.
+                    </p>
+                    <p className="mb-0">
+                        Useful for cleaning up forgotten insights or finding ones worth promoting to a dashboard.
+                    </p>
+                </div>
+            }
+            placement="top"
+        >
+            <LemonButton
+                icon={<IconDashboard />}
+                onClick={() => onToggle(!hideOnDashboard)}
+                type="tertiary"
+                size="small"
+            >
+                Hide insights on dashboards: <LemonSwitch checked={hideOnDashboard || false} className="ml-1" />
             </LemonButton>
         </Tooltip>
     )
