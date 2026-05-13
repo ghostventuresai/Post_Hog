@@ -37253,6 +37253,18 @@ export namespace Schemas {
       Vercel: 'vercel',
     } as const;
 
+    export type EnvironmentsIntegrationsChannelsRetrieveParams = {
+    /**
+     * When provided, look up only this channel by ID instead of returning the full list. Returns a single-element channels array, or empty if not found / not accessible.
+     * @minLength 1
+     */
+    channel_id?: string;
+    /**
+     * When true, bypass the 1h Redis cache and fetch fresh channels from Slack. Subject to per-team rate limiting (30/min).
+     */
+    force_refresh?: boolean;
+    };
+
     export type EnvironmentsIntegrationsGithubBranchesRetrieveParams = {
     /**
      * Maximum number of branches to return
@@ -42227,6 +42239,18 @@ export namespace Schemas {
       Twilio: 'twilio',
       Vercel: 'vercel',
     } as const;
+
+    export type IntegrationsChannelsRetrieveParams = {
+    /**
+     * When provided, look up only this channel by ID instead of returning the full list. Returns a single-element channels array, or empty if not found / not accessible.
+     * @minLength 1
+     */
+    channel_id?: string;
+    /**
+     * When true, bypass the 1h Redis cache and fetch fresh channels from Slack. Subject to per-team rate limiting (30/min).
+     */
+    force_refresh?: boolean;
+    };
 
     export type IntegrationsGithubBranchesRetrieveParams = {
     /**

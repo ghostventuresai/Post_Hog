@@ -72,7 +72,7 @@ from posthog.permissions import (
     TeamMemberLightManagementPermission,
     TeamMemberStrictManagementPermission,
 )
-from posthog.rate_limit import GitHubRepositoryRefreshThrottle
+from posthog.rate_limit import GitHubRepositoryRefreshThrottle, SlackChannelsRetrieveThrottle
 from posthog.rbac.user_access_control import UserAccessControlSerializerMixin
 from posthog.utils import is_relative_url
 
@@ -106,6 +106,9 @@ def validate_github_repository_name(repo: str) -> str:
     ):
         raise ValidationError("repo must be in owner/repo format")
     return repo
+
+
+logger = structlog.get_logger(__name__)
 
 
 def _verify_stripe_install_signature(state: str, user_id: str, account_id: str, install_signature: str) -> bool:
@@ -239,6 +242,19 @@ class SlackChannelSerializer(serializers.Serializer):
     is_ext_shared = serializers.BooleanField(help_text="True if the channel is shared with another Slack workspace.")
     is_private_without_access = serializers.BooleanField(
         help_text="True if the channel is private and the PostHog Slack app cannot access it."
+    )
+
+
+class SlackChannelsQuerySerializer(serializers.Serializer):
+    force_refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="When true, bypass the 1h Redis cache and fetch fresh channels from Slack. Subject to per-team rate limiting (30/min).",
+    )
+    channel_id = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        help_text="When provided, look up only this channel by ID instead of returning the full list. Returns a single-element channels array, or empty if not found / not accessible.",
     )
 
 
@@ -645,6 +661,8 @@ class IntegrationViewSet(
     def get_throttles(self):
         if self.action == "refresh_github_repos":
             return [GitHubRepositoryRefreshThrottle(), *super().get_throttles()]
+        if self.action == "channels":
+            return [SlackChannelsRetrieveThrottle(), *super().get_throttles()]
         return super().get_throttles()
 
     def perform_destroy(self, instance) -> None:
@@ -689,23 +707,28 @@ class IntegrationViewSet(
 
         raise ValidationError("Kind not supported")
 
-    @extend_schema(responses={200: SlackChannelsResponseSerializer})
+    @extend_schema(
+        parameters=[SlackChannelsQuerySerializer],
+        responses={200: SlackChannelsResponseSerializer},
+    )
     @action(methods=["GET"], detail=True, url_path="channels")
     def channels(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         instance = self.get_object()
         if instance.kind not in SLACK_INTEGRATION_KINDS:
             raise ValidationError("channels endpoint is only supported for Slack integrations")
+        query_serializer = SlackChannelsQuerySerializer(data=request.query_params)
+        query_serializer.is_valid(raise_exception=True)
         slack = SlackIntegration(instance)
         should_include_private_channels: bool = instance.created_by_id == request.user.id
         # force_refresh is only honored for cookie-session callers — MCP / API-key / OAuth
         # callers always read through the 1h cache so an agent loop can't bypass it.
         is_session_auth = isinstance(request.successful_authenticator, SessionAuthentication)
-        force_refresh: bool = is_session_auth and request.query_params.get("force_refresh", "false").lower() == "true"
+        force_refresh: bool = is_session_auth and query_serializer.validated_data.get("force_refresh", False)
         authed_user = cast(str | None, instance.config.get("authed_user", {}).get("id")) if instance.config else None
         if not authed_user:
             raise ValidationError("SlackIntegration: Missing authed_user_id in integration config")
 
-        channel_id = request.query_params.get("channel_id")
+        channel_id = query_serializer.validated_data.get("channel_id")
         if channel_id:
             channel = slack.get_channel_by_id(channel_id, should_include_private_channels, authed_user)
             if channel:
@@ -735,6 +758,23 @@ class IntegrationViewSet(
         if data is not None and not force_refresh:
             return Response(data)
 
+        # Cache miss: fan out to Slack. Log so operators can correlate latency / 5xx
+        # against cache miss volume, and capture exceptions distinctly so a Slack outage
+        # is recognizable from "our bug".
+        cache_miss_started_at = timezone.now()
+        logger.info(
+            "slack_channels_retrieve_cache_miss",
+            integration_id=instance.id,
+            team_id=instance.team_id,
+            include_private=should_include_private_channels,
+            force_refresh=force_refresh,
+        )
+        try:
+            channels = list(slack.list_channels(should_include_private_channels, authed_user))
+        except Exception as exc:
+            capture_exception(exc, additional_properties={"integration_id": instance.id, "kind": instance.kind})
+            raise
+
         response = {
             "channels": [
                 {
@@ -745,10 +785,18 @@ class IntegrationViewSet(
                     "is_ext_shared": channel["is_ext_shared"],
                     "is_private_without_access": channel.get("is_private_without_access", False),
                 }
-                for channel in slack.list_channels(should_include_private_channels, authed_user)
+                for channel in channels
             ],
             "lastRefreshedAt": timezone.now().isoformat(),
         }
+        elapsed_ms = int((timezone.now() - cache_miss_started_at).total_seconds() * 1000)
+        logger.info(
+            "slack_channels_retrieve_cache_miss_completed",
+            integration_id=instance.id,
+            team_id=instance.team_id,
+            channel_count=len(response["channels"]),
+            elapsed_ms=elapsed_ms,
+        )
 
         cache.set(key, response, 60 * 60)  # one hour
         return Response(response)

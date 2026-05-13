@@ -199,7 +199,6 @@ import {
     SessionRecordingUpdateType,
     SessionSummaryResponse,
     SharingConfigurationType,
-    SlackChannelType,
     SubscriptionType,
     Survey,
     SurveyStatsResponse,
@@ -1498,28 +1497,6 @@ export class ApiRequest {
 
     public integration(id: IntegrationType['id'], teamId?: TeamType['id']): ApiRequest {
         return this.integrations(teamId).addPathComponent(id)
-    }
-
-    public integrationSlackChannels(
-        id: IntegrationType['id'],
-        forceRefresh: boolean,
-        teamId?: TeamType['id']
-    ): ApiRequest {
-        return this.integrations(teamId)
-            .addPathComponent(id)
-            .addPathComponent('channels')
-            .withQueryString({ force_refresh: forceRefresh })
-    }
-
-    public integrationSlackChannelsById(
-        id: IntegrationType['id'],
-        channelId: string,
-        teamId?: TeamType['id']
-    ): ApiRequest {
-        return this.integrations(teamId)
-            .addPathComponent(id)
-            .addPathComponent('channels')
-            .withQueryString({ channel_id: channelId })
     }
 
     public integrationTwilioPhoneNumbers(
@@ -5790,18 +5767,6 @@ const api = {
         },
         authorizeUrl(params: { kind: string; next?: string; is_sandbox?: boolean }): string {
             return new ApiRequest().integrations().withAction('authorize').withQueryString(params).assembleFullUrl(true)
-        },
-        async slackChannels(
-            id: IntegrationType['id'],
-            forceRefresh: boolean
-        ): Promise<{ channels: SlackChannelType[]; lastRefreshedAt: string }> {
-            return await new ApiRequest().integrationSlackChannels(id, forceRefresh).get()
-        },
-        async slackChannelsById(
-            id: IntegrationType['id'],
-            channelId: string
-        ): Promise<{ channels: SlackChannelType[] }> {
-            return await new ApiRequest().integrationSlackChannelsById(id, channelId).get()
         },
         async twilioPhoneNumbers(
             id: IntegrationType['id'],
