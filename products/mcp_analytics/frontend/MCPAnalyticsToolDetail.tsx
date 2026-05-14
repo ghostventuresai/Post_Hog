@@ -268,9 +268,9 @@ export function MCPAnalyticsToolDetail({ toolName }: { toolName: string }): JSX.
                         icon={<IconArrowLeft />}
                         type="secondary"
                         size="small"
-                        to={urls.mcpAnalyticsToolQuality()}
+                        to={urls.mcpAnalyticsTools()}
                     >
-                        Back to Tool quality
+                        Back to Tools
                     </LemonButton>
                 }
             />

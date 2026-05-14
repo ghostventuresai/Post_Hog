@@ -42,18 +42,18 @@ export function MCPAnalyticsScene(): JSX.Element {
             'data-attr': 'mcp-analytics-sessions-tab',
         },
         {
-            key: 'tool-quality',
-            label: 'Tool quality',
+            key: 'tools',
+            label: 'Tools',
             content: <MCPAnalyticsToolQuality />,
-            link: combineUrl(urls.mcpAnalyticsToolQuality(), searchParams).url,
-            'data-attr': 'mcp-analytics-tool-quality-tab',
+            link: combineUrl(urls.mcpAnalyticsTools(), searchParams).url,
+            'data-attr': 'mcp-analytics-tools-tab',
         },
         {
-            key: 'intent-clustering',
-            label: 'Intent clustering',
+            key: 'tasks',
+            label: 'Tasks',
             content: <MCPAnalyticsClustering />,
-            link: combineUrl(urls.mcpAnalyticsIntentClustering(), searchParams).url,
-            'data-attr': 'mcp-analytics-intent-clustering-tab',
+            link: combineUrl(urls.mcpAnalyticsTasks(), searchParams).url,
+            'data-attr': 'mcp-analytics-tasks-tab',
         },
     ]
 
