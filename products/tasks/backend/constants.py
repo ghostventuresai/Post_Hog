@@ -1,6 +1,6 @@
 from typing import Literal, get_args
 
-ClaudePermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+ClaudePermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions", "auto"]
 CodexPermissionMode = Literal["auto", "read-only", "full-access"]
 InitialPermissionMode = ClaudePermissionMode | CodexPermissionMode
 
@@ -9,6 +9,8 @@ CODEX_INITIAL_PERMISSION_MODE_CHOICES: list[str] = list(get_args(CodexPermission
 ALL_INITIAL_PERMISSION_MODE_CHOICES: list[str] = [
     arg for member in get_args(InitialPermissionMode) for arg in get_args(member)
 ]
+
+SENDBLUE_TASK_REPOSITORY = "posthog/posthog"
 
 DEFAULT_TRUSTED_DOMAINS = [
     # PostHog Services

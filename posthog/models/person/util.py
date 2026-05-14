@@ -6,6 +6,7 @@ from typing import Optional, TypeVar, Union, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from django.db.models import Q
 from django.db.models.query import Prefetch, QuerySet
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
@@ -26,7 +27,6 @@ from posthog.models.person.sql import (
     INSERT_PERSON_SQL,
 )
 from posthog.models.signals import mutable_receiver
-from posthog.models.team import Team
 from posthog.models.utils import UUIDT
 from posthog.personhog_client.converters import proto_person_to_model
 from posthog.personhog_client.metrics import (
@@ -60,7 +60,6 @@ if TEST:
             uuid=str(instance.uuid),
             is_identified=instance.is_identified,
             version=instance.version or 0,
-            sync=True,
         )
 
     @mutable_receiver(post_save, sender=PersonDistinctId)
@@ -70,7 +69,6 @@ if TEST:
             instance.distinct_id,
             str(instance.person.uuid),
             version=instance.version or 0,
-            sync=True,
         )
 
     @receiver(post_delete, sender=Person)
@@ -80,7 +78,6 @@ if TEST:
             instance.uuid,
             int(instance.version or 0),
             instance.created_at,
-            sync=True,
         )
 
     @receiver(post_delete, sender=PersonDistinctId)
@@ -90,7 +87,6 @@ if TEST:
             instance.person.uuid,
             instance.distinct_id,
             instance.version or 0,
-            sync=True,
         )
 
     try:
@@ -149,7 +145,6 @@ def create_person(
     version: int,
     uuid: Optional[str] = None,
     properties: Optional[dict] = None,
-    sync: bool = False,
     is_identified: bool = False,
     is_deleted: bool = False,
     timestamp: Optional[Union[datetime.datetime, str]] = None,
@@ -195,7 +190,7 @@ def create_person(
         "last_seen_at": last_seen_at_formatted,
     }
     p = ClickhouseProducer()
-    p.produce(topic=KAFKA_PERSON, sql=INSERT_PERSON_SQL, data=data, sync=sync)
+    p.produce(topic=KAFKA_PERSON, sql=INSERT_PERSON_SQL, data=data)
     return uuid
 
 
@@ -205,7 +200,6 @@ def create_person_distinct_id(
     person_id: str,
     version=0,
     is_deleted: bool = False,
-    sync: bool = False,
 ) -> None:
     p = ClickhouseProducer()
     p.produce(
@@ -218,7 +212,6 @@ def create_person_distinct_id(
             "version": version,
             "is_deleted": int(is_deleted),
         },
-        sync=sync,
     )
 
 
@@ -451,16 +444,16 @@ def _fetch_persons_by_uuids_via_personhog(team_id: int, uuids: list[str]) -> lis
     return [proto_person_to_model(p, distinct_ids=distinct_ids_by_person.get(p.id, [])) for p in valid_persons]
 
 
-def get_persons_by_uuids(team: Team, uuids: list[str]) -> QuerySet | list[Person]:
-    personhog_fn: Callable[[], QuerySet | list[Person]] = lambda: _fetch_persons_by_uuids_via_personhog(team.pk, uuids)
+def get_persons_by_uuids(team_id: int, uuids: list[str]) -> QuerySet | list[Person]:
+    personhog_fn: Callable[[], QuerySet | list[Person]] = lambda: _fetch_persons_by_uuids_via_personhog(team_id, uuids)
     orm_fn: Callable[[], QuerySet | list[Person]] = lambda: Person.objects.db_manager(READ_DB_FOR_PERSONS).filter(
-        team_id=team.pk, uuid__in=uuids
+        team_id=team_id, uuid__in=uuids
     )
     return _personhog_routed(
         "get_persons_by_uuids",
         personhog_fn,
         orm_fn,
-        team_id=team.pk,
+        team_id=team_id,
     )
 
 
@@ -565,6 +558,23 @@ def get_person_by_distinct_id(team_id: int, distinct_id: str) -> Optional[Person
     )
 
 
+def get_person_by_email_property(team_id: int, email: str) -> Optional[Person]:
+    """Look up a person by their properties email value.
+
+    Checks common key variants: ``email``, ``Email``, ``$email``.
+    No personhog RPC exists for property-based search — uses ORM directly.
+    When a personhog RPC is added, convert to _personhog_routed.
+    """
+    return (
+        Person.objects.db_manager(READ_DB_FOR_PERSONS)  # nosemgrep: no-direct-persons-db-orm
+        .filter(
+            Q(properties__email=email) | Q(**{"properties__Email": email}) | Q(**{"properties__$email": email}),
+            team_id=team_id,
+        )
+        .first()
+    )
+
+
 def get_person_by_pk_or_uuid(team_id: int, key: str) -> Optional[Person]:
     """Look up a person by UUID or integer PK, routing through personhog when enabled."""
     try:
@@ -645,12 +655,12 @@ def delete_persons_from_postgres(team_id: int, persons: list[Person]) -> None:
     )
 
 
-def delete_person(person: Person, sync: bool = False) -> None:
+def delete_person(person: Person) -> None:
     # This is racy https://github.com/PostHog/posthog/issues/11590
     distinct_ids_to_version = _get_distinct_ids_with_version(person)
-    _delete_person(person.team_id, person.uuid, int(person.version or 0), person.created_at, sync)
+    _delete_person(person.team_id, person.uuid, int(person.version or 0), person.created_at)
     for distinct_id, version in distinct_ids_to_version.items():
-        _delete_ch_distinct_id(person.team_id, person.uuid, distinct_id, version, sync)
+        _delete_ch_distinct_id(person.team_id, person.uuid, distinct_id, version)
 
 
 def _delete_person(
@@ -658,7 +668,6 @@ def _delete_person(
     uuid: UUID,
     version: int,
     created_at: Optional[datetime.datetime] = None,
-    sync: bool = False,
 ) -> None:
     create_person(
         uuid=str(uuid),
@@ -670,11 +679,34 @@ def _delete_person(
         version=version + 100,
         created_at=created_at,
         is_deleted=True,
-        sync=sync,
     )
 
 
 def _get_distinct_ids_with_version(person: Person) -> dict[str, int]:
+    from posthog.personhog_client.client import get_personhog_client
+
+    client = get_personhog_client()
+    if client is not None:
+        try:
+            resp = client.get_distinct_ids_for_person(
+                GetDistinctIdsForPersonRequest(team_id=person.team_id, person_id=person.pk)
+            )
+            PERSONHOG_ROUTING_TOTAL.labels(
+                operation="get_distinct_ids_with_version", source="personhog", client_name=get_client_name()
+            ).inc()
+            return {d.distinct_id: int(d.version or 0) for d in resp.distinct_ids}
+        except Exception:
+            PERSONHOG_ROUTING_ERRORS_TOTAL.labels(
+                operation="get_distinct_ids_with_version",
+                source="personhog",
+                error_type="grpc_error",
+                client_name=get_client_name(),
+            ).inc()
+            logger.warning("personhog_get_distinct_ids_with_version_failure", team_id=person.team_id, exc_info=True)
+
+    PERSONHOG_ROUTING_TOTAL.labels(
+        operation="get_distinct_ids_with_version", source="django_orm", client_name=get_client_name()
+    ).inc()
     return {
         distinct_id: int(version or 0)
         for distinct_id, version in PersonDistinctId.objects.db_manager(READ_DB_FOR_PERSONS)
@@ -684,12 +716,11 @@ def _get_distinct_ids_with_version(person: Person) -> dict[str, int]:
     }
 
 
-def _delete_ch_distinct_id(team_id: int, uuid: UUID, distinct_id: str, version: int, sync: bool = False) -> None:
+def _delete_ch_distinct_id(team_id: int, uuid: UUID, distinct_id: str, version: int) -> None:
     create_person_distinct_id(
         team_id=team_id,
         distinct_id=distinct_id,
         person_id=str(uuid),
         version=version + 100,
         is_deleted=True,
-        sync=sync,
     )

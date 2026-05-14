@@ -43,6 +43,13 @@
             "intents": ["data_warehouse", "data_warehouse_saved_queries"]
         },
         {
+            "path": "Deployments",
+            "category": "Tools",
+            "iconType": null,
+            "type": "deployments",
+            "intents": ["deployments"]
+        },
+        {
             "path": "Early access features",
             "category": "Features",
             "iconType": null,
@@ -121,6 +128,13 @@
             "intents": ["llm_evaluations"]
         },
         {
+            "path": "Tags",
+            "category": "AI engineering",
+            "iconType": null,
+            "type": "llm_tags",
+            "intents": ["llm_analytics"]
+        },
+        {
             "path": "Prompts",
             "category": "AI engineering",
             "iconType": null,
@@ -180,11 +194,10 @@
             "intents": ["revenue_analytics"]
         },
         { "path": "Surveys", "category": "Behavior", "iconType": "survey", "type": "survey", "intents": ["surveys"] },
-        { "path": "Tasks", "category": "Unreleased", "iconType": "task", "type": "task", "intents": ["tasks"] },
         { "path": "Toolbar", "category": "Tools", "iconType": "toolbar", "type": "toolbar", "intents": ["toolbar"] },
         { "path": "Tracing", "category": "Unreleased", "iconType": "tracing", "type": null, "intents": ["tracing"] },
         {
-            "path": "User interviews",
+            "path": "User research",
             "category": "Unreleased",
             "iconType": "user_interview",
             "type": "user_interview",

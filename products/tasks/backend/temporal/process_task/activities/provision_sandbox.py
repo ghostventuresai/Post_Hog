@@ -8,9 +8,10 @@ from temporalio import activity
 
 from posthog.temporal.common.utils import asyncify
 
-from products.tasks.backend.models import SandboxEnvironment, SandboxSnapshot, Task, TaskRun
+from products.tasks.backend.models import SandboxSnapshot, Task, TaskRun
 from products.tasks.backend.services.agentsh import ENV_FILE
 from products.tasks.backend.services.connection_token import get_sandbox_jwt_public_key
+from products.tasks.backend.services.prewarmed_sandbox_pool import try_lease_sendblue_prewarmed_sandbox
 from products.tasks.backend.services.sandbox import Sandbox, SandboxConfig, SandboxTemplate
 from products.tasks.backend.temporal.exceptions import GitHubAuthenticationError, OAuthTokenError, TaskNotFoundError
 from products.tasks.backend.temporal.metrics import StepTimer, increment_snapshot_usage
@@ -72,6 +73,8 @@ class CreateSandboxForRepositoryOutput:
     sandbox_id: str
     sandbox_url: str
     connect_token: str | None
+    used_prewarmed_sandbox: bool = False
+    prewarmed_sandbox_pool_entry_id: str | None = None
 
 
 @dataclass
@@ -103,7 +106,9 @@ class InjectFreshTokensOnResumeInput:
 
 def _load_task(ctx: TaskProcessingContext) -> Task:
     try:
-        return Task.objects.select_related("created_by").get(id=ctx.task_id)
+        return Task.objects.select_related("created_by", "github_integration", "github_user_integration").get(
+            id=ctx.task_id
+        )
     except Task.DoesNotExist as e:
         raise TaskNotFoundError(f"Task {ctx.task_id} not found", {"task_id": ctx.task_id}, cause=e)
 
@@ -146,7 +151,7 @@ def _build_environment_variables(
 
     sandbox_environment = None
     if ctx.sandbox_environment_id:
-        sandbox_environment = SandboxEnvironment.objects.filter(id=ctx.sandbox_environment_id, team=task.team).first()
+        sandbox_environment = ctx.get_sandbox_environment()
         if sandbox_environment and sandbox_environment.environment_variables:
             skipped_keys: list[str] = []
             added_keys = 0
@@ -181,15 +186,17 @@ def _build_environment_variables(
     run_state = parse_run_state(ctx.state)
     if run_state.resume_from_run_id:
         environment_variables["POSTHOG_RESUME_RUN_ID"] = run_state.resume_from_run_id
+    elif run_state.handoff_resumed:
+        environment_variables["POSTHOG_RESUME_RUN_ID"] = str(ctx.run_id)
 
     return environment_variables
 
 
 def _emit_image_source_log(ctx: TaskProcessingContext, prepared: PrepareSandboxForRepositoryOutput) -> None:
     if prepared.image_source == "resume_snapshot":
-        emit_agent_log(ctx.run_id, "info", f"Resuming environment from snapshot for {prepared.repository}")
+        emit_agent_log(ctx.run_id, "debug", f"Resuming environment from snapshot for {prepared.repository}")
     elif prepared.image_source == "repository_snapshot":
-        emit_agent_log(ctx.run_id, "info", f"Found existing environment for {prepared.repository}")
+        emit_agent_log(ctx.run_id, "debug", f"Found existing environment for {prepared.repository}")
     elif prepared.repository:
         emit_agent_log(
             ctx.run_id, "debug", f"Creating environment from {prepared.image_source_label} for {prepared.repository}"
@@ -220,19 +227,25 @@ def prepare_sandbox_for_repository(input: PrepareSandboxForRepositoryInput) -> P
                 snapshot_lookup_timer.set_used_snapshot(used_snapshot)
             increment_snapshot_usage(used_snapshot)
         elif not has_repo:
-            emit_agent_log(ctx.run_id, "info", "Creating environment without repository")
+            emit_agent_log(ctx.run_id, "debug", "Creating environment without repository")
 
         task = _load_task(ctx)
         shallow_clone = task.origin_product != Task.OriginProduct.SIGNAL_REPORT
 
         github_token = ""
-        if has_repo and ctx.github_integration_id is not None:
+        should_inject_github_token = ctx.has_github_credentials and (
+            has_repo or ctx.github_user_integration_id is not None or ctx.github_integration_id is not None
+        )
+        if should_inject_github_token:
             try:
                 github_token = (
                     get_sandbox_github_token(
                         ctx.github_integration_id,
                         run_id=ctx.run_id,
                         state=ctx.state,
+                        task=task,
+                        github_user_integration_id=ctx.github_user_integration_id,
+                        repository=repository,
                     )
                     or ""
                 )
@@ -255,9 +268,36 @@ def prepare_sandbox_for_repository(input: PrepareSandboxForRepositoryInput) -> P
         environment_variables = _build_environment_variables(ctx, task, github_token, access_token)
 
         run_state = parse_run_state(ctx.state)
-        resume_snapshot_external_id = run_state.snapshot_external_id
+        # When Modal resume snapshots are disabled, ignore any snapshot_external_id
+        # baked into TaskRun state — resume falls back to the agent server's
+        # git-checkpoint flow (POSTHOG_RESUME_RUN_ID continues to be set above).
+        resume_snapshot_external_id = (
+            run_state.snapshot_external_id if settings.TASKS_USE_MODAL_RESUME_SNAPSHOTS else None
+        )
         if resume_snapshot_external_id:
             used_snapshot = True
+
+        activity.logger.info(
+            "resume_decision",
+            extra={
+                "run_id": ctx.run_id,
+                "use_modal_resume_snapshots": settings.TASKS_USE_MODAL_RESUME_SNAPSHOTS,
+                "state_snapshot_external_id": run_state.snapshot_external_id,
+                "effective_snapshot_external_id": resume_snapshot_external_id,
+                "handoff_resumed": run_state.handoff_resumed,
+                "resume_from_run_id": run_state.resume_from_run_id,
+                "posthog_resume_run_id_set": "POSTHOG_RESUME_RUN_ID" in environment_variables,
+                "used_snapshot": used_snapshot,
+            },
+        )
+        if run_state.handoff_resumed or run_state.resume_from_run_id:
+            emit_agent_log(
+                ctx.run_id,
+                "debug",
+                f"Resume mode: handoff_resumed={run_state.handoff_resumed}, "
+                f"resume_from_run_id={run_state.resume_from_run_id}, "
+                f"using_modal_snapshot={resume_snapshot_external_id is not None}",
+            )
 
         provider = getattr(settings, "SANDBOX_PROVIDER", None)
         image_source, image_source_label = _get_image_source_label(
@@ -294,6 +334,33 @@ def create_sandbox_for_repository(input: CreateSandboxForRepositoryInput) -> Cre
         image_source=prepared.image_source,
         **ctx.to_log_context(),
     ):
+        leased = try_lease_sendblue_prewarmed_sandbox(
+            run_id=ctx.run_id,
+            team_id=ctx.team_id,
+            origin_product=ctx.origin_product,
+            repository=prepared.repository,
+            environment_variables=prepared.environment_variables,
+        )
+        if leased is not None:
+            sandbox_state = {
+                "sandbox_id": leased.sandbox_id,
+                "sandbox_url": leased.sandbox_url,
+                "prewarmed_sandbox": True,
+                "prewarmed_sandbox_pool_entry_id": leased.pool_entry_id,
+            }
+            if leased.connect_token:
+                sandbox_state["sandbox_connect_token"] = leased.connect_token
+            TaskRun.update_state_atomic(ctx.run_id, updates=sandbox_state)
+            emit_agent_log(ctx.run_id, "debug", f"Using prewarmed Sendblue sandbox: {leased.sandbox_id}")
+            activity.logger.info(f"Leased prewarmed sandbox {leased.sandbox_id}")
+            return CreateSandboxForRepositoryOutput(
+                sandbox_id=leased.sandbox_id,
+                sandbox_url=leased.sandbox_url,
+                connect_token=leased.connect_token,
+                used_prewarmed_sandbox=True,
+                prewarmed_sandbox_pool_entry_id=leased.pool_entry_id,
+            )
+
         _emit_image_source_log(ctx, prepared)
         emit_agent_log(
             ctx.run_id,
@@ -316,14 +383,13 @@ def create_sandbox_for_repository(input: CreateSandboxForRepositoryInput) -> Cre
         credentials = sandbox.get_connect_credentials()
 
         try:
-            task_run = TaskRun.objects.get(id=ctx.run_id)
-            state = task_run.state or {}
-            state["sandbox_id"] = sandbox.id
-            state["sandbox_url"] = credentials.url
+            sandbox_state = {
+                "sandbox_id": sandbox.id,
+                "sandbox_url": credentials.url,
+            }
             if credentials.token:
-                state["sandbox_connect_token"] = credentials.token
-            task_run.state = state
-            task_run.save(update_fields=["state", "updated_at"])
+                sandbox_state["sandbox_connect_token"] = credentials.token
+            TaskRun.update_state_atomic(ctx.run_id, updates=sandbox_state)
         except Exception:
             sandbox.destroy()
             raise
@@ -348,7 +414,7 @@ def clone_repository_in_sandbox(input: CloneRepositoryInSandboxInput) -> None:
         sandbox_id=input.sandbox_id,
         **ctx.to_log_context(),
     ):
-        emit_agent_log(ctx.run_id, "info", f"Cloning {input.repository} into sandbox")
+        emit_agent_log(ctx.run_id, "debug", f"Cloning {input.repository} into sandbox")
         sandbox = Sandbox.get_by_id(input.sandbox_id)
 
         with StepTimer("repository_clone", used_snapshot=False):
@@ -373,7 +439,7 @@ def checkout_branch_in_sandbox(input: CheckoutBranchInSandboxInput) -> None:
         branch=input.branch,
         **ctx.to_log_context(),
     ):
-        emit_agent_log(ctx.run_id, "info", f"Checking out branch {input.branch}")
+        emit_agent_log(ctx.run_id, "debug", f"Checking out branch {input.branch}")
         sandbox = Sandbox.get_by_id(input.sandbox_id)
 
         org, repo = input.repository.lower().split("/")
@@ -432,13 +498,16 @@ def inject_fresh_tokens_on_resume(input: InjectFreshTokensOnResumeInput) -> None
         task = _load_task(ctx)
 
         github_token = ""
-        if ctx.github_integration_id is not None:
+        if ctx.has_github_credentials:
             try:
                 github_token = (
                     get_sandbox_github_token(
                         ctx.github_integration_id,
                         run_id=ctx.run_id,
                         state=ctx.state,
+                        task=task,
+                        github_user_integration_id=ctx.github_user_integration_id,
+                        repository=input.repository,
                     )
                     or ""
                 )

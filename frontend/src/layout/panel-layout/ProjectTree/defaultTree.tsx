@@ -7,6 +7,7 @@ import {
     IconBug,
     IconCircleDashed,
     IconClock,
+    IconCloud,
     IconCode,
     IconEndpoints,
     IconDashboard,
@@ -25,6 +26,7 @@ import {
     IconHogQL,
     IconHome,
     IconLifecycle,
+    IconList,
     IconListCheck,
     IconListTree,
     IconLive,
@@ -318,6 +320,10 @@ const iconTypes: Record<FileSystemIconType, { icon: JSX.Element; iconColor?: Fil
         icon: <IconListCheck />,
         iconColor: ['var(--color-product-llm-evaluations-light)'],
     },
+    llm_tags: {
+        icon: <IconList />,
+        iconColor: ['var(--color-product-llm-analytics-light)'],
+    },
     llm_datasets: {
         icon: <IconDocument />,
         iconColor: ['var(--color-product-llm-datasets-light)'],
@@ -339,6 +345,10 @@ const iconTypes: Record<FileSystemIconType, { icon: JSX.Element; iconColor?: Fil
     },
     exports: {
         icon: <IconDownload />,
+    },
+    deployments: {
+        icon: <IconCloud />,
+        iconColor: ['var(--color-product-deployments-light)', 'var(--color-product-deployments-dark)'],
     },
 }
 

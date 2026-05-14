@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -436,6 +437,121 @@ class TestExperimentService(APIBaseTest):
             )
 
         assert "Saved metric does not exist or does not belong to this project" in str(ctx.exception)
+
+    @parameterized.expand(
+        [
+            (
+                "not_a_dict",
+                "not-a-dict",
+                "exposure_criteria must be an object, got str",
+            ),
+            (
+                "falsy_empty_list",
+                [],
+                "exposure_criteria must be an object, got list",
+            ),
+            (
+                "falsy_empty_string",
+                "",
+                "exposure_criteria must be an object, got str",
+            ),
+            (
+                "falsy_false",
+                False,
+                "exposure_criteria must be an object, got bool",
+            ),
+            (
+                "filter_test_accounts_string",
+                {"filterTestAccounts": "true"},
+                "exposure_criteria.filterTestAccounts must be a boolean, got str: 'true'",
+            ),
+            (
+                "filter_test_accounts_int",
+                {"filterTestAccounts": 1},
+                "exposure_criteria.filterTestAccounts must be a boolean, got int: 1",
+            ),
+            (
+                "exposure_config_not_a_dict",
+                {"exposure_config": "ActionsNode"},
+                "exposure_criteria.exposure_config must be an object, got str",
+            ),
+            (
+                "exposure_config_unknown_kind",
+                {"exposure_config": {"kind": "EventsNode", "event": "$pageview"}},
+                "exposure_criteria.exposure_config.kind must be one of "
+                "['ExperimentEventExposureConfig', 'ActionsNode'], got 'EventsNode'",
+            ),
+            (
+                "exposure_config_event_kind_missing_event",
+                {"exposure_config": {"kind": "ExperimentEventExposureConfig", "properties": []}},
+                "Invalid exposure_criteria.exposure_config (kind='ExperimentEventExposureConfig')",
+            ),
+            (
+                "exposure_config_actions_kind_missing_id",
+                {"exposure_config": {"kind": "ActionsNode"}},
+                "Invalid exposure_criteria.exposure_config (kind='ActionsNode')",
+            ),
+        ]
+    )
+    def test_validate_experiment_exposure_criteria_rejects_invalid_payloads(
+        self, _: str, exposure_criteria: object, expected_error_fragment: str
+    ) -> None:
+        with self.assertRaises(ValidationError) as ctx:
+            ExperimentService.validate_experiment_exposure_criteria(exposure_criteria)
+
+        assert expected_error_fragment in str(ctx.exception), (
+            f"Expected fragment {expected_error_fragment!r} in error: {ctx.exception}"
+        )
+
+    @parameterized.expand(
+        [
+            ("none", None),
+            ("empty_dict", {}),
+            (
+                "event_payload",
+                {
+                    "filterTestAccounts": True,
+                    "exposure_config": {
+                        "kind": "ExperimentEventExposureConfig",
+                        "event": "$feature_flag_called",
+                        "properties": [],
+                    },
+                },
+            ),
+            (
+                "action_payload",
+                {
+                    "filterTestAccounts": False,
+                    "exposure_config": {"kind": "ActionsNode", "id": 1},
+                },
+            ),
+            (
+                "event_payload_without_explicit_kind",
+                {"exposure_config": {"event": "$pageview", "properties": []}},
+            ),
+        ]
+    )
+    def test_validate_experiment_exposure_criteria_accepts_valid_payloads(
+        self, _: str, exposure_criteria: object
+    ) -> None:
+        ExperimentService.validate_experiment_exposure_criteria(exposure_criteria)
+
+    def test_validate_experiment_exposure_criteria_hint_is_actionable(self) -> None:
+        """The error hint should name both supported kinds so the LLM can self-correct."""
+        with self.assertRaises(ValidationError) as ctx:
+            ExperimentService.validate_experiment_exposure_criteria({"exposure_config": {"kind": "FunnelsQuery"}})
+        message = str(ctx.exception)
+        assert "ExperimentEventExposureConfig" in message
+        assert "ActionsNode" in message
+
+    def test_validate_experiment_exposure_criteria_truncates_large_user_values(self) -> None:
+        """A large user-supplied value must not bloat the error message reflected back."""
+        huge_kind = "x" * 10_000
+        with self.assertRaises(ValidationError) as ctx:
+            ExperimentService.validate_experiment_exposure_criteria({"exposure_config": {"kind": huge_kind}})
+        message = str(ctx.exception)
+        assert "...(truncated)" in message
+        assert len(message) < 1_000, f"Error message length was {len(message)}, expected to be bounded"
 
     # ------------------------------------------------------------------
     # Service contract fields
@@ -1133,6 +1249,80 @@ class TestExperimentService(APIBaseTest):
         assert metrics[0]["uuid"] == "explicit-uuid"
         assert "explicit-uuid" in (getattr(updated, ordering_attr) or [])
 
+    @parameterized.expand(
+        [
+            ("primary", "metrics"),
+            ("secondary", "metrics_secondary"),
+        ]
+    )
+    def test_create_experiment_does_not_mutate_input_metrics(self, _name, field):
+        self._create_flag(key=f"no-mutate-create-flag-{_name}")
+        service = self._service()
+
+        input_metrics = [
+            {
+                "kind": "ExperimentMetric",
+                "metric_type": "mean",
+                "source": {"kind": "EventsNode", "event": "$pageview"},
+            }
+        ]
+        snapshot = deepcopy(input_metrics)
+        metric_kwargs: dict[str, Any] = {field: input_metrics}
+
+        service.create_experiment(
+            name=f"No Mutate Create {_name}",
+            feature_flag_key=f"no-mutate-create-flag-{_name}",
+            allow_unknown_events=True,
+            **metric_kwargs,
+        )
+
+        assert input_metrics == snapshot
+
+    @parameterized.expand(
+        [
+            ("primary", "metrics"),
+            ("secondary", "metrics_secondary"),
+        ]
+    )
+    def test_update_experiment_does_not_mutate_input_metrics(self, _name, field):
+        experiment = self._create_draft_experiment()
+        service = self._service()
+
+        input_metrics = [
+            {
+                "kind": "ExperimentMetric",
+                "metric_type": "mean",
+                "source": {"kind": "EventsNode", "event": "$pageview"},
+            }
+        ]
+        snapshot = deepcopy(input_metrics)
+
+        service.update_experiment(experiment, {field: input_metrics}, allow_unknown_events=True)
+
+        assert input_metrics == snapshot
+
+    def test_update_experiment_does_not_mutate_flag_filters_in_place(self):
+        experiment = self._create_draft_experiment()
+        service = self._service()
+
+        original_filters = experiment.feature_flag.filters
+        snapshot = deepcopy(original_filters)
+
+        service.update_experiment(
+            experiment,
+            {
+                "parameters": {
+                    "feature_flag_variants": [
+                        {"key": "control", "name": "Control", "rollout_percentage": 50},
+                        {"key": "test", "name": "Test", "rollout_percentage": 50},
+                    ],
+                    "rollout_percentage": 75,
+                }
+            },
+        )
+
+        assert original_filters == snapshot
+
     def test_update_experiment_replaces_saved_metrics(self):
         experiment = self._create_draft_experiment()
         sm1 = ExperimentSavedMetric.objects.create(
@@ -1650,6 +1840,28 @@ class TestExperimentService(APIBaseTest):
         assert "must be ended" in str(ctx.exception)
 
     # ------------------------------------------------------------------
+    # Unarchive
+    # ------------------------------------------------------------------
+
+    def test_unarchive_experiment_success(self):
+        experiment = self._create_ended_experiment(name="Unarchive Test", feature_flag_key="unarchive-flag")
+        service = self._service()
+        service.archive_experiment(experiment)
+
+        unarchived = service.unarchive_experiment(experiment)
+
+        assert unarchived.archived is False
+        assert unarchived.status == Experiment.Status.STOPPED
+
+    def test_unarchive_experiment_not_archived_raises(self):
+        experiment = self._create_ended_experiment(name="Not Archived", feature_flag_key="not-archived-flag")
+
+        with self.assertRaises(ValidationError) as ctx:
+            self._service().unarchive_experiment(experiment)
+
+        assert "not archived" in str(ctx.exception)
+
+    # ------------------------------------------------------------------
     # End
     # ------------------------------------------------------------------
 
@@ -1785,6 +1997,122 @@ class TestExperimentService(APIBaseTest):
         metadata = completed_call.args[2]
         assert "significant" not in metadata
 
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_end_experiment_dispatches_realtime_to_creator(self, mock_create_notification):
+        creator = self._create_user("creator-end@test.com")
+        experiment = self._create_running_experiment(name="End Notify", feature_flag_key="end-notify-flag")
+        experiment.created_by = creator
+        experiment.save()
+
+        self._service().end_experiment(experiment, request=self._make_request())
+
+        assert mock_create_notification.call_count == 1
+        data = mock_create_notification.call_args.args[0]
+        assert data.notification_type.value == "experiment_concluded"
+        assert data.target_id == str(creator.id)
+        assert data.team_id == self.team.id
+        assert data.resource_type == "experiment"
+        assert data.resource_id == str(experiment.id)
+
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_ship_variant_running_dispatches_realtime(self, mock_create_notification):
+        creator = self._create_user("creator-ship@test.com")
+        experiment = self._create_running_experiment(name="Ship Notify", feature_flag_key="ship-notify-flag")
+        experiment.created_by = creator
+        experiment.save()
+
+        self._service().ship_variant(experiment, variant_key="control", request=self._make_request())
+
+        assert mock_create_notification.call_count == 1
+        data = mock_create_notification.call_args.args[0]
+        assert data.notification_type.value == "experiment_concluded"
+
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_no_dispatch_when_actor_is_creator(self, mock_create_notification):
+        # If the user ending the experiment is the creator, skip the self-notification.
+        experiment = self._create_running_experiment(name="Self End", feature_flag_key="self-end-flag")
+        assert experiment.created_by_id == self.user.id
+
+        self._service().end_experiment(experiment, request=self._make_request())
+
+        mock_create_notification.assert_not_called()
+
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_ship_variant_already_stopped_does_not_dispatch(self, mock_create_notification):
+        experiment = self._create_ended_experiment(
+            name="Ship Stopped Notify", feature_flag_key="ship-stopped-notify-flag"
+        )
+
+        self._service().ship_variant(experiment, variant_key="control", request=self._make_request())
+
+        mock_create_notification.assert_not_called()
+
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_no_dispatch_when_experiment_has_no_creator(self, mock_create_notification):
+        experiment = self._create_running_experiment(name="No Creator", feature_flag_key="no-creator-flag")
+        experiment.created_by = None
+        experiment.save()
+
+        self._service().end_experiment(experiment, request=self._make_request())
+
+        mock_create_notification.assert_not_called()
+
+    @patch(
+        "products.experiments.backend.experiment_service.create_notification",
+        side_effect=RuntimeError("kafka down"),
+    )
+    def test_realtime_failure_does_not_block_end_experiment(self, _mock_create_notification):
+        creator = self._create_user("creator-failure@test.com")
+        experiment = self._create_running_experiment(name="Notify Failure", feature_flag_key="notify-failure-flag")
+        experiment.created_by = creator
+        experiment.save()
+
+        # Must not raise.
+        self._service().end_experiment(experiment, request=self._make_request())
+
+        experiment.refresh_from_db()
+        assert experiment.end_date is not None
+
+    @parameterized.expand(
+        [
+            ("significant", {"significant": True, "variants": []}, "Primary metric: significant"),
+            ("inconclusive", {"significant": False, "variants": []}, "Primary metric: inconclusive"),
+            ("no_result", None, ""),
+        ]
+    )
+    @patch("products.experiments.backend.experiment_service.create_notification")
+    def test_end_experiment_body_reflects_primary_metric_outcome(
+        self,
+        _name: str,
+        metric_result: dict | None,
+        expected_body: str,
+        mock_create_notification: MagicMock,
+    ) -> None:
+        creator = self._create_user(f"creator-body-{_name}@test.com")
+        experiment = self._create_running_experiment(
+            name=f"End Body {_name}", feature_flag_key=f"end-body-{_name.replace('_', '-')}-flag"
+        )
+        experiment.created_by = creator
+        experiment.save()
+        if metric_result is not None:
+            assert experiment.metrics is not None
+            assert experiment.start_date is not None
+            ExperimentMetricResult.objects.create(
+                experiment=experiment,
+                metric_uuid=experiment.metrics[0]["uuid"],
+                query_from=experiment.start_date,
+                query_to=timezone.now(),
+                status=ExperimentMetricResult.Status.COMPLETED,
+                result=metric_result,
+                completed_at=timezone.now(),
+            )
+
+        self._service().end_experiment(experiment, request=self._make_request())
+
+        assert mock_create_notification.call_count == 1
+        data = mock_create_notification.call_args.args[0]
+        assert data.body == expected_body
+
     # ------------------------------------------------------------------
     # Pause / Resume
     # ------------------------------------------------------------------
@@ -1799,10 +2127,27 @@ class TestExperimentService(APIBaseTest):
         self._service().launch_experiment(experiment)
         return experiment
 
+    def test_is_paused_false_for_draft_with_inactive_flag(self) -> None:
+        # Inactive flag alone does not make an experiment paused — must also be running.
+        draft = self._create_launchable_experiment(name="Draft Inactive", feature_flag_key="draft-inactive-flag")
+        draft.feature_flag.active = False
+        draft.feature_flag.save()
+        assert draft.is_paused is False
+
+    def test_is_paused_false_for_stopped_with_inactive_flag(self) -> None:
+        # Inactive flag alone does not make an experiment paused — must also be running.
+        stopped = self._create_running_experiment(name="Stopped Inactive", feature_flag_key="stopped-inactive-flag")
+        self._service().end_experiment(stopped, request=MagicMock())
+        stopped.feature_flag.active = False
+        stopped.feature_flag.save()
+        stopped.refresh_from_db()
+        assert stopped.is_paused is False
+
     def test_pause_experiment_success(self):
         experiment = self._create_running_experiment(name="Pause Test", feature_flag_key="pause-flag")
 
         assert experiment.feature_flag.active is True
+        assert experiment.is_paused is False
 
         paused = self._service().pause_experiment(experiment)
 
@@ -1810,6 +2155,8 @@ class TestExperimentService(APIBaseTest):
         assert paused.feature_flag.active is False
         assert paused.start_date is not None
         assert paused.end_date is None
+        assert paused.is_paused is True
+        assert paused.is_running is True  # status remains running while paused
 
     def test_resume_experiment_success(self):
         experiment = self._create_running_experiment(name="Resume Test", feature_flag_key="resume-flag")
@@ -2448,10 +2795,11 @@ class TestExperimentService(APIBaseTest):
         [
             ("draft", {"status": "draft"}, {"Draft"}),
             ("running", {"status": "running"}, {"Running"}),
+            ("paused", {"status": "paused"}, {"Paused"}),
             ("stopped", {"status": "stopped"}, {"Stopped"}),
             ("complete", {"status": "complete"}, {"Stopped"}),
-            ("all", {"status": "all"}, {"Draft", "Running", "Stopped"}),
-            ("invalid", {"status": "bogus"}, {"Draft", "Running", "Stopped"}),
+            ("all", {"status": "all"}, {"Draft", "Running", "Paused", "Stopped"}),
+            ("invalid", {"status": "bogus"}, {"Draft", "Running", "Paused", "Stopped"}),
         ]
     )
     def test_filter_experiments_queryset_filters_by_status(
@@ -2465,6 +2813,13 @@ class TestExperimentService(APIBaseTest):
             feature_flag_key="status-running",
             start_date=now - timedelta(days=2),
         )
+        paused = service.create_experiment(
+            name="Paused",
+            feature_flag_key="status-paused",
+            start_date=now - timedelta(days=2),
+        )
+        paused.feature_flag.active = False
+        paused.feature_flag.save()
         service.create_experiment(
             name="Stopped",
             feature_flag_key="status-stopped",
@@ -3451,6 +3806,165 @@ class TestExperimentService(APIBaseTest):
             feature_flag_key="no-metrics-flag",
         )
         assert experiment.metrics == []
+
+    # Shared cases for blank/whitespace event regression tests across create and update.
+    # Regression: pydantic permits event="" but it's not a queryable event name.
+    # Treat blank/whitespace events like None / "All events" instead of producing
+    # the misleading "Event(s) '' not found" error customers were hitting.
+    _BLANK_EVENT_CASES = [
+        (
+            "empty_mean",
+            {
+                "kind": "ExperimentMetric",
+                "metric_type": "mean",
+                "source": {"kind": "EventsNode", "event": ""},
+            },
+        ),
+        (
+            "whitespace_ratio",
+            {
+                "kind": "ExperimentMetric",
+                "metric_type": "ratio",
+                "numerator": {"kind": "EventsNode", "event": "   "},
+                "denominator": {"kind": "EventsNode", "event": ""},
+            },
+        ),
+        (
+            "empty_funnel_step",
+            {
+                "kind": "ExperimentMetric",
+                "metric_type": "funnel",
+                "series": [{"kind": "EventsNode", "event": ""}],
+            },
+        ),
+    ]
+
+    @parameterized.expand(_BLANK_EVENT_CASES)
+    def test_blank_event_names_pass_validation_on_create(self, name: str, metric: dict) -> None:
+        service = self._service()
+        experiment = service.create_experiment(
+            name=f"Blank Event Create {name}",
+            feature_flag_key=f"blank-event-create-{name.replace('_', '-')}-flag",
+            metrics=[metric],
+        )
+        assert experiment.metrics is not None and len(experiment.metrics) == 1
+
+    @parameterized.expand(_BLANK_EVENT_CASES)
+    def test_blank_event_names_pass_validation_on_update(self, name: str, metric: dict) -> None:
+        service = self._service()
+        experiment = service.create_experiment(
+            name=f"Blank Event Update {name}",
+            feature_flag_key=f"blank-event-update-{name.replace('_', '-')}-flag",
+        )
+        # Should not raise — both paths share the same validator but go through
+        # separate functions (create_experiment vs update_experiment).
+        service.update_experiment(experiment, {"metrics": [metric]})
+
+    @parameterized.expand(
+        [
+            ("int", 42, "int"),
+            ("json_object", {"kind": "EventsNode", "event": "nested"}, "dict"),
+            ("list", ["a", "b"], "list"),
+        ]
+    )
+    def test_unexpected_event_shape_is_skipped_and_logged(
+        self, _: str, malformed_event: object, expected_type_name: str
+    ) -> None:
+        # Pydantic should reject anything other than str/None for the `event` field
+        # in the incoming payload. If a malformed payload (e.g. int, dict, list)
+        # bypasses that check, we want to skip the value (don't crash, don't add a
+        # non-string to the lookup set) and log so we can find the offending caller.
+        # This is purely about the *incoming* payload shape — no DB lookup happens
+        # in `_extract_entity_nodes`.
+        from products.experiments.backend.experiment_service import logger as service_logger
+
+        service = self._service()
+        with patch.object(service_logger, "warning") as mock_warning:
+            event_names = service._extract_entity_nodes(
+                [
+                    {
+                        "kind": "ExperimentMetric",
+                        "metric_type": "mean",
+                        "source": {"kind": "EventsNode", "event": malformed_event},
+                    },
+                    {
+                        "kind": "ExperimentMetric",
+                        "metric_type": "mean",
+                        "source": {"kind": "EventsNode", "event": "$pageview"},
+                    },
+                ]
+            )[0]
+
+        # Malformed value was skipped, "$pageview" kept
+        assert event_names == {"$pageview"}
+        mock_warning.assert_called_once()
+        kwargs = mock_warning.call_args.kwargs
+        assert kwargs.get("event_type") == expected_type_name
+
+    def test_event_validation_uses_project_scope(self):
+        # Regression: the frontend event picker queries EventDefinition by project_id
+        # (see posthog/api/event_definition.py), so users in multi-team projects see
+        # events ingested by sibling teams. Validation must match that scope or it
+        # rejects legitimate selections (e.g. "$pageview not found" reports).
+        sibling_team = Team.objects.create(
+            organization=self.organization,
+            project=self.project,
+            name="Sibling team in same project",
+        )
+        EventDefinition.objects.create(team=sibling_team, project=self.project, name="purchase_v2")
+        # Note: NOT creating purchase_v2 on self.team — only the sibling team has it,
+        # but they share a project so the picker would show it.
+
+        service = self._service()
+        experiment = service.create_experiment(
+            name="Cross-team Event",
+            feature_flag_key="cross-team-event-flag",
+            metrics=[
+                {
+                    "kind": "ExperimentMetric",
+                    "metric_type": "mean",
+                    "source": {"kind": "EventsNode", "event": "purchase_v2"},
+                },
+            ],
+        )
+        assert experiment.metrics is not None and len(experiment.metrics) == 1
+
+    def test_sibling_team_can_use_legacy_primary_team_event(self):
+        # Regression: the legacy fallback in validate_metric_event_names uses
+        #     team_id = project_id  (NOT team_id = self.team.id)
+        # because legacy EventDefinitions (project_id IS NULL) belong to the
+        # *primary* team — and by convention, primary_team.id == project.id.
+        # The picker mirrors this exact predicate (posthog/api/event_definition.py),
+        # so a sibling-team user must be able to validate against legacy events
+        # tied to the primary team. Swapping `team_id = project_id` for
+        # `team_id = self.team.id` would silently exclude those rows for sibling
+        # teams, even though the picker shows them.
+        primary_team = self.team  # APIBaseTest sets primary_team.id == project.id
+        assert primary_team.id == primary_team.project_id, "test fixture invariant: self.team is primary"
+
+        sibling_team = Team.objects.create(
+            organization=self.organization,
+            project=self.project,
+            name="Sibling team in same project",
+        )
+        # A legacy event tied to the primary team — no project_id set.
+        EventDefinition.objects.create(team=primary_team, project=None, name="legacy_event")
+
+        # Run validation as the SIBLING team (not the primary). Without the
+        # legacy fallback's team_id=project_id semantics, this would raise.
+        sibling_service = ExperimentService(team=sibling_team, user=self.user)
+        experiment = sibling_service.create_experiment(
+            name="Sibling Legacy Event",
+            feature_flag_key="sibling-legacy-event-flag",
+            metrics=[
+                {
+                    "kind": "ExperimentMetric",
+                    "metric_type": "mean",
+                    "source": {"kind": "EventsNode", "event": "legacy_event"},
+                },
+            ],
+        )
+        assert experiment.metrics is not None and len(experiment.metrics) == 1
 
     def test_action_nodes_not_checked_for_event_existence(self):
         action = Action.objects.create(team=self.team, name="valid action for event test")
