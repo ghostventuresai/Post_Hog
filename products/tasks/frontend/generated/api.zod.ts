@@ -99,6 +99,7 @@ export const TasksCreateBody = /* @__PURE__ */ zod.object({
             'support_queue',
             'session_summaries',
             'signal_report',
+            'agentic_tests',
         ])
         .optional()
         .describe(
@@ -148,6 +149,7 @@ export const TasksUpdateBody = /* @__PURE__ */ zod.object({
             'support_queue',
             'session_summaries',
             'signal_report',
+            'agentic_tests',
         ])
         .optional()
         .describe(
@@ -197,6 +199,7 @@ export const TasksPartialUpdateBody = /* @__PURE__ */ zod.object({
             'support_queue',
             'session_summaries',
             'signal_report',
+            'agentic_tests',
         ])
         .optional()
         .describe(

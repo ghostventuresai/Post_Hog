@@ -53,6 +53,7 @@ import {
     IconStethoscope,
     IconStickiness,
     IconSupport,
+    IconTestTube,
     IconToggle,
     IconToggleOff,
     IconToolbar,
@@ -122,6 +123,10 @@ const iconTypes: Record<FileSystemIconType, { icon: JSX.Element; iconColor?: Fil
     error_tracking: {
         icon: <IconWarning />,
         iconColor: ['var(--color-product-error-tracking-light)', 'var(--color-product-error-tracking-dark)'],
+    },
+    agentic_tests: {
+        icon: <IconTestTube />,
+        iconColor: ['var(--color-product-session-replay-light)', 'var(--color-product-session-replay-dark)'],
     },
     heatmap: {
         icon: <IconApp />,

@@ -10,11 +10,15 @@ export function initPostHog(): void {
             )
             return
         }
-        const localApiHost = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'http://localhost:8010'
+        // Default to a same-origin rewrite path (see next.config.js) so the site works
+        // identically when visited locally and when proxied through ngrok to a remote
+        // browser (e.g. a Browserbase agent). Override with NEXT_PUBLIC_POSTHOG_HOST
+        // if you have an absolute reachable URL.
+        const localApiHost = process.env.NEXT_PUBLIC_POSTHOG_HOST || '/posthog-proxy'
         posthog.init(demoApiToken, {
             api_host: localApiHost,
             disable_compression: true,
-            capture_pageview: false,
+            capture_pageview: 'history_change', // auto-fire $pageview on initial load AND on every Next.js client-side route change
             autocapture: true,
             persistence: 'memory', // Use memory persistence for replay mode to avoid conflicts
             opt_out_useragent_filter: true, // We do want capture to work in a bot environment (Playwright)

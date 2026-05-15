@@ -3583,6 +3583,118 @@ export namespace Schemas {
       Sandbox: 'sandbox',
     } as const;
 
+    /**
+     * * `active` - Active
+    * `paused` - Paused
+    * `proposed` - Proposed
+    * `rejected` - Rejected
+     */
+    export type AgenticTestStatusEnum = typeof AgenticTestStatusEnum[keyof typeof AgenticTestStatusEnum];
+
+
+    export const AgenticTestStatusEnum = {
+      Active: 'active',
+      Paused: 'paused',
+      Proposed: 'proposed',
+      Rejected: 'rejected',
+    } as const;
+
+    /**
+     * * `running` - Running
+    * `passed` - Passed
+    * `failed` - Failed
+    * `timeout` - Timeout
+    * `error` - Error
+     */
+    export type AgenticTestRunStatusEnum = typeof AgenticTestRunStatusEnum[keyof typeof AgenticTestRunStatusEnum];
+
+
+    export const AgenticTestRunStatusEnum = {
+      Running: 'running',
+      Passed: 'passed',
+      Failed: 'failed',
+      Timeout: 'timeout',
+      Error: 'error',
+    } as const;
+
+    /**
+     * * `manual` - Manual
+    * `scheduled` - Scheduled
+     */
+    export type AgenticTestRunSourceEnum = typeof AgenticTestRunSourceEnum[keyof typeof AgenticTestRunSourceEnum];
+
+
+    export const AgenticTestRunSourceEnum = {
+      Manual: 'manual',
+      Scheduled: 'scheduled',
+    } as const;
+
+    export interface AgenticTestRun {
+      readonly id: string;
+      readonly agentic_test: string;
+      readonly started_at: string;
+      /** @nullable */
+      readonly finished_at: string | null;
+      readonly status: AgenticTestRunStatusEnum;
+      /** What triggered this run. New sources may be added (e.g. webhook, api).
+
+      * `manual` - Manual
+      * `scheduled` - Scheduled */
+      readonly source: AgenticTestRunSourceEnum;
+      /** @nullable */
+      readonly duration_ms: number | null;
+      /** Raw response from the browser agent. */
+      readonly output: unknown;
+      readonly error_message: string;
+      /** Runner-specific session id (e.g. browserbase) so we can deep-link back to the agent run. */
+      readonly external_session_id: string;
+      readonly screenshot_url: string;
+      /** Browserbase region this run executed in (e.g. us-west-2). */
+      readonly region: string;
+      /** PostHog session replay id recorded by posthog-js inside the browserbase session. */
+      readonly posthog_session_id: string;
+      /** Append-only list of agent events emitted during the run (status, tool_call, tool_result, model_text, final). One dict per event. */
+      readonly log_entries: unknown;
+    }
+
+    export interface AgenticTest {
+      readonly id: string;
+      /** @maxLength 255 */
+      name: string;
+      description?: string;
+      /** @maxLength 2048 */
+      target_url: string;
+      /** Natural-language instructions for the browser agent. */
+      prompt: string;
+      status?: AgenticTestStatusEnum;
+      /** List of post-run checks the test must satisfy, scoped to the agent's own PostHog session. Each item: {type, ...config}. Supported types: event_captured, event_not_captured, no_console_errors. */
+      assertions?: unknown;
+      /**
+         * Cron expression (5 fields, UTC) describing the run cadence. Empty means manual-only — no automatic runs.
+         * @maxLength 128
+         */
+      schedule_cron?: string;
+      /** List of Browserbase regions the test may run from. Each run picks one at random. Empty list means use the Browserbase default (us-west-2). Supported: us-west-2, us-east-1, eu-central-1, ap-southeast-1. */
+      regions?: unknown;
+      /**
+         * When the next scheduled run is due. Null when the test is not on a schedule.
+         * @nullable
+         */
+      readonly next_run_at: string | null;
+      /**
+         * @maxLength 255
+         * @nullable
+         */
+      source_replay_id?: string | null;
+      readonly created_by: UserBasic;
+      readonly created_at: string;
+      readonly updated_at: string;
+      /** @nullable */
+      readonly last_run_at: string | null;
+      /** Most recent run for this test, or null if none have completed yet. */
+      readonly last_run: AgenticTestRun | null;
+    }
+
     export interface AggregatedSpanRow {
       avg_duration_nano: number;
       count: number;
@@ -12388,6 +12500,34 @@ export namespace Schemas {
       completed_at?: string | null;
       readonly created_at: string;
       readonly updated_at: string;
+    }
+
+    export interface DetectFlowsRequest {
+      /**
+         * GitHub repository in 'owner/repo' format, e.g. 'posthog/posthog-js'.
+         * @maxLength 256
+         */
+      repository: string;
+      /**
+         * Domain where the product is deployed, e.g. 'us.posthog.com'.
+         * @maxLength 256
+         */
+      domain: string;
+    }
+
+    export interface DetectFlowsResponse {
+      /** ID of the created task. */
+      task_id: string;
+      /**
+         * ID of the task run to stream logs from.
+         * @nullable
+         */
+      task_run_id: string | null;
+      /**
+         * Current status of the task run: queued, in_progress, completed, failed, or cancelled.
+         * @nullable
+         */
+      status?: string | null;
     }
 
     /**
@@ -21282,6 +21422,7 @@ export namespace Schemas {
     * `support_queue` - Support Queue
     * `session_summaries` - Session Summaries
     * `signal_report` - Signal Report
+    * `agentic_tests` - Agentic Tests
      */
     export type OriginProductEnum = typeof OriginProductEnum[keyof typeof OriginProductEnum];
 
@@ -21296,6 +21437,7 @@ export namespace Schemas {
       SupportQueue: 'support_queue',
       SessionSummaries: 'session_summaries',
       SignalReport: 'signal_report',
+      AgenticTests: 'agentic_tests',
     } as const;
 
     /**
@@ -21347,6 +21489,24 @@ export namespace Schemas {
       /** @nullable */
       previous?: string | null;
       results: ActivityLog[];
+    }
+
+    export interface PaginatedAgenticTestList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: AgenticTest[];
+    }
+
+    export interface PaginatedAgenticTestRunList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: AgenticTestRun[];
     }
 
     export interface PaginatedAlertList {
@@ -25141,6 +25301,44 @@ export namespace Schemas {
     export interface PatchedAddPersonsToStaticCohortRequest {
       /** List of person UUIDs to add to the cohort */
       person_ids?: string[];
+    }
+
+    export interface PatchedAgenticTest {
+      readonly id?: string;
+      /** @maxLength 255 */
+      name?: string;
+      description?: string;
+      /** @maxLength 2048 */
+      target_url?: string;
+      /** Natural-language instructions for the browser agent. */
+      prompt?: string;
+      status?: AgenticTestStatusEnum;
+      /** List of post-run checks the test must satisfy, scoped to the agent's own PostHog session. Each item: {type, ...config}. Supported types: event_captured, event_not_captured, no_console_errors. */
+      assertions?: unknown;
+      /**
+         * Cron expression (5 fields, UTC) describing the run cadence. Empty means manual-only — no automatic runs.
+         * @maxLength 128
+         */
+      schedule_cron?: string;
+      /** List of Browserbase regions the test may run from. Each run picks one at random. Empty list means use the Browserbase default (us-west-2). Supported: us-west-2, us-east-1, eu-central-1, ap-southeast-1. */
+      regions?: unknown;
+      /**
+         * When the next scheduled run is due. Null when the test is not on a schedule.
+         * @nullable
+         */
+      readonly next_run_at?: string | null;
+      /**
+         * @maxLength 255
+         * @nullable
+         */
+      source_replay_id?: string | null;
+      readonly created_by?: UserBasic;
+      readonly created_at?: string;
+      readonly updated_at?: string;
+      /** @nullable */
+      readonly last_run_at?: string | null;
+      /** Most recent run for this test, or null if none have completed yet. */
+      readonly last_run?: AgenticTestRun | null;
     }
 
     export interface PatchedAlert {
@@ -40797,6 +40995,28 @@ export namespace Schemas {
      * @nullable
      */
     was_impersonated?: boolean | null;
+    };
+
+    export type AgenticTestRunsListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
+    };
+
+    export type AgenticTestsListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
     };
 
     export type AlertsListParams = {

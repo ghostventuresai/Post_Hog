@@ -200,6 +200,7 @@ export interface PaginatedTaskAutomationListApi {
  * `support_queue` - Support Queue
  * `session_summaries` - Session Summaries
  * `signal_report` - Signal Report
+ * `agentic_tests` - Agentic Tests
  */
 export type OriginProductEnumApi = (typeof OriginProductEnumApi)[keyof typeof OriginProductEnumApi]
 
@@ -213,6 +214,7 @@ export const OriginProductEnumApi = {
     SupportQueue: 'support_queue',
     SessionSummaries: 'session_summaries',
     SignalReport: 'signal_report',
+    AgenticTests: 'agentic_tests',
 } as const
 
 /**
