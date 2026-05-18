@@ -12,6 +12,7 @@ import type { toolbarConfigLogicType } from './toolbarConfigLogicType'
 import {
     cleanToolbarAuthHash,
     generatePKCE,
+    InsecureContextError,
     LOCALSTORAGE_KEY,
     OAUTH_LOCALSTORAGE_KEY,
     PKCE_STORAGE_KEY,
@@ -241,7 +242,13 @@ export const toolbarConfigLogic = kea<toolbarConfigLogicType>([
                 challenge = pkce.challenge
             } catch (e) {
                 captureToolbarException(e, 'pkce_generation')
-                lemonToast.error('Failed to start authentication. Ensure you are on a secure (HTTPS) page.')
+                if (e instanceof InsecureContextError) {
+                    lemonToast.error(
+                        'PostHog toolbar requires HTTPS or localhost. Load this page over HTTPS to authenticate.'
+                    )
+                } else {
+                    lemonToast.error('Failed to start authentication. Please try again.')
+                }
                 actions.setAuthStatus('idle')
                 return
             }
@@ -848,11 +855,11 @@ export async function toolbarFetch(
     })
 
     if (response.status === 403) {
-        // The toolbar can't distinguish "token lost access" from "user switched projects" —
-        // both are project-level access failures. Clear tokens and let the user re-auth
-        // rather than auto-redirecting to /toolbar_oauth/authorize/ (which would use the
-        // session's current team, potentially causing a "Domain not authorized" loop).
-        toolbarConfigLogic.actions.tokenExpired()
+        toolbarLogger.warn('auth', 'Toolbar API request returned 403', {
+            pathname,
+            method,
+        })
+        toolbarPosthogJS.capture('toolbar api forbidden', { method, pathname })
     }
     return response
 }
