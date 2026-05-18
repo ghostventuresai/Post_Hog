@@ -84,7 +84,7 @@ describe('TaxonomicPropertyFilter selectingKeyOnly', () => {
 
     it.each([
         {
-            name: 'feature-flag preset hides the operator+value pair for cohort rows',
+            name: 'in-only preset hides the operator+value pair for cohort rows',
             extraProps: COHORTS_ONLY_SUPPORT_IN_PICKER_PROPS,
         },
         {
