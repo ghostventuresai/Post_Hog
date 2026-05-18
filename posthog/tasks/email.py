@@ -749,6 +749,112 @@ def send_team_matview_failure_digest(team_id: int, failed_query_ids: list[str], 
     )
 
 
+def deliver_social_referral_merch_reward_notice_email(
+    *,
+    user_id: int,
+    referee_organization_name: str,
+    social_referral_id: str,
+    referee_organization_key: str,
+) -> None:
+    user: User = User.objects.get(pk=user_id)
+    referee_organization_display = sanitize_display_name(
+        referee_organization_name,
+        fallback="an organization you invited",
+        context={
+            "task": "deliver_social_referral_merch_reward_notice_email",
+            "user_id": user_id,
+            "social_referral_id": social_referral_id,
+        },
+    )
+    message = EmailMessage(
+        use_http=False,
+        campaign_key=f"social-referral-merch-notice-{social_referral_id}-{referee_organization_key}",
+        subject="Your PostHog merch coupon — thanks for the referral",
+        template_name="social_referral_merch_reward_notice",
+        template_context={
+            "preheader": f"Your merch coupon for referring {referee_organization_display} is in PostHog.",
+            "user_name": user.first_name or "there",
+            "referee_organization_name": referee_organization_display,
+            "cloud": is_cloud(),
+            "site_url": settings.SITE_URL or "",
+            "referrals_path": "/referrals",
+        },
+    )
+    message.add_user_recipient(user)
+    message.send(send_async=False)
+
+
+def deliver_social_referral_shopify_reward_email(
+    user_id: int,
+    discount_code: str,
+    referee_organization_name: str,
+) -> None:
+    """Merch coupon email for referrers (in-process SMTP). ``send_social_referral_shopify_reward_email`` queues this."""
+    user: User = User.objects.get(pk=user_id)
+    referee_organization_display = sanitize_display_name(
+        referee_organization_name,
+        fallback="an organization you invited",
+        context={
+            "task": "deliver_social_referral_shopify_reward_email",
+            "user_id": user_id,
+        },
+    )
+    message = EmailMessage(
+        use_http=False,
+        campaign_key=f"social-referral-shopify-{user.uuid}-{discount_code}",
+        subject="Your PostHog merch coupon — thanks for the referral",
+        template_name="social_referral_shopify_reward",
+        template_context={
+            "preheader": f"Your merch coupon {discount_code} is ready.",
+            "user_name": user.first_name or "there",
+            "discount_code": discount_code,
+            "referee_organization_name": referee_organization_display,
+            "cloud": is_cloud(),
+            "site_url": settings.SITE_URL or "",
+            "referrals_path": "/referrals",
+        },
+    )
+    message.add_user_recipient(user)
+    message.send(send_async=False)
+
+
+@shared_task(**EMAIL_TASK_KWARGS)
+@skip_team_scope_audit
+def send_social_referral_shopify_reward_email(
+    user_id: int,
+    discount_code: str,
+    referee_organization_name: str,
+) -> None:
+    """Queueable wrapper; runs the same in-process SMTP path as :func:`deliver_social_referral_shopify_reward_email`."""
+    deliver_social_referral_shopify_reward_email(user_id, discount_code, referee_organization_name)
+
+
+@shared_task(**EMAIL_TASK_KWARGS)
+@skip_team_scope_audit
+def send_internal_referral_invite_email(
+    recipient_email: str,
+    enqueue_email_delivery: bool = True,
+) -> None:
+    """Transactional invite email for the internal-referral research flow.
+
+    ``enqueue_email_delivery`` defaults True so standalone ``.delay()`` matches the historical
+    behavior (SMTP runs via the ``_send_email`` Celery task). Referrals Temporal calls pass
+    ``False`` so Mail sends inside the worker without requiring a separate email-queue consumer.
+    """
+    message = EmailMessage(
+        use_http=False,
+        campaign_key=f"internal-referral-invite-{recipient_email}-{uuid.uuid4()}",
+        subject="you've been flagged. positively.",
+        template_name="internal_referral_invite",
+        template_context={
+            "preheader": "we built something for people like you.",
+            "site_url": settings.SITE_URL or "",
+        },
+    )
+    message.add_recipient(email=recipient_email)
+    message.send(send_async=enqueue_email_delivery)
+
+
 @shared_task(**EMAIL_TASK_KWARGS)
 def send_canary_email(user_email: str) -> None:
     message = EmailMessage(
