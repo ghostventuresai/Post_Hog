@@ -1105,6 +1105,33 @@ class CountPerActorMathType(StrEnum):
     P99_COUNT_PER_ACTOR = "p99_count_per_actor"
 
 
+class CspViolationSignalExtra(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    blocked_url: str | None = None
+    column_number: float | None = None
+    disposition: str | None = None
+    document_url: str | None = None
+    effective_directive: str | None = None
+    line_number: float | None = None
+    source_file: str | None = None
+    user_agent: str | None = None
+    violated_directive: str | None = None
+
+
+class CspViolationSignalInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    description: str
+    extra: CspViolationSignalExtra
+    source_id: str
+    source_product: Literal["csp_reporting"] = "csp_reporting"
+    source_type: Literal["violation"] = "violation"
+    weight: float
+
+
 class CurrencyCode(StrEnum):
     AED = "AED"
     AFN = "AFN"
@@ -4517,6 +4544,7 @@ class SignalSourceProduct(StrEnum):
     CONVERSATIONS = "conversations"
     ERROR_TRACKING = "error_tracking"
     ENDPOINTS = "endpoints"
+    CSP_REPORTING = "csp_reporting"
 
 
 class SignalSourceType(StrEnum):
@@ -4530,6 +4558,7 @@ class SignalSourceType(StrEnum):
     ISSUE_REOPENED = "issue_reopened"
     ISSUE_SPIKING = "issue_spiking"
     ENDPOINT_EXECUTION_FAILED = "endpoint_execution_failed"
+    VIOLATION = "violation"
 
 
 class SimilarIssue(BaseModel):
@@ -8405,6 +8434,7 @@ class SignalInput(
         | ConversationsTicketSignalInput
         | ErrorTrackingSignalInput
         | EndpointExecutionFailedSignalInput
+        | CspViolationSignalInput
     ]
 ):
     root: (
@@ -8417,6 +8447,7 @@ class SignalInput(
         | ConversationsTicketSignalInput
         | ErrorTrackingSignalInput
         | EndpointExecutionFailedSignalInput
+        | CspViolationSignalInput
     )
 
 

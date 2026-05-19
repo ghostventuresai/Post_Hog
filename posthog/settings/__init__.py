@@ -113,6 +113,16 @@ MULTI_ORG_ENABLED: bool = get_from_env("MULTI_ORG_ENABLED", False, type_cast=str
 
 AUTO_LOGIN: bool = get_from_env("AUTO_LOGIN", False, type_cast=str_to_bool)
 
+# Ops kill switch for CSP violation signal emission. When False, /report/ stops fanning
+# out to the signals pipeline regardless of per-team SignalSourceConfig opt-in. Use this
+# if the embedding service downstream is overloaded.
+CSP_SIGNAL_EMISSION_ENABLED: bool = get_from_env("CSP_SIGNAL_EMISSION_ENABLED", True, type_cast=str_to_bool)
+
+# Daily cap of CSP signals emitted per team per UTC day. Soft cap — under burst the
+# counter can briefly overshoot before settling. Drop everything past the cap to avoid
+# overwhelming the downstream embedding pipeline.
+CSP_SIGNAL_DAILY_CAP_PER_TEAM: int = get_from_env("CSP_SIGNAL_DAILY_CAP_PER_TEAM", 5000, type_cast=int)
+
 CONTAINER_HOSTNAME: str = os.getenv("HOSTNAME", "unknown")
 
 OTEL_SERVICE_NAME: str | None = os.getenv("OTEL_SERVICE_NAME", None)

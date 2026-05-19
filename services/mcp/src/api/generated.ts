@@ -23335,6 +23335,7 @@ export namespace Schemas {
     * `zendesk` - Zendesk
     * `conversations` - Conversations
     * `error_tracking` - Error tracking
+    * `csp_reporting` - CSP reporting
      */
     export type SourceProductEnum = typeof SourceProductEnum[keyof typeof SourceProductEnum];
 
@@ -23347,6 +23348,7 @@ export namespace Schemas {
       Zendesk: 'zendesk',
       Conversations: 'conversations',
       ErrorTracking: 'error_tracking',
+      CspReporting: 'csp_reporting',
     } as const;
 
     /**
@@ -23357,6 +23359,7 @@ export namespace Schemas {
     * `issue_created` - Issue created
     * `issue_reopened` - Issue reopened
     * `issue_spiking` - Issue spiking
+    * `violation` - Violation
      */
     export type SignalSourceConfigSourceTypeEnum = typeof SignalSourceConfigSourceTypeEnum[keyof typeof SignalSourceConfigSourceTypeEnum];
 
@@ -23369,6 +23372,7 @@ export namespace Schemas {
       IssueCreated: 'issue_created',
       IssueReopened: 'issue_reopened',
       IssueSpiking: 'issue_spiking',
+      Violation: 'violation',
     } as const;
 
     export interface SignalSourceConfig {

@@ -11103,6 +11103,77 @@
             ],
             "type": "string"
         },
+        "CspViolationSignalExtra": {
+            "additionalProperties": false,
+            "properties": {
+                "blocked_url": {
+                    "type": ["string", "null"]
+                },
+                "column_number": {
+                    "type": ["number", "null"]
+                },
+                "disposition": {
+                    "type": ["string", "null"]
+                },
+                "document_url": {
+                    "type": ["string", "null"]
+                },
+                "effective_directive": {
+                    "type": ["string", "null"]
+                },
+                "line_number": {
+                    "type": ["number", "null"]
+                },
+                "source_file": {
+                    "type": ["string", "null"]
+                },
+                "user_agent": {
+                    "type": ["string", "null"]
+                },
+                "violated_directive": {
+                    "type": ["string", "null"]
+                }
+            },
+            "required": [
+                "document_url",
+                "violated_directive",
+                "effective_directive",
+                "blocked_url",
+                "source_file",
+                "line_number",
+                "column_number",
+                "disposition",
+                "user_agent"
+            ],
+            "type": "object"
+        },
+        "CspViolationSignalInput": {
+            "additionalProperties": false,
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "extra": {
+                    "$ref": "#/definitions/CspViolationSignalExtra"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "source_product": {
+                    "const": "csp_reporting",
+                    "type": "string"
+                },
+                "source_type": {
+                    "const": "violation",
+                    "type": "string"
+                },
+                "weight": {
+                    "type": "number"
+                }
+            },
+            "required": ["source_type", "source_product", "source_id", "description", "weight", "extra"],
+            "type": "object"
+        },
         "CurrencyCode": {
             "enum": [
                 "AED",
@@ -35835,6 +35906,9 @@
                 },
                 {
                     "$ref": "#/definitions/EndpointExecutionFailedSignalInput"
+                },
+                {
+                    "$ref": "#/definitions/CspViolationSignalInput"
                 }
             ]
         },
@@ -35869,7 +35943,8 @@
                 "zendesk",
                 "conversations",
                 "error_tracking",
-                "endpoints"
+                "endpoints",
+                "csp_reporting"
             ],
             "type": "string"
         },
@@ -35884,7 +35959,8 @@
                 "issue_created",
                 "issue_reopened",
                 "issue_spiking",
-                "endpoint_execution_failed"
+                "endpoint_execution_failed",
+                "violation"
             ],
             "type": "string"
         },

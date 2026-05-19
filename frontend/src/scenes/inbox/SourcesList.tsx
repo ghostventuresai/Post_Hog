@@ -2,10 +2,11 @@ import { useActions, useValues } from 'kea'
 import posthog from 'posthog-js'
 import { useState } from 'react'
 
-import { IconArrowRight, IconBell, IconGithub, IconLinear } from '@posthog/icons'
-import { LemonButton, Spinner } from '@posthog/lemon-ui'
+import { IconArrowRight, IconBell, IconGithub, IconLinear, IconWarning } from '@posthog/icons'
+import { LemonButton, Link, Spinner } from '@posthog/lemon-ui'
 
 import { RecordingsUniversalFiltersDisplay } from 'lib/components/Cards/InsightCard/RecordingsUniversalFiltersDisplay'
+import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { IconSlack } from 'lib/lemon-ui/icons'
 
 import { iconForType } from '~/layout/panel-layout/ProjectTree/defaultTree'
@@ -19,13 +20,13 @@ type SourceProps =
     | {
           icon: React.ReactNode
           title: string
-          description: string
+          description: React.ReactNode
           variant: 'coming-soon'
       }
     | {
           icon: React.ReactNode
           title: string
-          description: string
+          description: React.ReactNode
           variant: 'available'
           checked: boolean
           loading?: boolean
@@ -95,7 +96,7 @@ function Source(props: SourceProps): JSX.Element {
                         </LemonButton>
                     )}
                 </div>
-                <p className="text-xs text-secondary mt-0.25 mb-0">{props.description}</p>
+                <p className="text-xs text-secondary mt-0.25 mb-0 max-w-[80%]">{props.description}</p>
                 {!isComingSoon && props.checked && props.config !== undefined && (
                     <>
                         <div className="mt-2 border rounded">
@@ -144,20 +145,24 @@ export function SourcesList(): JSX.Element {
         githubIssuesConfig,
         linearIssuesConfig,
         zendeskTicketsConfig,
+        cspReportingConfig,
         errorTrackingIsFullyEnabled,
         isSessionAnalysisToggling,
         isGithubIssuesToggling,
         isLinearIssuesToggling,
         isZendeskTicketsToggling,
+        isCspReportingToggling,
         isErrorTrackingToggling,
     } = useValues(signalSourcesLogic)
     const {
         toggleSessionAnalysis,
+        toggleCspReporting,
         openSessionAnalysisSetup,
         clearSessionAnalysisFilters,
         initiateDataWarehouseSourceToggle,
         toggleErrorTracking,
     } = useActions(signalSourcesLogic)
+    const cspReportingFlagEnabled = useFeatureFlag('CSP_REPORTING_SIGNAL_SOURCE')
 
     const recordingFilters = sessionAnalysisConfig?.config?.recording_filters
     const hasNonEmptyFilters = isNonEmptyFilters(recordingFilters)
@@ -237,6 +242,25 @@ export function SourcesList(): JSX.Element {
                 requiresSetup
                 onToggle={() => initiateDataWarehouseSourceToggle('Github')}
             />
+
+            {cspReportingFlagEnabled && (
+                <Source
+                    icon={<IconWarning className="size-5" />}
+                    title="CSP violations"
+                    description={
+                        <>
+                            Content Security Policy violation reports from real browsers → Signals.{' '}
+                            <Link to="https://posthog.com/docs/csp-tracking" target="_blank">
+                                Read the docs
+                            </Link>
+                        </>
+                    }
+                    variant="available"
+                    checked={!!cspReportingConfig?.enabled}
+                    loading={isCspReportingToggling}
+                    onToggle={() => toggleCspReporting()}
+                />
+            )}
 
             <Source
                 icon={<IconSlack className="size-5 grayscale" />}
