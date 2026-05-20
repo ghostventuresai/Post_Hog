@@ -5145,6 +5145,13 @@ export interface SlackChannelType {
     is_private_without_access?: boolean
 }
 
+export interface SlackUserType {
+    id: string
+    name: string
+    real_name: string
+    is_admin: boolean
+}
+
 export interface TwilioPhoneNumberType {
     sid: string
     phone_number: string
