@@ -6,6 +6,7 @@ from django.db.models import OuterRef, QuerySet, Subquery
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 
+import posthoganalytics
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
@@ -478,9 +479,30 @@ class AlertSerializer(serializers.ModelSerializer):
         return value
 
     def validate_insight(self, value):
-        if value and not value.are_alerts_supported:
-            raise ValidationError("Alerts are not supported for this insight.")
-        return value
+        if not value:
+            return value
+        if value.are_alerts_supported:
+            return value
+        if value.is_hogql_backed:
+            if not self._hogql_alerts_enabled():
+                raise ValidationError("SQL insight alerts are not enabled for your account.")
+            return value
+        raise ValidationError("Alerts are not supported for this insight.")
+
+    def _hogql_alerts_enabled(self) -> bool:
+        # Use the target alert's organization (from team scope), not the user's current_organization —
+        # otherwise a user belonging to multiple orgs could flip their current org to a flag-on org and
+        # create a HogQL alert in a different team where the flag is disabled.
+        user = self.context["request"].user
+        get_organization = self.context.get("get_organization")
+        org = get_organization() if get_organization else None
+        return bool(
+            posthoganalytics.feature_enabled(
+                "hogql-insight-alerts",
+                str(user.distinct_id),
+                groups={"organization": str(org.id)} if org else {},
+            )
+        )
 
     def validate_subscribed_users(self, value):
         for user in value:
@@ -680,6 +702,14 @@ class AlertViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         queryset = queryset.annotate(last_value=Subquery(latest_check.values("calculated_value")[:1]))
 
         return queryset
+
+    def perform_destroy(self, instance: AlertConfiguration) -> None:
+        # The viewset enforces authentication, so self.request.user is always a real User here —
+        # narrow for mypy's sake.
+        user = self.request.user
+        assert isinstance(user, User)
+        instance.report_deleted(user, analytics_props=get_request_analytics_properties(self.request))
+        super().perform_destroy(instance)
 
     CHECKS_DEFAULT_LIMIT = 5
     CHECKS_MAX_LIMIT = 500

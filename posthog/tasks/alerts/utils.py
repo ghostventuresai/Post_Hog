@@ -13,6 +13,9 @@ from posthog.schema import (
     AlertConditionType,
     AlertState,
     ChartDisplayType,
+    HogQLAlertConfig,
+    HogQLQuery,
+    InsightsThresholdBounds,
     InsightThreshold,
     InsightThresholdType,
     NodeKind,
@@ -78,23 +81,64 @@ def validate_alert_config(
     except Exception:
         raise ValueError(f"Alert has invalid condition: {condition}")
 
-    if not config or not isinstance(config, dict) or config.get("type") != "TrendsAlertConfig":
+    if not isinstance(config, dict):
         raise ValueError(f"Unsupported alert config type: {config}")
+    config_type = config.get("type")
+    if config_type == "HogQLAlertConfig":
+        _validate_hogql_alert_config(query, parsed_condition, config, threshold_config)
+        return
+    if config_type == "TrendsAlertConfig":
+        _validate_trends_alert_config(query, parsed_condition, config, threshold_config)
+        return
+    raise ValueError(f"Unsupported alert config type: {config}")
+
+
+def _unwrap_inner_query(query: dict) -> tuple[dict, str | None]:
+    """Strip DataTable/DataVisualization/InsightVizNode wrappers and return the inner query plus its kind.
+    Iterates so multi-level wrappers stay consistent with `Insight._unwrapped_query_kind`."""
+    kind = get_from_dict_or_attr(query, "kind")
+    while kind in WRAPPER_NODE_KINDS:
+        query = get_from_dict_or_attr(query, "source")
+        kind = get_from_dict_or_attr(query, "kind")
+    return query, kind
+
+
+def _validate_absolute_threshold_compatibility(
+    parsed_condition: AlertCondition,
+    threshold_config: dict | None,
+) -> InsightThreshold | None:
+    """Parse the threshold (if any) and enforce the absolute-value-needs-absolute-threshold rule. Shared
+    between trends and HogQL validators."""
+    if threshold_config is None:
+        return None
+    try:
+        threshold = InsightThreshold.model_validate(threshold_config)
+    except Exception:
+        raise ValueError(f"Alert has invalid threshold configuration: {threshold_config}")
+    if parsed_condition.type == AlertConditionType.ABSOLUTE_VALUE and threshold.type != InsightThresholdType.ABSOLUTE:
+        raise ValueError(
+            "Absolute value alerts require an absolute threshold, but a percentage threshold was configured"
+        )
+    return threshold
+
+
+def _validate_trends_alert_config(
+    query: dict,
+    parsed_condition: AlertCondition,
+    config: dict,
+    threshold_config: dict | None,
+) -> None:
     try:
         parsed_config = TrendsAlertConfig.model_validate(config)
     except Exception:
         raise ValueError(f"Alert has invalid TrendsAlertConfig: {config}")
 
-    kind = get_from_dict_or_attr(query, "kind")
-    if kind in WRAPPER_NODE_KINDS:
-        query = get_from_dict_or_attr(query, "source")
-        kind = get_from_dict_or_attr(query, "kind")
-
+    inner_query, kind = _unwrap_inner_query(query)
     if kind != NodeKind.TRENDS_QUERY:
-        raise ValueError(f"Alert's insight query kind '{kind}' is not supported (only TrendsQuery)")
+        raise ValueError(f"Alert config is TrendsAlertConfig but insight query kind is '{kind}'")
 
     try:
-        trends_query = TrendsQuery.model_validate(query)
+        trends_query = TrendsQuery.model_validate(inner_query)
     except Exception as e:
         raise ValueError(f"Alert's insight has an invalid TrendsQuery: {e}")
 
@@ -111,28 +155,44 @@ def validate_alert_config(
     if parsed_config.series_index >= result_count:
         raise ValueError(f"series_index {parsed_config.series_index} is out of range (query has {result_count} series)")
 
-    if threshold_config is not None:
-        try:
-            threshold = InsightThreshold.model_validate(threshold_config)
-        except Exception:
-            raise ValueError(f"Alert has invalid threshold configuration: {threshold_config}")
+    threshold = _validate_absolute_threshold_compatibility(parsed_condition, threshold_config)
 
-        if (
-            parsed_condition.type == AlertConditionType.ABSOLUTE_VALUE
-            and threshold.type != InsightThresholdType.ABSOLUTE
-        ):
-            raise ValueError(
-                "Absolute value alerts require an absolute threshold, but a percentage threshold was configured"
-            )
-
-        if parsed_config.check_ongoing_interval and parsed_condition.type in (
+    if (
+        threshold
+        and parsed_config.check_ongoing_interval
+        and parsed_condition.type
+        in (
             AlertConditionType.ABSOLUTE_VALUE,
             AlertConditionType.RELATIVE_INCREASE,
-        ):
-            if not threshold.bounds or threshold.bounds.upper is None:
-                raise ValueError(
-                    f"check_ongoing_interval is only supported for alert condition {parsed_condition.type} when upper threshold is specified"
-                )
+        )
+    ):
+        if not threshold.bounds or threshold.bounds.upper is None:
+            raise ValueError(
+                f"check_ongoing_interval is only supported for alert condition {parsed_condition.type} when upper threshold is specified"
+            )
+
+
+def _validate_hogql_alert_config(
+    query: dict,
+    parsed_condition: AlertCondition,
+    config: dict,
+    threshold_config: dict | None,
+) -> None:
+    try:
+        HogQLAlertConfig.model_validate(config)
+    except Exception:
+        raise ValueError(f"Alert has invalid HogQLAlertConfig: {config}")
+
+    inner_query, kind = _unwrap_inner_query(query)
+    if kind != NodeKind.HOG_QL_QUERY:
+        raise ValueError(f"Alert config is HogQLAlertConfig but insight query kind is '{kind}'")
+
+    try:
+        HogQLQuery.model_validate(inner_query)
+    except Exception as e:
+        raise ValueError(f"Alert's insight has an invalid HogQLQuery: {e}")
+
+    _validate_absolute_threshold_compatibility(parsed_condition, threshold_config)
 
 
 def calculation_interval_to_order(interval: AlertCalculationInterval | None) -> int:
@@ -143,6 +203,60 @@ def calculation_interval_to_order(interval: AlertCalculationInterval | None) -> 
             return 1
         case _:
             return 2
+
+
+_BREACH_CONDITION_TEXT: dict[AlertConditionType, str] = {
+    AlertConditionType.ABSOLUTE_VALUE: "is",
+    AlertConditionType.RELATIVE_INCREASE: "increased",
+    AlertConditionType.RELATIVE_DECREASE: "decreased",
+}
+
+
+def compute_relative_change(
+    condition_type: AlertConditionType,
+    threshold_type: InsightThresholdType,
+    current: float,
+    previous: float,
+) -> float:
+    """Shared arithmetic for relative-increase/decrease alerts. RELATIVE_DECREASE returns a positive
+    number when the metric went down, matching how breach messages talk about 'decreased by N'."""
+    if condition_type == AlertConditionType.RELATIVE_INCREASE:
+        delta = current - previous
+    elif condition_type == AlertConditionType.RELATIVE_DECREASE:
+        delta = previous - current
+    else:
+        raise ValueError(f"compute_relative_change called with non-relative condition: {condition_type}")
+
+    if threshold_type == InsightThresholdType.ABSOLUTE:
+        return delta
+    if threshold_type == InsightThresholdType.PERCENTAGE:
+        if previous == 0 and current == 0:
+            return 0
+        if previous == 0:
+            return float("inf")
+        return delta / previous
+    raise ValueError(f"Unsupported threshold type for relative condition: {threshold_type}")
+
+
+def format_threshold_breach(
+    bounds: InsightsThresholdBounds,
+    calculated_value: float,
+    threshold_type: InsightThresholdType,
+    condition_type: AlertConditionType,
+    *,
+    subject: str,
+) -> list[str]:
+    """Returns 0 or 1 breach messages. `subject` is the caller-supplied prefix
+    (e.g. "The SQL insight value" or "The insight value (Series A) for previous day")."""
+    is_percentage = threshold_type == InsightThresholdType.PERCENTAGE
+    fmt = lambda v: f"{v:.2%}" if is_percentage else v  # noqa: E731
+    condition_text = _BREACH_CONDITION_TEXT[condition_type]
+
+    if bounds.lower is not None and calculated_value < bounds.lower:
+        return [f"{subject} ({fmt(calculated_value)}) {condition_text} less than lower threshold ({fmt(bounds.lower)})"]
+    if bounds.upper is not None and calculated_value > bounds.upper:
+        return [f"{subject} ({fmt(calculated_value)}) {condition_text} more than upper threshold ({fmt(bounds.upper)})"]
+    return []
 
 
 def alert_calculation_interval_to_relativedelta(alert_calculation_interval: AlertCalculationInterval) -> relativedelta:

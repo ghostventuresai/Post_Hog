@@ -2553,6 +2553,13 @@ class HogLanguage(StrEnum):
     LIQUID = "liquid"
 
 
+class HogQLAlertConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["HogQLAlertConfig"] = "HogQLAlertConfig"
+
+
 class BounceRatePageViewMode(StrEnum):
     COUNT_PAGEVIEWS = "count_pageviews"
     UNIQ_URLS = "uniq_urls"
