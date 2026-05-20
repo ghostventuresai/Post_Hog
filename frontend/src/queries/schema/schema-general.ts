@@ -5603,6 +5603,13 @@ export interface SourceFieldSSHTunnelConfig {
     name: string
 }
 
+export interface SourceFieldSwitchConfig {
+    type: 'switch'
+    label: string
+    name: string
+    caption?: string
+}
+
 export interface SourceFieldOauthConfig {
     type: 'oauth'
     name: string
@@ -5685,6 +5692,7 @@ export type SourceFieldConfig =
     | SourceFieldOauthConfig
     | SourceFieldFileUploadConfig
     | SourceFieldSSHTunnelConfig
+    | SourceFieldSwitchConfig
 
 export interface SuggestedTable {
     table: string

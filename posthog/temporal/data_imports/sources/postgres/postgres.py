@@ -298,6 +298,14 @@ def _normalize_selected_schema(schema: str | None) -> str | None:
     return normalized or None
 
 
+def _parse_schemas(schema_input: str | None) -> list[str] | None:
+    if not isinstance(schema_input, str) or not schema_input.strip():
+        return None
+
+    schemas = [s.strip() for s in schema_input.split(",") if s.strip()]
+    return schemas if schemas else None
+
+
 def _get_display_table_name(schema_name: str, table_name: str, *, qualify_with_schema: bool) -> str:
     return f"{schema_name}.{table_name}" if qualify_with_schema else table_name
 
@@ -364,17 +372,46 @@ def _get_discovered_tables(
     else:
         # pg_class covers all syncable relkinds: r/p (tables), v/m (views), f (foreign).
         if selected_schema is not None:
-            cursor.execute(
-                """
-                SELECT n.nspname AS schema_name, c.relname AS table_name
-                FROM pg_class c
-                JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-                  AND n.nspname = %(schema)s
-                ORDER BY n.nspname, c.relname
-                """,
-                {"schema": selected_schema},
-            )
+            # Check if it's comma-separated multiple schemas
+            if "," in selected_schema:
+                schema_list = [s.strip() for s in selected_schema.split(",") if s.strip()]
+                if schema_list:
+                    schema_placeholders, schema_params = _build_named_value_placeholders("schema", schema_list)
+                    cursor.execute(
+                        f"""
+                        SELECT n.nspname AS schema_name, c.relname AS table_name
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                          AND n.nspname IN ({schema_placeholders})
+                        ORDER BY n.nspname, c.relname
+                        """,
+                        schema_params,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT n.nspname AS schema_name, c.relname AS table_name
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                          AND n.nspname = %(schema)s
+                        ORDER BY n.nspname, c.relname
+                        """,
+                        {"schema": selected_schema},
+                    )
+            else:
+                cursor.execute(
+                    """
+                    SELECT n.nspname AS schema_name, c.relname AS table_name
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                      AND n.nspname = %(schema)s
+                    ORDER BY n.nspname, c.relname
+                    """,
+                    {"schema": selected_schema},
+                )
         else:
             system_schema_placeholders, system_schema_params = _build_named_value_placeholders(
                 "system_schema", SYSTEM_POSTGRES_SCHEMAS
@@ -558,6 +595,68 @@ def get_primary_keys_for_schemas(
         structlog.get_logger().warning("Failed to detect primary keys for Postgres schemas", exc_info=e)
 
     return result
+
+
+def generate_union_query(
+    host: str,
+    database: str,
+    user: str,
+    password: str,
+    schema: str | None,
+    port: int,
+    require_ssl: bool = False,
+    table_name: str | None = None,
+    schema_filter: list[str] | None = None,
+) -> str | None:
+    """Generate a UNION ALL query for a table across multiple schemas.
+
+    Args:
+        host: PostgreSQL host
+        database: Database name
+        user: Database user
+        password: Database password
+        schema: Schema filter (comma-separated or special "all")
+        port: Port number
+        require_ssl: Whether to require SSL
+        table_name: Specific table name to generate UNION for
+        schema_filter: Optional list of specific schemas to include
+
+    Returns:
+        SQL query string with UNION ALL across all schemas, or None if no tables found
+    """
+    try:
+        with pg_connection(
+            host=host, port=port, database=database, user=user, password=password, require_ssl=require_ssl
+        ) as connection:
+            with connection.cursor() as cursor:
+                discovered_tables, qualify_with_schema = _get_discovered_tables(cursor, schema, None)
+
+                if not discovered_tables:
+                    return None
+
+                table_schemas: dict[str, list[str]] = collections.defaultdict(list)
+                for display_name, (_catalog, schema_name, tbl_name) in discovered_tables.items():
+                    if table_name and tbl_name != table_name:
+                        continue
+                    if schema_filter and schema_name not in schema_filter:
+                        continue
+                    table_schemas[tbl_name].append(schema_name)
+
+                if not table_schemas:
+                    return None
+
+                queries = []
+                for tbl, schemas in sorted(table_schemas.items()):
+                    for sch in sorted(schemas):
+                        display_name = _get_display_table_name(sch, tbl, qualify_with_schema=qualify_with_schema)
+                        queries.append(f"SELECT * FROM {display_name}")
+
+                if not queries:
+                    return None
+
+                return " UNION ALL ".join(queries)
+    except Exception:
+        return None
 
 
 def get_foreign_keys(

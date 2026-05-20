@@ -14,6 +14,7 @@ from posthog.schema import (
     SourceFieldInputConfig,
     SourceFieldInputConfigType,
     SourceFieldSSHTunnelConfig,
+    SourceFieldSwitchConfig,
 )
 
 from posthog.exceptions_capture import capture_exception
@@ -128,10 +129,24 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
                         required=False,
                         placeholder="public",
                         caption=(
-                            "Required for warehouse imports. Leave blank only for direct Postgres queries "
-                            "to browse tables across all non-system schemas."
+                            "Required for warehouse imports unless 'Include all schemas' or 'Specific schemas' is enabled. "
+                            "Leave blank only for direct Postgres queries to browse tables across all non-system schemas."
                         ),
                         secret=False,
+                    ),
+                    SourceFieldInputConfig(
+                        name="schemas",
+                        label="Specific schemas",
+                        type=SourceFieldInputConfigType.TEXT,
+                        required=False,
+                        placeholder="schema1,schema2,schema3",
+                        caption="Comma-separated list of schemas to include. Use instead of 'Include all schemas'.",
+                        secret=False,
+                    ),
+                    SourceFieldSwitchConfig(
+                        name="include_all_schemas",
+                        label="Include all schemas",
+                        caption="Enable to discover and sync tables from all non-system schemas in the database",
                     ),
                     SourceFieldSSHTunnelConfig(name="ssh_tunnel", label="Use SSH tunnel?"),
                 ],
@@ -220,6 +235,13 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
     ) -> list[SourceSchema]:
         schemas = []
 
+        if config.include_all_schemas:
+            effective_schema = None
+        elif config.schemas:
+            effective_schema = config.schemas
+        else:
+            effective_schema = config.schema
+
         with self.with_ssh_tunnel(config) as (host, port):
             db_schemas = get_postgres_schemas(
                 host=host,
@@ -227,7 +249,7 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
                 user=config.user,
                 password=config.password,
                 database=config.database,
-                schema=config.schema,
+                schema=effective_schema,
                 names=names,
             )
             db_foreign_keys = get_postgres_foreign_keys(
@@ -236,7 +258,7 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
                 user=config.user,
                 password=config.password,
                 database=config.database,
-                schema=config.schema,
+                schema=effective_schema,
                 names=names,
             )
 
@@ -247,7 +269,7 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
                     user=config.user,
                     password=config.password,
                     database=config.database,
-                    schema=config.schema,
+                    schema=effective_schema,
                     names=names,
                 )
             else:
@@ -420,8 +442,9 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
     ) -> tuple[bool, str | None]:
         if access_method != "direct":
             schema = config.schema.strip() if isinstance(config.schema, str) else ""
-            if not schema and not schema_name:
-                return False, "Schema is required for warehouse imports."
+            schemas = config.schemas.strip() if isinstance(config.schemas, str) else ""
+            if not schema and not schemas and not schema_name and not config.include_all_schemas:
+                return False, "Schema is required for warehouse imports unless 'Include all schemas' or 'Specific schemas' is enabled."
 
         return self.validate_credentials(config, team_id, schema_name=schema_name)
 
@@ -510,9 +533,11 @@ class PostgresSource(SimpleSource[PostgresSourceConfig], SSHTunnelMixin, Validat
             password=config.password,
             database=config.database,
             sslmode="prefer",
-            # config.schema wins so warehouse-mode renames flow through without rewriting
-            # schema_metadata. Falls back to source_schema for direct mode (browse-all).
-            schema=config.schema or source_schema or "public",
+            # When include_all_schemas is enabled, use source_schema from metadata (per-table).
+            # Fall back to "public" if source_schema is missing (legacy metadata).
+            # Otherwise config.schema wins so warehouse-mode renames flow through without
+            # rewriting schema_metadata. Falls back to source_schema for direct mode.
+            schema=(source_schema or "public") if config.include_all_schemas else (config.schema or source_schema or "public"),
             table_names=[source_table_name or inputs.schema_name],
             should_use_incremental_field=inputs.should_use_incremental_field,
             logger=inputs.logger,
