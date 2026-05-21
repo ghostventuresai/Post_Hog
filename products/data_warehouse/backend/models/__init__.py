@@ -12,6 +12,7 @@ from .external_data_job import *  # noqa: F403  # legacy: see TODO above
 from .external_data_schema import *  # noqa: F403  # legacy: see TODO above
 from .external_data_source import *  # noqa: F403  # legacy: see TODO above
 from .join import *  # noqa: F403  # legacy: see TODO above
+from .managed_warehouse_promoted_table import *  # noqa: F403  # legacy: see TODO above
 from .modeling import *  # noqa: F403  # legacy: see TODO above
 from .query_tab_state import *  # noqa: F403  # legacy: see TODO above
 from .revenue_analytics_config import *  # noqa: F403  # legacy: see TODO above

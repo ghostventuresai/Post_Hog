@@ -104,6 +104,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -134,10 +135,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -558,6 +568,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -623,6 +634,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -786,6 +798,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -816,10 +829,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -1236,6 +1258,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -1301,6 +1324,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -1464,6 +1488,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -1494,10 +1519,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -1910,6 +1944,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -1975,6 +2010,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -2138,6 +2174,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -2168,10 +2205,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -2584,6 +2630,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -2649,6 +2696,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -2812,6 +2860,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -2842,10 +2891,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -3262,6 +3320,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -3327,6 +3386,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -3490,6 +3550,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -3520,10 +3581,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -3940,6 +4010,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -4005,6 +4076,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -4168,6 +4240,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -4198,10 +4271,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -4618,6 +4700,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -4683,6 +4766,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5156,6 +5240,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5221,6 +5306,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5289,6 +5375,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5319,10 +5406,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -5855,6 +5951,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5920,6 +6017,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -5988,6 +6086,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -6018,10 +6117,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -6584,6 +6692,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -6649,6 +6758,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -6755,6 +6865,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -6785,10 +6896,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -7440,6 +7560,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -7505,6 +7626,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -7573,6 +7695,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -7603,10 +7726,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -8226,6 +8358,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8291,6 +8424,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8359,6 +8493,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8389,10 +8524,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -8619,6 +8763,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8813,6 +8958,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8881,6 +9027,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -8911,10 +9058,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -9456,6 +9612,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -9521,6 +9678,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -9589,6 +9747,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -9619,10 +9778,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -10212,6 +10380,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -10277,6 +10446,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -10345,6 +10515,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -10375,10 +10546,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -10462,6 +10642,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -10946,6 +11127,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11003,6 +11185,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11068,6 +11251,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11136,6 +11320,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11166,10 +11351,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -11710,6 +11904,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11775,6 +11970,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11843,6 +12039,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11873,10 +12070,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
@@ -11899,6 +12105,7 @@
          "posthog_datawarehousetable"."queryable_folder",
          "posthog_datawarehousetable"."credential_id",
          "posthog_datawarehousetable"."external_data_source_id",
+         "posthog_datawarehousetable"."managed_warehouse_promoted_table_id",
          "posthog_datawarehousetable"."columns",
          "posthog_datawarehousetable"."options",
          "posthog_datawarehousetable"."row_count",
@@ -11929,10 +12136,19 @@
          "posthog_externaldatasource"."description",
          "posthog_externaldatasource"."created_via",
          "posthog_externaldatasource"."access_method",
-         "posthog_externaldatasource"."revenue_analytics_enabled"
+         "posthog_externaldatasource"."revenue_analytics_enabled",
+         "posthog_managedwarehousepromotedtable"."created_by_id",
+         "posthog_managedwarehousepromotedtable"."created_at",
+         "posthog_managedwarehousepromotedtable"."updated_at",
+         "posthog_managedwarehousepromotedtable"."id",
+         "posthog_managedwarehousepromotedtable"."team_id",
+         "posthog_managedwarehousepromotedtable"."source_schema_name",
+         "posthog_managedwarehousepromotedtable"."source_table_name",
+         "posthog_managedwarehousepromotedtable"."deleted"
   FROM "posthog_datawarehousetable"
   LEFT OUTER JOIN "posthog_externaldatasource" ON ("posthog_datawarehousetable"."external_data_source_id" = "posthog_externaldatasource"."id")
   LEFT OUTER JOIN "posthog_datawarehousecredential" ON ("posthog_datawarehousetable"."credential_id" = "posthog_datawarehousecredential"."id")
+  LEFT OUTER JOIN "posthog_managedwarehousepromotedtable" ON ("posthog_datawarehousetable"."managed_warehouse_promoted_table_id" = "posthog_managedwarehousepromotedtable"."id")
   WHERE ("posthog_datawarehousetable"."team_id" = 99999
          AND NOT ("posthog_datawarehousetable"."deleted"
                   AND "posthog_datawarehousetable"."deleted" IS NOT NULL)
