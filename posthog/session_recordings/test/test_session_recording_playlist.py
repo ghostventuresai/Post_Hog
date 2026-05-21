@@ -1052,6 +1052,99 @@ class TestSessionRecordingPlaylist(APIBaseTest, QueryMatchingTest):
         assert result["added_count"] == 2  # Only new ones counted
         assert result["total_requested"] == 3
 
+    def test_pagination_with_name_sort_places_synthetics_by_name(self) -> None:
+        # Synthetics have specific names (e.g. "All sessions"); under name-ascending
+        # they must appear at their natural alphabetical position, not unconditionally
+        # at the start or end of the merged list.
+        SessionRecordingPlaylist.objects.create(
+            team=self.team, name="aaa-first", created_by=self.user, type="collection"
+        )
+        SessionRecordingPlaylist.objects.create(
+            team=self.team, name="zzz-last", created_by=self.user, type="collection"
+        )
+
+        response = self.client.get(
+            f"/api/projects/{self.team.id}/session_recording_playlists?order=name&limit=3&offset=0"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        names = [r["name"] for r in response.json()["results"]]
+        # "aaa-first" sorts ahead of every synthetic, so page 1 must include it.
+        assert "aaa-first" in names
+        # "zzz-last" sorts after every synthetic; it must not appear on page 1
+        # under name-ascending pagination.
+        assert "zzz-last" not in names
+
+    def test_pagination_with_name_sort_is_case_insensitive_and_stable(self) -> None:
+        # Regression test: synthetic rank computation compares names case-insensitively.
+        # The DB queryset slice must use the same case-insensitive ordering, otherwise
+        # offsets derived from those ranks index into a case-sensitively-ordered
+        # queryset and pages serve duplicate or skipped items.
+        db_names = ["Banana", "apple", "Cherry", "date", "Elder", "fig", "Grape", "kiwi"]
+        for name in db_names:
+            SessionRecordingPlaylist.objects.create(team=self.team, name=name, created_by=self.user, type="collection")
+
+        page_size = 5
+        seen_db_names: list[str] = []
+        offset = 0
+        total_count = None
+        while True:
+            response = self.client.get(
+                f"/api/projects/{self.team.id}/session_recording_playlists?order=name&limit={page_size}&offset={offset}"
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            total_count = data["count"]
+            seen_db_names.extend(r["name"] for r in data["results"] if not r.get("is_synthetic"))
+            offset += page_size
+            if offset >= total_count:
+                break
+
+        # Every DB playlist appears exactly once across all pages — no skips, no duplicates.
+        assert sorted(seen_db_names) == sorted(db_names)
+
+    def test_pagination_returns_displaced_db_playlists_on_later_pages(self) -> None:
+        # Regression test: synthetic playlists occupy slots on page 1, pushing some DB
+        # playlists across page boundaries. Subsequent pages must keep returning the
+        # remaining DB playlists rather than reporting an empty page.
+        page_size = 30
+        db_playlist_count = page_size
+        for i in range(db_playlist_count):
+            SessionRecordingPlaylist.objects.create(
+                team=self.team, name=f"playlist-{i:02d}", created_by=self.user, type="collection"
+            )
+
+        page_one = self.client.get(
+            f"/api/projects/{self.team.id}/session_recording_playlists?limit={page_size}&offset=0"
+        )
+        assert page_one.status_code == status.HTTP_200_OK
+        page_one_data = page_one.json()
+        synth_count = sum(1 for r in page_one_data["results"] if r.get("is_synthetic"))
+        total_count = page_one_data["count"]
+        assert synth_count > 0, "Test relies on synthetic playlists being present"
+        assert total_count == db_playlist_count + synth_count
+        assert len(page_one_data["results"]) == page_size
+        assert page_one_data["next"] is not None
+        assert page_one_data["previous"] is None
+
+        page_two = self.client.get(
+            f"/api/projects/{self.team.id}/session_recording_playlists?limit={page_size}&offset={page_size}"
+        )
+        assert page_two.status_code == status.HTTP_200_OK
+        page_two_data = page_two.json()
+        assert page_two_data["count"] == total_count
+        # The DB items displaced from page 1 (because synthetics took some slots) must
+        # appear on page 2 — previously this was empty, which is the bug being fixed.
+        assert len(page_two_data["results"]) == total_count - page_size
+        assert all(not r.get("is_synthetic") for r in page_two_data["results"])
+        assert page_two_data["previous"] is not None
+        assert page_two_data["next"] is None
+
+        # No DB playlist should appear on both pages, and the union must cover every DB playlist.
+        page_one_db_ids = {r["short_id"] for r in page_one_data["results"] if not r.get("is_synthetic")}
+        page_two_db_ids = {r["short_id"] for r in page_two_data["results"]}
+        assert page_one_db_ids.isdisjoint(page_two_db_ids)
+        assert len(page_one_db_ids | page_two_db_ids) == db_playlist_count
+
 
 class TestSessionRecordingPlaylistPersonalAPIKey(APIBaseTest):
     def _create_personal_api_key(self, scopes: list[str], scoped_teams: list[int] | None = None) -> str:
