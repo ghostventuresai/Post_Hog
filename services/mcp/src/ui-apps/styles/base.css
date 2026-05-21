@@ -31,6 +31,9 @@
     --posthog-chart-6: #7c440e;
     --posthog-chart-7: #529a0a;
     --posthog-chart-8: #0476fb;
+
+    /* hog-charts overlays — tooltip needs to stack above value labels & axis text. */
+    --z-chart-tooltip: 50;
 }
 
 @media (prefers-color-scheme: dark) {
