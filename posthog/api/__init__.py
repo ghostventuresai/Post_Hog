@@ -5,6 +5,7 @@ from rest_framework_extensions.routers import NestedRegistryItem
 import posthog.temporal.ai  # noqa: F401
 from posthog.api import (
     data_color_theme,
+    data_deletion_request,
     hog_flow,
     hog_flow_template,
     metalytics,
@@ -374,6 +375,13 @@ environments_router.register(
     r"column_configurations",
     ColumnConfigurationViewSet,
     "environment_column_configurations",
+    ["team_id"],
+)
+
+environments_router.register(
+    r"data_deletion_requests",
+    data_deletion_request.DataDeletionRequestViewSet,
+    "environment_data_deletion_requests",
     ["team_id"],
 )
 
