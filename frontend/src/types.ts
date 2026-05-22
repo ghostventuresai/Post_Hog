@@ -5320,6 +5320,7 @@ export type APIScopeObject =
     | 'annotation'
     | 'approvals'
     | 'batch_export'
+    | 'billing'
     | 'clickhouse_test_cluster_perf'
     | 'cohort'
     | 'comment'
