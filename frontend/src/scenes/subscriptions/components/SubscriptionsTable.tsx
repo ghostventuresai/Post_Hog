@@ -1,3 +1,4 @@
+import { IconAI, IconDashboard, IconGraph } from '@posthog/icons'
 import { LemonTable, LemonTableColumn, LemonTableColumns, LemonTag, Link, Tooltip } from '@posthog/lemon-ui'
 import type { PaginationManual, Sorting } from '@posthog/lemon-ui'
 
@@ -30,6 +31,9 @@ export function subscriptionEditHref(sub: SubscriptionApi): string | null {
     }
     if (sub.dashboard) {
         return urls.dashboardSubscription(sub.dashboard, String(sub.id))
+    }
+    if (sub.content_type === 'ai_prompt') {
+        return urls.subscriptionEdit(sub.id)
     }
     return null
 }
@@ -112,9 +116,33 @@ function buildColumns(renderRowActions: (sub: SubscriptionApi) => JSX.Element): 
             title: 'Type',
             key: 'type',
             width: '7rem',
-            render: (_value: unknown, sub: SubscriptionApi) => (
-                <span className="whitespace-nowrap">{sub.insight ? 'Insight' : sub.dashboard ? 'Dashboard' : '—'}</span>
-            ),
+            render: (_value: unknown, sub: SubscriptionApi) => {
+                // All three kinds render as neutral grey LemonTags differentiated by icon, not
+                // colour — status/accent colours (red, green, purple) would read as
+                // error/success/special and add noise to a column that's purely categorical.
+                if (sub.content_type === 'ai_prompt') {
+                    return (
+                        <LemonTag type="default" size="small" icon={<IconAI />}>
+                            AI report
+                        </LemonTag>
+                    )
+                }
+                if (sub.insight) {
+                    return (
+                        <LemonTag type="default" size="small" icon={<IconGraph />}>
+                            Insight
+                        </LemonTag>
+                    )
+                }
+                if (sub.dashboard) {
+                    return (
+                        <LemonTag type="default" size="small" icon={<IconDashboard />}>
+                            Dashboard
+                        </LemonTag>
+                    )
+                }
+                return <span className="text-secondary">—</span>
+            },
         },
         {
             title: 'Resource',
@@ -124,6 +152,23 @@ function buildColumns(renderRowActions: (sub: SubscriptionApi) => JSX.Element): 
                 maxWidth: 0,
             }),
             render: (_value: unknown, sub: SubscriptionApi) => {
+                // AI subs have no insight/dashboard FK — surface the prompt instead so the row
+                // reads as intentional ("this is what the AI was asked to do") rather than empty.
+                if (sub.content_type === 'ai_prompt') {
+                    const prompt = sub.prompt?.trim()
+                    if (!prompt) {
+                        return <span className="text-secondary">—</span>
+                    }
+                    return (
+                        <Tooltip title={prompt}>
+                            <div className="min-w-0 w-full overflow-hidden">
+                                <span className="text-muted italic block truncate" data-attr="subscription-ai-prompt">
+                                    {prompt}
+                                </span>
+                            </div>
+                        </Tooltip>
+                    )
+                }
                 const href = subscriptionResourceViewUrl(sub)
                 if (!href) {
                     return <span className="text-secondary">—</span>

@@ -11,6 +11,7 @@ import { UserActivityIndicator } from 'lib/components/UserActivityIndicator/User
 import { usersLemonSelectOptions } from 'lib/components/UserSelectItem'
 import { FEATURE_FLAGS } from 'lib/constants'
 import { dayjs } from 'lib/dayjs'
+import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { integrationsLogic } from 'lib/integrations/integrationsLogic'
 import { SlackChannelPicker, SlackNotConfiguredBanner } from 'lib/integrations/SlackIntegrationHelpers'
 import { LemonBanner } from 'lib/lemon-ui/LemonBanner'
@@ -19,13 +20,16 @@ import { LemonField } from 'lib/lemon-ui/LemonField'
 import { LemonInputSelect } from 'lib/lemon-ui/LemonInputSelect/LemonInputSelect'
 import { LemonLabel } from 'lib/lemon-ui/LemonLabel/LemonLabel'
 import { LemonModal } from 'lib/lemon-ui/LemonModal'
+import { LemonSegmentedButton } from 'lib/lemon-ui/LemonSegmentedButton'
 import { LemonSelect } from 'lib/lemon-ui/LemonSelect'
 import { LemonSkeleton } from 'lib/lemon-ui/LemonSkeleton'
 import { LemonSwitch } from 'lib/lemon-ui/LemonSwitch'
 import { maxGlobalLogic } from 'scenes/max/maxGlobalLogic'
 import { membersLogic } from 'scenes/organization/membersLogic'
+import { organizationLogic } from 'scenes/organizationLogic'
 import { preflightLogic } from 'scenes/PreflightCheck/preflightLogic'
 import { AIConsentPopoverWrapper } from 'scenes/settings/organization/AIConsentPopoverWrapper'
+import { urls } from 'scenes/urls'
 import { userLogic } from 'scenes/userLogic'
 
 import { AvailableFeature, DashboardType, InsightShortId } from '~/types'
@@ -33,11 +37,50 @@ import { AvailableFeature, DashboardType, InsightShortId } from '~/types'
 import { InsightSelector } from '../InsightSelector'
 import { subscriptionCountLogic } from '../subscriptionCountLogic'
 import { subscriptionLogic } from '../subscriptionLogic'
+
+const AI_PROMPT_CHAR_LIMIT = 4000
+
+// Shown wherever AI subscriptions are gated off (org hasn't approved AI data
+// processing). Mirrors the backend gate in `_ai_create_gate_reason`, which 403s
+// the create regardless — so the form must block before submit, not after.
+const AI_NOT_ALLOWED_REASON = 'Enable AI data processing in your Organization settings to use AI subscriptions.'
+
+function AiConsentGateMessage(): JSX.Element {
+    return (
+        <>
+            {AI_NOT_ALLOWED_REASON}{' '}
+            <Link to={urls.settings('organization-details', 'organization-ai-consent')}>Manage AI data processing</Link>
+        </>
+    )
+}
+
+// Concrete starter prompts — each one maps cleanly to a flat HogQL pattern the
+// planner already knows (see PLAN_GENERATION_PROMPT reference patterns). Click
+// populates the textarea verbatim so users can tweak rather than start cold.
+const AI_PROMPT_EXAMPLES: { label: string; prompt: string }[] = [
+    {
+        label: 'Top events this week',
+        prompt: 'Top 5 events by volume in the last 7 days, with counts and unique users for each.',
+    },
+    {
+        label: 'Week-over-week growth',
+        prompt: 'For the top 10 events by volume, compare this week vs last week and rank by growth rate. Flag any event that more than doubled or halved.',
+    },
+    {
+        label: 'Weekly health check',
+        prompt: 'Weekly health check: total event volume and unique active users in the last 7 days, and how each compares to the previous 7 days.',
+    },
+    {
+        label: 'Tracking gaps',
+        prompt: 'Which events we normally track received no data in the last 7 days? List them so I can catch broken instrumentation.',
+    },
+]
 import { subscriptionsLogic } from '../subscriptionsLogic'
 import {
     bysetposOptions,
     frequencyOptionsPlural,
     frequencyOptionsSingular,
+    getAiSubscriptionGate,
     getNextDeliveryDate,
     intervalOptions,
     monthlyWeekdayOptions,
@@ -123,12 +166,18 @@ function EditSubscriptionForm({
     const { previewLoading, previewError, previewImageUrl } = useValues(logic)
     const { resetSubscription, generatePreview } = useActions(logic)
     const { preflight, siteUrlMisconfigured } = useValues(preflightLogic)
+    const { currentOrganization } = useValues(organizationLogic)
     const { deleteSubscription } = useActions(subscriptionslogic)
     const { slackIntegrations, integrations } = useValues(integrationsLogic)
     const { dataProcessingAccepted } = useValues(maxGlobalLogic)
+    const aiSubscriptionsEnabled = useFeatureFlag('SUBSCRIPTION_AI_PROMPT')
 
     const emailDisabled = !preflight?.email_service_available
-
+    const isAiPrompt = subscription?.content_type === 'ai_prompt'
+    // Parent-less = reached from the top-level /subscriptions page, not the kebab
+    // modal on an insight/dashboard. There's nothing to snapshot here, so AI report
+    // is the only valid content type — hide the snapshot/AI toggle entirely.
+    const isParentless = !insightShortId && !dashboardId
     const availableFrequencyOptions = subscription?.interval === 1 ? frequencyOptionsSingular : frequencyOptionsPlural
 
     // For new subscriptions, show InsightSelector immediately (useEffect will auto-select)
@@ -136,6 +185,15 @@ function EditSubscriptionForm({
     // We check target_type instead of dashboard_export_insights because old subscriptions
     // may have no insights selected yet
     const isEditing = id !== 'new'
+    const aiGate = getAiSubscriptionGate({
+        isAiPrompt,
+        isParentless,
+        isEditing,
+        aiConsentApproved: Boolean(currentOrganization?.is_ai_data_processing_approved),
+        isCloud: Boolean(preflight?.cloud),
+        isDebug: Boolean(preflight?.is_debug),
+        aiFlagEnabled: Boolean(aiSubscriptionsEnabled),
+    })
     const subscriptionLoaded = !!subscription?.target_type
     const selectionReady = !isEditing || subscriptionLoaded
 
@@ -258,6 +316,96 @@ function EditSubscriptionForm({
                                 )}
                             </LemonField>
                         )}
+
+                        {aiGate.showContentTypeToggle && (
+                            <LemonField name="content_type" label="What to send">
+                                {({ value, onChange }) => (
+                                    <LemonSegmentedButton
+                                        value={value}
+                                        onChange={onChange}
+                                        fullWidth
+                                        options={[
+                                            {
+                                                value: 'insight',
+                                                label: 'Insight or dashboard snapshot',
+                                            },
+                                            {
+                                                value: 'ai_prompt',
+                                                label: 'AI report (beta)',
+                                                disabledReason: !aiGate.aiOptionEnabled
+                                                    ? AI_NOT_ALLOWED_REASON
+                                                    : undefined,
+                                            },
+                                        ]}
+                                    />
+                                )}
+                            </LemonField>
+                        )}
+
+                        {aiGate.showConsentHint && (
+                            <LemonBanner type="info" className="text-sm">
+                                <AiConsentGateMessage />
+                            </LemonBanner>
+                        )}
+
+                        {isAiPrompt ? (
+                            <>
+                                {aiGate.showAiFormConsentBanner && (
+                                    <LemonBanner type="warning" className="text-sm">
+                                        <AiConsentGateMessage />
+                                    </LemonBanner>
+                                )}
+                                <LemonBanner type="info" className="text-sm">
+                                    The AI plans up to 3 HogQL queries against your project's events and writes a
+                                    markdown report. It cannot access other tables, run actions, or use prior reports as
+                                    context — each delivery is independent.
+                                </LemonBanner>
+                                <LemonField
+                                    name="prompt"
+                                    label="Prompt"
+                                    help="Describe what the AI should look for. The same prompt runs every time the subscription fires."
+                                >
+                                    {/*
+                                     * Char counter is rendered natively by LemonTextArea when `maxLength` is set
+                                     * (turns red at the cap), so we don't add our own. Example chips sit beneath
+                                     * the textarea on their own row so they wrap cleanly without competing with
+                                     * the counter for horizontal space.
+                                     */}
+                                    <LemonTextArea
+                                        placeholder="e.g. Which events grew the most week-over-week? Highlight any unusual spikes."
+                                        minRows={4}
+                                        maxLength={AI_PROMPT_CHAR_LIMIT}
+                                    />
+                                </LemonField>
+                                {/*
+                                 * Starter chips replace the whole prompt, so only offer them while the field is
+                                 * empty. Once the user has typed anything, hide them — a stray click would
+                                 * otherwise wipe a prompt in progress with no undo.
+                                 */}
+                                {!subscription.prompt?.trim() && (
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-xs text-secondary">Try one of these prompts:</span>
+                                        <div className="flex flex-wrap gap-1">
+                                            {AI_PROMPT_EXAMPLES.map((example) => (
+                                                <LemonButton
+                                                    key={example.label}
+                                                    size="xsmall"
+                                                    type="secondary"
+                                                    onClick={() =>
+                                                        logic.actions.selectAiExamplePrompt(
+                                                            example.prompt,
+                                                            example.label
+                                                        )
+                                                    }
+                                                >
+                                                    {example.label}
+                                                </LemonButton>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        ) : null}
 
                         <LemonField name="target_type" label="Destination">
                             <LemonSelect options={targetTypeOptions} />
@@ -483,55 +631,64 @@ function EditSubscriptionForm({
                             )}
                         </div>
 
-                        <FlaggedFeature flag={FEATURE_FLAGS.HACKATHONS_SUBSCRIPTIONS}>
-                            <LemonField name="summary_enabled">
-                                {({ value, onChange }) => (
-                                    <AIConsentPopoverWrapper>
-                                        <LemonSwitch
-                                            checked={value}
-                                            onChange={onChange}
-                                            bordered
-                                            label="Include an automatic AI summary"
-                                            fullWidth
-                                            disabledReason={
-                                                !dataProcessingAccepted && !value
-                                                    ? 'Your organization needs to approve AI data processing before enabling AI summaries'
-                                                    : summaryQuota?.at_limit && !value
-                                                      ? `Plan limit reached (${summaryQuota.limit} active AI summaries). See details below.`
-                                                      : undefined
-                                            }
+                        {/*
+                         * AI-prompt subscriptions are themselves an LLM-generated report —
+                         * appending an insight-style "automatic AI summary" on top would be
+                         * a summary of a summary. Hide the toggle entirely for AI subs.
+                         */}
+                        {!isAiPrompt && (
+                            <FlaggedFeature flag={FEATURE_FLAGS.HACKATHONS_SUBSCRIPTIONS}>
+                                <LemonField name="summary_enabled">
+                                    {({ value, onChange }) => (
+                                        <AIConsentPopoverWrapper>
+                                            <LemonSwitch
+                                                checked={value}
+                                                onChange={onChange}
+                                                bordered
+                                                label="Include an automatic AI summary"
+                                                fullWidth
+                                                disabledReason={
+                                                    !dataProcessingAccepted && !value
+                                                        ? 'Your organization needs to approve AI data processing before enabling AI summaries'
+                                                        : summaryQuota?.at_limit && !value
+                                                          ? `Plan limit reached (${summaryQuota.limit} active AI summaries). See details below.`
+                                                          : undefined
+                                                }
+                                            />
+                                        </AIConsentPopoverWrapper>
+                                    )}
+                                </LemonField>
+
+                                {summaryQuota?.at_limit &&
+                                    !subscription.summary_enabled &&
+                                    summaryQuota.limit !== null && (
+                                        <UsageLimitPaywall
+                                            title="AI summary limit reached"
+                                            description="Disable an existing AI summary or upgrade your plan to add more."
+                                            limit={summaryQuota.limit}
+                                            currentUsage={summaryQuota.active_count}
+                                            unit="active AI summaries on your plan"
                                         />
-                                    </AIConsentPopoverWrapper>
+                                    )}
+
+                                {subscription.summary_enabled && (
+                                    <FlaggedFeature flag={FEATURE_FLAGS.SUBSCRIPTION_AI_SUMMARY_PROMPT_GUIDE}>
+                                        <LemonField
+                                            name="summary_prompt_guide"
+                                            label="Context for the AI summary"
+                                            showOptional
+                                        >
+                                            <LemonTextArea
+                                                placeholder="e.g. This is a daily revenue health check - focus on revenue drop-off and churn signals"
+                                                maxLength={500}
+                                            />
+                                        </LemonField>
+                                    </FlaggedFeature>
                                 )}
-                            </LemonField>
+                            </FlaggedFeature>
+                        )}
 
-                            {summaryQuota?.at_limit && !subscription.summary_enabled && summaryQuota.limit !== null && (
-                                <UsageLimitPaywall
-                                    title="AI summary limit reached"
-                                    description="Disable an existing AI summary or upgrade your plan to add more."
-                                    limit={summaryQuota.limit}
-                                    currentUsage={summaryQuota.active_count}
-                                    unit="active AI summaries on your plan"
-                                />
-                            )}
-
-                            {subscription.summary_enabled && (
-                                <FlaggedFeature flag={FEATURE_FLAGS.SUBSCRIPTION_AI_SUMMARY_PROMPT_GUIDE}>
-                                    <LemonField
-                                        name="summary_prompt_guide"
-                                        label="Context for the AI summary"
-                                        showOptional
-                                    >
-                                        <LemonTextArea
-                                            placeholder="e.g. This is a daily revenue health check - focus on revenue drop-off and churn signals"
-                                            maxLength={500}
-                                        />
-                                    </LemonField>
-                                </FlaggedFeature>
-                            )}
-                        </FlaggedFeature>
-
-                        {insightShortId && (
+                        {insightShortId && !isAiPrompt && (
                             <div>
                                 <LemonLabel className="mb-2">Preview</LemonLabel>
                                 <div className="border rounded p-2">
@@ -587,7 +744,7 @@ function EditSubscriptionForm({
                     type="primary"
                     htmlType="submit"
                     loading={isSubscriptionSubmitting}
-                    disabled={!subscriptionChanged || subscriptionLoading}
+                    disabled={!subscriptionChanged || subscriptionLoading || aiGate.submitBlocked}
                 >
                     {id === 'new' ? 'Create subscription' : 'Save'}
                 </LemonButton>

@@ -33,6 +33,7 @@ export enum SubscriptionsTab {
     Mine = 'mine',
     Dashboard = 'dashboard',
     Insight = 'insight',
+    Ai = 'ai_prompt',
 }
 
 /** Return type is full `SubscriptionsTab` so Kea typegen does not collapse state to the `All` literal. */
@@ -59,7 +60,10 @@ export interface SubscriptionsQueryFromUrl {
 function parseSubscriptionsSearchParams(searchParams: Record<string, unknown>): SubscriptionsQueryFromUrl {
     const rawTab = searchParams['tab']
     const tab: SubscriptionsTab =
-        rawTab === SubscriptionsTab.Mine || rawTab === SubscriptionsTab.Dashboard || rawTab === SubscriptionsTab.Insight
+        rawTab === SubscriptionsTab.Mine ||
+        rawTab === SubscriptionsTab.Dashboard ||
+        rawTab === SubscriptionsTab.Insight ||
+        rawTab === SubscriptionsTab.Ai
             ? rawTab
             : SubscriptionsTab.All
 
@@ -206,6 +210,7 @@ export const subscriptionsSceneLogic = kea<subscriptionsSceneLogicType>([
         setSubscriptionsSorting: (sorting: Sorting | null) => ({ sorting }),
         setTargetTypeFilter: (targetType: SubscriptionsListTargetType | null) => ({ targetType }),
         applySubscriptionsQueryFromUrl: (query: SubscriptionsQueryFromUrl) => ({ query }),
+        setSubscriptionModalId: (id: number | 'new' | null) => ({ id }),
         deleteSubscriptionSuccess: true,
         deliverSubscription: (id: number) => ({ id }),
         deliverSubscriptionSuccess: true,
@@ -264,6 +269,14 @@ export const subscriptionsSceneLogic = kea<subscriptionsSceneLogicType>([
                 applySubscriptionsQueryFromUrl: (_, { query }) => query.targetTypeFilter,
             },
         ],
+        // Drives the create/edit modal that now renders OVER the list (route-driven), so the
+        // list stays painted behind it instead of swapping to a separate scene. `null` = closed.
+        subscriptionModalId: [
+            null as number | 'new' | null,
+            {
+                setSubscriptionModalId: (_, { id }) => id,
+            },
+        ],
         /**
          * True after `setSearch` until the debounced list request finishes. Avoids treating stale
          * empty `subscriptionsResponse` as "no subscriptions in project" when filters were cleared.
@@ -306,6 +319,8 @@ export const subscriptionsSceneLogic = kea<subscriptionsSceneLogicType>([
                         resourceType = SubscriptionsListResourceType.Dashboard
                     } else if (values.currentTab === SubscriptionsTab.Insight) {
                         resourceType = SubscriptionsListResourceType.Insight
+                    } else if (values.currentTab === SubscriptionsTab.Ai) {
+                        resourceType = SubscriptionsListResourceType.AiPrompt
                     }
                     const createdBy =
                         values.currentTab === SubscriptionsTab.Mine
@@ -426,7 +441,17 @@ export const subscriptionsSceneLogic = kea<subscriptionsSceneLogicType>([
         }
     }),
     tabAwareUrlToAction(({ actions, values }) => ({
+        [urls.subscriptionNew()]: () => {
+            actions.setSubscriptionModalId('new')
+        },
+        [urls.subscriptionEdit(':subscriptionId')]: ({ subscriptionId }) => {
+            const editingId = Number(subscriptionId)
+            actions.setSubscriptionModalId(Number.isFinite(editingId) ? editingId : 'new')
+        },
         [urls.subscriptions()]: (_, searchParams) => {
+            if (values.subscriptionModalId !== null) {
+                actions.setSubscriptionModalId(null)
+            }
             const parsed = parseSubscriptionsSearchParams(searchParams)
             const listState = {
                 currentTab: values.currentTab,

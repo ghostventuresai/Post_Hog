@@ -3571,6 +3571,7 @@ export type SubscriptionsListResourceType =
 export const SubscriptionsListResourceType = {
     Dashboard: 'dashboard',
     Insight: 'insight',
+    AiPrompt: 'ai_prompt',
 } as const
 
 export type SubscriptionsListTargetType = (typeof SubscriptionsListTargetType)[keyof typeof SubscriptionsListTargetType]

@@ -2,6 +2,7 @@ import { actions, events, kea, key, listeners, path, props, reducers } from 'kea
 import { forms } from 'kea-forms'
 import { loaders } from 'kea-loaders'
 import { beforeUnload, router, urlToAction } from 'kea-router'
+import posthog from 'posthog-js'
 
 import api, { ApiError } from 'lib/api'
 import { dayjs } from 'lib/dayjs'
@@ -15,6 +16,24 @@ import type { subscriptionLogicType } from './subscriptionLogicType'
 import { subscriptionsLogic } from './subscriptionsLogic'
 import { SubscriptionBaseProps, urlForSubscription } from './utils'
 
+const AI_PROMPT_MAX_LENGTH = 4000
+
+function validatePrompt(
+    content_type: SubscriptionType['content_type'],
+    prompt: string | undefined
+): string | undefined {
+    if (content_type !== 'ai_prompt') {
+        return undefined
+    }
+    if (!prompt?.trim()) {
+        return 'A prompt is required for AI subscriptions'
+    }
+    if (prompt.length > AI_PROMPT_MAX_LENGTH) {
+        return `Prompt cannot exceed ${AI_PROMPT_MAX_LENGTH} characters`
+    }
+    return undefined
+}
+
 function subscriptionSaveErrorMessage(error: unknown): string {
     if (error instanceof ApiError) {
         const msg = (error.detail || error.message || '').trim()
@@ -27,6 +46,7 @@ function subscriptionSaveErrorMessage(error: unknown): string {
 }
 
 const NEW_SUBSCRIPTION: Partial<SubscriptionType> = {
+    content_type: 'insight',
     frequency: 'weekly',
     interval: 1,
     start_date: dayjs().hour(9).minute(0).second(0).toISOString(),
@@ -54,6 +74,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
         setPreviewLoading: (loading: boolean) => ({ loading }),
         setPreviewError: (error: string | null) => ({ error }),
         setPreviewImageUrl: (url: string | null) => ({ url }),
+        selectAiExamplePrompt: (prompt: string, label: string) => ({ prompt, label }),
     }),
 
     reducers({
@@ -112,6 +133,8 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                 title,
                 start_date,
                 dashboard_export_insights,
+                content_type,
+                prompt,
             }) => ({
                 frequency: !frequency ? 'You need to set a schedule frequency' : undefined,
                 title: !title ? 'You need to give your subscription a name' : undefined,
@@ -120,6 +143,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                 target_type: !['slack', 'email', 'webhook'].includes(target_type)
                     ? 'Unsupported target type'
                     : undefined,
+                prompt: validatePrompt(content_type, prompt),
                 target_value: !target_value
                     ? 'This field is required.'
                     : target_type == 'email'
@@ -143,12 +167,13 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                         : undefined,
             }),
             submit: async (subscription, breakpoint) => {
-                const insightId = props.insightShortId ? await getInsightId(props.insightShortId) : undefined
+                const isAi = subscription.content_type === 'ai_prompt'
+                const insightId = !isAi && props.insightShortId ? await getInsightId(props.insightShortId) : undefined
 
                 const payload = {
                     ...subscription,
-                    insight: insightId,
-                    dashboard: props.dashboardId,
+                    insight: isAi ? null : insightId,
+                    dashboard: isAi ? null : props.dashboardId,
                 }
 
                 breakpoint()
@@ -177,6 +202,10 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
     })),
 
     listeners(({ actions, values, props }) => ({
+        selectAiExamplePrompt: ({ prompt, label }) => {
+            posthog.capture('subscription_ai_example_prompt_selected', { label })
+            actions.setSubscriptionValue('prompt', prompt)
+        },
         submitSubscriptionFailure: ({ error }) => {
             // Kea-forms emits this when client validation fails; fields already show errors.
             if (error instanceof Error && error.message === 'Validation Failed') {
@@ -303,6 +332,11 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
     })),
 
     urlToAction(({ actions }) => ({
+        // Existing nested-modal flows: `/insights/:shortId/subscriptions/new`,
+        // `/dashboard/:id/subscriptions/new`. The project prefix is stripped by
+        // `pathFromWindowToRoutes`, leaving two leading segments for the parent
+        // resource. Top-level AI flows (next entries) match after that strip too,
+        // but with no parent resource at all.
         '/*/*/subscriptions/new': (_, searchParams) => {
             actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION })
             if (searchParams.target_type) {
@@ -310,6 +344,24 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
             }
         },
         '/*/*/subscriptions/:id': () => {
+            actions.loadSubscription()
+        },
+        // Top-level parent-less (AI prompt) flows. Browser URL is
+        // `/project/:teamId/subscriptions/...`; after project-prefix strip the
+        // path is `/subscriptions/...`, which has fewer segments than the nested
+        // patterns above match. Without these entries, loadSubscription never
+        // fires and the form shows the NEW_SUBSCRIPTION defaults.
+        //
+        // The top-level page has no insight/dashboard to snapshot, so a new
+        // subscription here is always an AI report — default content_type
+        // accordingly (the form hides the snapshot option in this context).
+        '/subscriptions/new': (_, searchParams) => {
+            actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION, content_type: 'ai_prompt' })
+            if (searchParams.target_type) {
+                actions.setSubscriptionValue('target_type', searchParams.target_type)
+            }
+        },
+        '/subscriptions/:id/edit': () => {
             actions.loadSubscription()
         },
     })),

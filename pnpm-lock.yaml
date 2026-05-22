@@ -3264,6 +3264,8 @@ importers:
 
   products/streamlit_apps: {}
 
+  products/subscriptions: {}
+
   products/surveys:
     dependencies:
       '@posthog/icons':
