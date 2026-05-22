@@ -9587,6 +9587,7 @@ export namespace Schemas {
     export const IntegrationKind = {
       Slack: 'slack',
       SlackPosthogCode: 'slack-posthog-code',
+      DiscordPosthogCode: 'discord-posthog-code',
       Salesforce: 'salesforce',
       Hubspot: 'hubspot',
       GooglePubsub: 'google-pubsub',
@@ -9601,6 +9602,7 @@ export namespace Schemas {
       Email: 'email',
       Twilio: 'twilio',
       Linear: 'linear',
+      LinearAgent: 'linear-agent',
       Github: 'github',
       Gitlab: 'gitlab',
       MetaAds: 'meta-ads',
@@ -19575,6 +19577,7 @@ export namespace Schemas {
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
     * `databricks` - Databricks
+    * `discord-posthog-code` - Discord Posthog Code
     * `email` - Email
     * `firebase` - Firebase
     * `github` - Github
@@ -19588,6 +19591,7 @@ export namespace Schemas {
     * `intercom` - Intercom
     * `jira` - Jira
     * `linear` - Linear
+    * `linear-agent` - Linear Agent
     * `linkedin-ads` - Linkedin Ads
     * `meta-ads` - Meta Ads
     * `pinterest-ads` - Pinterest Ads
@@ -19615,6 +19619,7 @@ export namespace Schemas {
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',
       Databricks: 'databricks',
+      DiscordPosthogCode: 'discord-posthog-code',
       Email: 'email',
       Firebase: 'firebase',
       Github: 'github',
@@ -19628,6 +19633,7 @@ export namespace Schemas {
       Intercom: 'intercom',
       Jira: 'jira',
       Linear: 'linear',
+      LinearAgent: 'linear-agent',
       LinkedinAds: 'linkedin-ads',
       MetaAds: 'meta-ads',
       PinterestAds: 'pinterest-ads',
@@ -34928,6 +34934,48 @@ export namespace Schemas {
       fields: S3PresignedPostFields;
     }
 
+    export interface SMSIntegrationItem {
+      /** PostHog UserIntegration row id. */
+      id: string;
+      /** Verified phone number in E.164 format. */
+      phone_number: string;
+      /** When the phone number was verified. */
+      created_at: string;
+    }
+
+    export interface SMSStartVerificationRequest {
+      /** Phone number to verify, in E.164 format (e.g. +14155552671). */
+      phone_number: string;
+    }
+
+    export interface SMSStartVerificationResponse {
+      /** Normalized phone number the verification code was sent to. */
+      phone_number: string;
+      /** Seconds until the verification code expires. */
+      expires_in_seconds: number;
+    }
+
+    export interface SMSVerifyRequest {
+      /** Phone number being verified, in E.164 format. */
+      phone_number: string;
+      /** 6-digit verification code received via SMS. */
+      code: string;
+    }
+
+    export interface SMSVerifyResponse {
+      /** PostHog UserIntegration row id. */
+      id: string;
+      /** Verified phone number in E.164 format. */
+      phone_number: string;
+      /** When the phone number was verified. */
+      created_at: string;
+      /**
+         * Present when this phone was linked to a different PostHog user and was reassigned during verification.
+         * @nullable
+         */
+      reassignment_message?: string | null;
+    }
+
     export interface SandboxEnvironment {
       readonly id: string;
       /** @maxLength 255 */
@@ -39478,6 +39526,7 @@ export namespace Schemas {
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
     * `databricks` - Databricks
+    * `discord-posthog-code` - Discord Posthog Code
     * `email` - Email
     * `firebase` - Firebase
     * `github` - Github
@@ -39491,6 +39540,7 @@ export namespace Schemas {
     * `intercom` - Intercom
     * `jira` - Jira
     * `linear` - Linear
+    * `linear-agent` - Linear Agent
     * `linkedin-ads` - Linkedin Ads
     * `meta-ads` - Meta Ads
     * `pinterest-ads` - Pinterest Ads
@@ -39529,6 +39579,7 @@ export namespace Schemas {
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',
       Databricks: 'databricks',
+      DiscordPosthogCode: 'discord-posthog-code',
       Email: 'email',
       Firebase: 'firebase',
       Github: 'github',
@@ -39542,6 +39593,7 @@ export namespace Schemas {
       Intercom: 'intercom',
       Jira: 'jira',
       Linear: 'linear',
+      LinearAgent: 'linear-agent',
       LinkedinAds: 'linkedin-ads',
       MetaAds: 'meta-ads',
       PinterestAds: 'pinterest-ads',
@@ -44749,6 +44801,7 @@ export namespace Schemas {
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
     * `databricks` - Databricks
+    * `discord-posthog-code` - Discord Posthog Code
     * `email` - Email
     * `firebase` - Firebase
     * `github` - Github
@@ -44762,6 +44815,7 @@ export namespace Schemas {
     * `intercom` - Intercom
     * `jira` - Jira
     * `linear` - Linear
+    * `linear-agent` - Linear Agent
     * `linkedin-ads` - Linkedin Ads
     * `meta-ads` - Meta Ads
     * `pinterest-ads` - Pinterest Ads
@@ -44800,6 +44854,7 @@ export namespace Schemas {
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',
       Databricks: 'databricks',
+      DiscordPosthogCode: 'discord-posthog-code',
       Email: 'email',
       Firebase: 'firebase',
       Github: 'github',
@@ -44813,6 +44868,7 @@ export namespace Schemas {
       Intercom: 'intercom',
       Jira: 'jira',
       Linear: 'linear',
+      LinearAgent: 'linear-agent',
       LinkedinAds: 'linkedin-ads',
       MetaAds: 'meta-ads',
       PinterestAds: 'pinterest-ads',

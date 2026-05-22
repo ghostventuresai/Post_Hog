@@ -31,6 +31,7 @@ from posthog.api import (
     uploaded_media,
     user,
 )
+from posthog.api.internal_integration import InternalIntegrationViewSet
 from posthog.api.oauth.connected_apps import ConnectedAppsViewSet
 from posthog.api.oauth.wizard_metadata import WIZARD_METADATA_PATH, WizardClientMetadataView
 from posthog.api.query import progress
@@ -92,6 +93,44 @@ else:
     extend_api_router()
 
 
+HOGNIPOTENT_PROXY_EVENTS = {"issue_comment", "pull_request_review_comment"}
+HOGNIPOTENT_FORWARDED_HEADERS = (
+    "X-Hub-Signature-256",
+    "X-Hub-Signature",
+    "X-GitHub-Event",
+    "X-GitHub-Delivery",
+    "X-GitHub-Hook-ID",
+    "X-GitHub-Hook-Installation-Target-ID",
+    "X-GitHub-Hook-Installation-Target-Type",
+    "Content-Type",
+    "User-Agent",
+)
+
+
+def _proxy_to_hognipotent(request: HttpRequest) -> None:
+    """Forward the original GitHub webhook request to hognipotent unchanged.
+
+    The original ``X-Hub-Signature-256`` header is preserved so the downstream
+    receiver verifies it against the shared webhook secret exactly as if GitHub
+    had delivered the event directly.
+
+    Dispatched to a Celery task because GitHub treats deliveries that don't get
+    a 2xx within 10 seconds as failures and retries them, so synchronous
+    forwarding would compound any hognipotent slowness into webhook loss.
+    Skipped entirely when ``HOGNIPOTENT_WEBHOOK_URL`` is unset.
+    """
+    if not settings.HOGNIPOTENT_WEBHOOK_URL:
+        return
+
+    from posthog.tasks.integrations import proxy_github_webhook_to_hognipotent
+
+    headers = {name: request.headers[name] for name in HOGNIPOTENT_FORWARDED_HEADERS if name in request.headers}
+    # Celery's default JSON serializer cannot encode `bytes`. Latin-1 is a lossless
+    # 1:1 mapping between bytes 0x00–0xFF and code points, so the worker can recover
+    # the exact original body for HMAC verification by re-encoding with latin-1.
+    proxy_github_webhook_to_hognipotent.delay(request.body.decode("latin-1"), headers)
+
+
 @csrf_exempt
 def github_webhook(request: HttpRequest) -> HttpResponse:
     """Unified GitHub App webhook dispatcher.
@@ -120,6 +159,9 @@ def github_webhook(request: HttpRequest) -> HttpResponse:
         return HttpResponse("Invalid JSON", status=400)
 
     event_type = request.headers.get("X-GitHub-Event", "")
+
+    if event_type in HOGNIPOTENT_PROXY_EVENTS:
+        _proxy_to_hognipotent(request)
 
     if event_type in ("issues", "issue_comment"):
         from products.conversations.backend.api.github_events import dispatch_github_event
@@ -335,6 +377,10 @@ urlpatterns = [
     path(
         "api/projects/<str:team_id>/internal/signals/emit",
         csrf_exempt(signals_views.InternalSignalViewSet.as_view({"post": "emit"})),
+    ),
+    path(
+        "api/internal/integrations/lookup",
+        csrf_exempt(InternalIntegrationViewSet.as_view({"post": "lookup"})),
     ),
     # Deployments internal endpoints — Temporal build worker posts here.
     path(

@@ -4307,6 +4307,10 @@ export interface PreflightStatus {
         available: boolean
         client_id?: string
     }
+    posthog_code_discord_service: {
+        available: boolean
+        client_id?: string
+    }
     data_warehouse_integrations: {
         hubspot: {
             client_id?: string
@@ -5108,6 +5112,7 @@ export enum EventDefinitionType {
 export const INTEGRATION_KINDS = [
     'slack',
     'slack-posthog-code',
+    'discord-posthog-code',
     'salesforce',
     'hubspot',
     'google-pubsub',
@@ -5122,6 +5127,7 @@ export const INTEGRATION_KINDS = [
     'email',
     'twilio',
     'linear',
+    'linear-agent',
     'github',
     'gitlab',
     'meta-ads',

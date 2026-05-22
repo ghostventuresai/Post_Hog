@@ -39,6 +39,7 @@ export type SettingSectionId =
     | 'environment-csp-reporting'
     | 'environment-max'
     | 'environment-posthog-code'
+    | 'environment-posthog-code-personal'
     | 'environment-integrations'
     | 'environment-activity-logs'
     | 'environment-discussions'
@@ -145,9 +146,12 @@ export type SettingId =
     | 'error-tracking-rate-limits'
     | 'integration-webhooks'
     | 'integration-slack'
+    | 'posthog-code-about'
     | 'integration-posthog-code-slack'
+    | 'integration-posthog-code-discord'
     | 'integration-error-tracking'
     | 'integration-linear'
+    | 'integration-linear-agent'
     | 'integration-github'
     | 'integration-other'
     | 'integration-ip-allowlist'
@@ -177,6 +181,7 @@ export type SettingId =
     | 'passkeys'
     | 'connected-apps'
     | 'personal-integrations'
+    | 'sms-phone-number'
     | 'personal-api-keys'
     | 'notifications'
     | 'realtime-notifications'
@@ -304,6 +309,9 @@ export interface SettingSection extends Pick<Setting, 'flag'> {
      * Sections with the same group will be nested under a group header.
      */
     group?: string
+
+    /** Optional JSX override for how the group header is rendered. Falls back to `group`. */
+    groupTitle?: JSX.Element
 
     /**
      * When true, the section is hidden from the settings page navigation and search

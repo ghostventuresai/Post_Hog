@@ -81,7 +81,7 @@ import { FeaturePreviewsComingSoon, FeaturePreviewsSettings } from './environmen
 import { GroupAnalyticsConfig } from './environment/GroupAnalyticsConfig'
 import { HeatmapsSettings } from './environment/HeatmapsSettings'
 import { HumanFriendlyComparisonPeriodsSetting } from './environment/HumanFriendlyComparisonPeriodsSetting'
-import { GithubIntegration, LinearIntegration } from './environment/Integrations'
+import { GithubIntegration, LinearAgentIntegration, LinearIntegration } from './environment/Integrations'
 import { IPAllowListInfo } from './environment/IPAllowListInfo'
 import { IPCapture } from './environment/IPCapture'
 import { JsSnippetVersionPin } from './environment/JsSnippetVersionPin'
@@ -96,6 +96,7 @@ import { MarketingAnalyticsSettingsWrapper } from './environment/MarketingAnalyt
 import MCPServerSettings from './environment/MCPServerSettings'
 import { PathCleaningFiltersConfig } from './environment/PathCleaningFiltersConfig'
 import { PersonDisplayNameProperties } from './environment/PersonDisplayNameProperties'
+import { PostHogCodeDiscordIntegration } from './environment/PostHogCodeDiscordIntegration'
 import { PostHogCodeSlackIntegration } from './environment/PostHogCodeSlackIntegration'
 import { ReplayIntegrations } from './environment/ReplayIntegrations'
 import { SDKSetupInstructions } from './environment/SDKSetupInstructions'
@@ -155,6 +156,7 @@ import { PersonalAPIKeys } from './user/PersonalAPIKeys'
 import { PersonalIntegrations } from './user/PersonalIntegrations'
 import { RealtimeNotificationPreferences } from './user/RealtimeNotificationPreferences'
 import { SidebarAutoSuggestSetting } from './user/SidebarProductSettings'
+import { SMSIntegrationSettings } from './user/SMSIntegrationSettings'
 import { ThemeSwitcher } from './user/ThemeSwitcher'
 import { TwoFactorSettings } from './user/TwoFactorSettings'
 import { UpdateEmailPreferences } from './user/UpdateEmailPreferences'
@@ -352,13 +354,74 @@ export const SETTINGS_MAP: SettingSection[] = [
     {
         level: 'environment',
         id: 'environment-posthog-code',
-        title: 'PostHog Code',
+        title: 'Integrations',
+        searchValue: 'PostHog Code integrations',
+        group: 'PostHog Code',
+        groupTitle: (
+            <>
+                PostHog Code{' '}
+                <LemonTag type="highlight" className="ml-1">
+                    NEW
+                </LemonTag>
+            </>
+        ),
         flag: 'TASKS',
+        minimumAccessLevel: OrganizationMembershipLevel.Admin,
         settings: [
             {
                 id: 'integration-posthog-code-slack',
                 title: 'Slack integration',
                 component: <PostHogCodeSlackIntegration />,
+            },
+            {
+                id: 'integration-posthog-code-discord',
+                title: 'Discord integration',
+                component: <PostHogCodeDiscordIntegration />,
+                flag: 'POSTHOG_BOT_EVERYWHERE',
+            },
+            {
+                id: 'integration-linear-agent',
+                title: 'Linear (Agent) integration',
+                description:
+                    'Install the PostHog AI agent into your Linear workspace so it can be @mentioned on issues and comments.',
+                component: <LinearAgentIntegration />,
+                keywords: ['linear', 'agent', 'ai', 'mention', 'bot'],
+                flag: 'POSTHOG_BOT_EVERYWHERE',
+            },
+        ],
+    },
+    {
+        level: 'environment',
+        id: 'environment-posthog-code-personal',
+        title: 'Personal integrations',
+        searchValue: 'PostHog Code personal integrations',
+        group: 'PostHog Code',
+        flag: 'TASKS',
+        settings: [
+            {
+                id: 'posthog-code-about',
+                title: 'About PostHog Code',
+                description: (
+                    <>
+                        PostHog Code is the only AI devtool that understands your product, not just your codebase. It
+                        identifies product usage patterns, triages bugs and errors, and creates pull requests
+                        automatically. Test drives begin Spring 2026 —{' '}
+                        <Link to="https://posthog.com/code" target="_blank">
+                            join the waiting list
+                        </Link>
+                        .
+                    </>
+                ),
+                component: <></>,
+            },
+            {
+                id: 'sms-phone-number',
+                title: 'Phone number',
+                description:
+                    'Verify a phone number to get text replies from PostHog Code. We send a 6-digit code to confirm you own the number.',
+                component: <SMSIntegrationSettings />,
+                keywords: ['sms', 'phone', 'text', 'message', 'mobile', 'verify', 'sendblue', 'posthog code'],
+                flag: 'POSTHOG_BOT_EVERYWHERE',
             },
         ],
     },
@@ -1379,7 +1442,18 @@ export const SETTINGS_MAP: SettingSection[] = [
                 id: 'integration-other',
                 title: 'Other integrations',
                 description: 'Browse and manage additional third-party integrations.',
-                component: <IntegrationsList omitKinds={['slack', 'slack-posthog-code', 'github', 'linear']} />,
+                component: (
+                    <IntegrationsList
+                        omitKinds={[
+                            'slack',
+                            'slack-posthog-code',
+                            'discord-posthog-code',
+                            'github',
+                            'linear',
+                            'linear-agent',
+                        ]}
+                    />
+                ),
                 keywords: ['integration', 'connect', 'third-party', 'app'],
             },
             {

@@ -158,6 +158,7 @@ export interface RoleLookupResponseApi {
  * `customerio-track` - Customerio Track
  * `customerio-webhook` - Customerio Webhook
  * `databricks` - Databricks
+ * `discord-posthog-code` - Discord Posthog Code
  * `email` - Email
  * `firebase` - Firebase
  * `github` - Github
@@ -171,6 +172,7 @@ export interface RoleLookupResponseApi {
  * `intercom` - Intercom
  * `jira` - Jira
  * `linear` - Linear
+ * `linear-agent` - Linear Agent
  * `linkedin-ads` - Linkedin Ads
  * `meta-ads` - Meta Ads
  * `pinterest-ads` - Pinterest Ads
@@ -197,6 +199,7 @@ export const IntegrationKindEnumApi = {
     CustomerioTrack: 'customerio-track',
     CustomerioWebhook: 'customerio-webhook',
     Databricks: 'databricks',
+    DiscordPosthogCode: 'discord-posthog-code',
     Email: 'email',
     Firebase: 'firebase',
     Github: 'github',
@@ -210,6 +213,7 @@ export const IntegrationKindEnumApi = {
     Intercom: 'intercom',
     Jira: 'jira',
     Linear: 'linear',
+    LinearAgent: 'linear-agent',
     LinkedinAds: 'linkedin-ads',
     MetaAds: 'meta-ads',
     PinterestAds: 'pinterest-ads',
@@ -441,6 +445,7 @@ export type IntegrationsListParams = {
      * `customerio-track` - Customerio Track
      * `customerio-webhook` - Customerio Webhook
      * `databricks` - Databricks
+     * `discord-posthog-code` - Discord Posthog Code
      * `email` - Email
      * `firebase` - Firebase
      * `github` - Github
@@ -454,6 +459,7 @@ export type IntegrationsListParams = {
      * `intercom` - Intercom
      * `jira` - Jira
      * `linear` - Linear
+     * `linear-agent` - Linear Agent
      * `linkedin-ads` - Linkedin Ads
      * `meta-ads` - Meta Ads
      * `pinterest-ads` - Pinterest Ads
@@ -491,6 +497,7 @@ export const IntegrationsListKind = {
     CustomerioTrack: 'customerio-track',
     CustomerioWebhook: 'customerio-webhook',
     Databricks: 'databricks',
+    DiscordPosthogCode: 'discord-posthog-code',
     Email: 'email',
     Firebase: 'firebase',
     Github: 'github',
@@ -504,6 +511,7 @@ export const IntegrationsListKind = {
     Intercom: 'intercom',
     Jira: 'jira',
     Linear: 'linear',
+    LinearAgent: 'linear-agent',
     LinkedinAds: 'linkedin-ads',
     MetaAds: 'meta-ads',
     PinterestAds: 'pinterest-ads',

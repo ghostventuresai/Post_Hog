@@ -31,7 +31,12 @@ from rest_framework.response import Response
 from posthog.api.mixins import validated_request
 from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.api.utils import ServerTimingsGathered
-from posthog.auth import OAuthAccessTokenAuthentication, PersonalAPIKeyAuthentication
+from posthog.auth import (
+    InternalAPIAuthentication,
+    InternalAPIUser,
+    OAuthAccessTokenAuthentication,
+    PersonalAPIKeyAuthentication,
+)
 from posthog.event_usage import groups
 from posthog.models.integration import Integration
 from posthog.permissions import APIScopePermission
@@ -197,11 +202,13 @@ def _resolve_cloud_pr_authorship_mode(
 TASK_RUN_ARTIFACT_UPLOAD_FORM_OVERHEAD_BYTES = 64 * 1024
 
 
-def task_visibility_q(user_id: int | None) -> Q:
+def task_visibility_q(user) -> Q:
     """Filter for tasks visible to the given user.
 
     A task is visible if:
-    - its creator matches `user_id`, or
+    - the caller is an Internal-API user (service-to-service callers are
+      unrestricted within their team scope), or
+    - its creator matches `user`, or
     - it has no creator at all (legacy unowned tasks remain visible to any
       team member — they cannot be executed in any case because oauth.py
       requires `task.created_by` to mint OAuth tokens), or
@@ -210,11 +217,19 @@ def task_visibility_q(user_id: int | None) -> Q:
       a system-picked `created_by` so the agent can mint an OAuth token, but
       they are not personal — any team member should be able to view them.
     """
+    if isinstance(user, InternalAPIUser):
+        return Q()
+
+    user_id = getattr(user, "id", None)
     return Q(created_by_id=user_id) | Q(created_by__isnull=True) | Q(origin_product=Task.OriginProduct.SIGNAL_REPORT)
 
 
-def task_run_visibility_q(user_id: int | None) -> Q:
+def task_run_visibility_q(user) -> Q:
     """`task_visibility_q` traversed via the `task` FK on TaskRun / TaskAutomation."""
+    if isinstance(user, InternalAPIUser):
+        return Q()
+
+    user_id = getattr(user, "id", None)
     return (
         Q(task__created_by_id=user_id)
         | Q(task__created_by__isnull=True)
@@ -226,6 +241,8 @@ class TasksAccessPermission(BasePermission):
     message = "You need a valid invite code to access this feature."
 
     def has_permission(self, request, view) -> bool:
+        if isinstance(request.user, InternalAPIUser):
+            return True
         return has_tasks_access(request.user)
 
 
@@ -240,6 +257,7 @@ class TaskViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         SessionAuthentication,
         PersonalAPIKeyAuthentication,
         OAuthAccessTokenAuthentication,
+        InternalAPIAuthentication,
     ]
     permission_classes = [IsAuthenticated, APIScopePermission, TasksAccessPermission]
     scope_object = "task"
@@ -277,7 +295,7 @@ class TaskViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
     def repositories(self, request, **kwargs):
         repositories = (
             Task.objects.filter(team=self.team, deleted=False, internal=False)
-            .filter(task_visibility_q(getattr(self.request.user, "id", None)))
+            .filter(task_visibility_q(self.request.user))
             .exclude(repository__isnull=True)
             .exclude(repository__exact="")
             .values_list("repository", flat=True)
@@ -333,7 +351,7 @@ class TaskViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         )
         tasks = (
             Task.objects.filter(team=self.team, deleted=False, id__in=ids)
-            .filter(task_visibility_q(getattr(self.request.user, "id", None)))
+            .filter(task_visibility_q(self.request.user))
             .annotate(_latest_run=Subquery(latest_run.values("_data")[:1]))
             .order_by("-created_at", "id")
         )
@@ -377,7 +395,7 @@ class TaskViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
     def safely_get_queryset(self, queryset):
         qs = (
             queryset.filter(team=self.team, deleted=False)
-            .filter(task_visibility_q(getattr(self.request.user, "id", None)))
+            .filter(task_visibility_q(self.request.user))
             .order_by("-created_at")
         )
 
@@ -440,7 +458,7 @@ class TaskViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
                 )
 
             internal_param = getattr(self.request, "validated_query_data", {}).get("internal")
-            if internal_param is True and (settings.DEBUG or self.request.user.is_staff):
+            if internal_param is True and (settings.DEBUG or getattr(self.request.user, "is_staff", False)):
                 qs = qs.filter(internal=True)
             else:
                 qs = qs.filter(internal=False)
@@ -852,7 +870,7 @@ class TaskAutomationViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
     def safely_get_queryset(self, queryset):
         return (
             queryset.filter(task__team=self.team)
-            .filter(task_run_visibility_q(getattr(self.request.user, "id", None)))
+            .filter(task_run_visibility_q(self.request.user))
             .order_by("task__title", "-created_at")
         )
 
@@ -891,6 +909,7 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         SessionAuthentication,
         PersonalAPIKeyAuthentication,
         OAuthAccessTokenAuthentication,
+        InternalAPIAuthentication,
     ]
     permission_classes = [IsAuthenticated, APIScopePermission, TasksAccessPermission]
     scope_object = "task"
@@ -924,11 +943,7 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         if not task_id:
             raise NotFound("Task ID is required")
 
-        task = (
-            Task.objects.filter(id=task_id, team=self.team)
-            .filter(task_visibility_q(getattr(request.user, "id", None)))
-            .first()
-        )
+        task = Task.objects.filter(id=task_id, team=self.team).filter(task_visibility_q(request.user)).first()
         if task is None:
             raise NotFound("Task not found")
         environment = request.validated_data.get("environment", TaskRun.Environment.LOCAL)
@@ -1290,9 +1305,7 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
             raise NotFound("Task ID is required")
 
         task_visible = (
-            Task.objects.filter(id=task_id, team=self.team)
-            .filter(task_visibility_q(getattr(self.request.user, "id", None)))
-            .exists()
+            Task.objects.filter(id=task_id, team=self.team).filter(task_visibility_q(self.request.user)).exists()
         )
         if not task_visible:
             raise NotFound("Task not found")
@@ -1306,11 +1319,7 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
         task_id = self.kwargs.get("parent_lookup_task_id")
         if not task_id:
             raise NotFound("Task ID is required")
-        task = (
-            Task.objects.filter(id=task_id, team=self.team)
-            .filter(task_visibility_q(getattr(self.request.user, "id", None)))
-            .first()
-        )
+        task = Task.objects.filter(id=task_id, team=self.team).filter(task_visibility_q(self.request.user)).first()
         if task is None:
             raise NotFound("Task not found")
         serializer.save(team=self.team, task=task)
@@ -2014,8 +2023,8 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
 
         connection_token = create_sandbox_connection_token(
             task_run=task_run,
-            user_id=request.user.id,
-            distinct_id=request.user.distinct_id,
+            user_id=getattr(request.user, "id", None) or (task_run.task.created_by_id or 0),
+            distinct_id=getattr(request.user, "distinct_id", None) or f"internal-api-team-{task_run.team_id}",
         )
 
         command_payload: dict = {

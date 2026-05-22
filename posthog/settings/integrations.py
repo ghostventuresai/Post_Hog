@@ -17,6 +17,11 @@ SLACK_POSTHOG_CODE_SIGNING_SECRET = get_from_env(
     "SLACK_POSTHOG_CODE_SIGNING_SECRET", get_from_env("SLACK_TWIG_SIGNING_SECRET", "")
 )
 
+DISCORD_POSTHOG_CODE_CLIENT_ID = get_from_env("DISCORD_POSTHOG_CODE_CLIENT_ID", "")
+DISCORD_POSTHOG_CODE_CLIENT_SECRET = get_from_env("DISCORD_POSTHOG_CODE_CLIENT_SECRET", "")
+DISCORD_POSTHOG_CODE_BOT_TOKEN = get_from_env("DISCORD_POSTHOG_CODE_BOT_TOKEN", "")
+DISCORD_POSTHOG_CODE_PUBLIC_KEY = get_from_env("DISCORD_POSTHOG_CODE_PUBLIC_KEY", "")
+
 SALESFORCE_CONSUMER_KEY = get_from_env("SALESFORCE_CONSUMER_KEY", "")
 SALESFORCE_CONSUMER_SECRET = get_from_env("SALESFORCE_CONSUMER_SECRET", "")
 
@@ -32,6 +37,19 @@ SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = get_from_env("SOCIAL_AUTH_GOOGLE_OAUTH2_SECRE
 
 LINEAR_APP_CLIENT_ID = get_from_env("LINEAR_APP_CLIENT_ID", "")
 LINEAR_APP_CLIENT_SECRET = get_from_env("LINEAR_APP_CLIENT_SECRET", "")
+
+# Linear (Agent) — separate OAuth app from LINEAR_* above. This one installs as an
+# `actor=app` agent on the connecting Linear workspace; runtime side lives in
+# hognipotent (the Next.js chat-bot service). Token refresh happens on the
+# hognipotent side once the install is pushed, so this app does not refresh.
+LINEAR_AGENT_APP_CLIENT_ID = get_from_env("LINEAR_AGENT_APP_CLIENT_ID", "")
+LINEAR_AGENT_APP_CLIENT_SECRET = get_from_env("LINEAR_AGENT_APP_CLIENT_SECRET", "")
+
+# Hognipotent — internal Next.js chat-bot service that owns the Linear agent
+# runtime. We POST the installation here right after the OAuth exchange and
+# DELETE it on disconnect. Authentication uses the shared INTERNAL_API_SECRET
+# (see posthog/settings/data_stores.py)
+HOGNIPOTENT_URL = get_from_env("HOGNIPOTENT_URL", "")
 
 GITHUB_APP_CLIENT_ID = get_from_env("GITHUB_APP_CLIENT_ID", "")
 GITHUB_APP_PRIVATE_KEY = get_from_env("GITHUB_APP_PRIVATE_KEY", "")
@@ -120,3 +138,8 @@ PANDADOC_API_KEY = get_from_env("PANDADOC_API_KEY", "")
 PANDADOC_WEBHOOK_SECRET = get_from_env("PANDADOC_WEBHOOK_SECRET", "")
 PANDADOC_BAA_TEMPLATE_ID = get_from_env("PANDADOC_BAA_TEMPLATE_ID", "")
 PANDADOC_DPA_TEMPLATE_ID = get_from_env("PANDADOC_DPA_TEMPLATE_ID", "")
+
+# SendBlue is the underlying provider for the SMS personal integration.
+SENDBLUE_API_KEY = get_from_env("SENDBLUE_API_KEY", "")
+SENDBLUE_API_SECRET = get_from_env("SENDBLUE_API_SECRET", "")
+SENDBLUE_FROM_NUMBER = get_from_env("SENDBLUE_FROM_NUMBER", "")

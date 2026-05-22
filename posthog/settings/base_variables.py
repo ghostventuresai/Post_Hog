@@ -50,6 +50,11 @@ SERVER_GATEWAY_INTERFACE = get_from_env("SERVER_GATEWAY_INTERFACE", "WSGI", type
 # GitHub secret alert relay URL - set in US deployment to forward alerts to EU
 GITHUB_SECRET_ALERT_RELAY_URL: str | None = get_from_env("GITHUB_SECRET_ALERT_RELAY_URL", optional=True)
 
+# Hognipotent webhook proxy URL - GitHub issue/PR comment events are forwarded here.
+# Defaults to empty so self-hosted installs do not forward webhook payloads off-instance;
+# the proxy is skipped entirely when this is unset.
+HOGNIPOTENT_WEBHOOK_URL: str = get_from_env("HOGNIPOTENT_WEBHOOK_URL", "", type_cast=str)
+
 # Internal team on PostHog Cloud US that receives `$ai_generation` /
 # `$ai_embedding` events emitted by PostHog products (PostHog Code,
 # background agents, etc). Used by /api/llm_analytics/personal_spend/.

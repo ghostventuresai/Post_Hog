@@ -9,19 +9,21 @@ import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { integrationsLogic } from 'lib/integrations/integrationsLogic'
 import { IntegrationView } from 'lib/integrations/IntegrationView'
 
-export function PostHogCodeSlackIntegration(): JSX.Element {
+import IconDiscord from 'public/services/discord.png'
+
+export function PostHogCodeDiscordIntegration(): JSX.Element {
     const restrictedReason = useRestrictedArea({
         scope: RestrictionScope.Project,
         minimumAccessLevel: TeamMembershipLevel.Admin,
     })
-    const { getIntegrationsByKind, posthogCodeSlackAvailable } = useValues(integrationsLogic)
-    const flagEnabled = useFeatureFlag('POSTHOG_CODE_SLACK_AVAILABILITY')
-    const canConnect = posthogCodeSlackAvailable && flagEnabled
-    const integrations = getIntegrationsByKind(['slack-posthog-code'])
+    const { getIntegrationsByKind, posthogCodeDiscordAvailable } = useValues(integrationsLogic)
+    const flagEnabled = useFeatureFlag('POSTHOG_BOT_EVERYWHERE')
+    const canConnect = posthogCodeDiscordAvailable && flagEnabled
+    const integrations = getIntegrationsByKind(['discord-posthog-code'])
 
     return (
         <div>
-            <p>Connect Slack to PostHog Code to kick off tasks like pull requests directly from Slack.</p>
+            <p>Connect Discord to PostHog Code to kick off tasks like pull requests directly from Discord.</p>
 
             <div className="deprecated-space-y-2">
                 {integrations.map((integration) => (
@@ -31,22 +33,17 @@ export function PostHogCodeSlackIntegration(): JSX.Element {
                 <div>
                     {canConnect ? (
                         <LemonButton
+                            type="primary"
                             disableClientSideRouting
-                            to={api.integrations.authorizeUrl({ kind: 'slack-posthog-code' })}
+                            to={api.integrations.authorizeUrl({ kind: 'discord-posthog-code' })}
                             disabledReason={restrictedReason}
-                            className="p-0"
+                            icon={<img src={IconDiscord} alt="" height="20" width="20" />}
                         >
-                            <img
-                                alt="Add to Slack"
-                                height="40"
-                                width="139"
-                                src="https://platform.slack-edge.com/img/add_to_slack.png"
-                                srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
-                            />
+                            Add to Discord
                         </LemonButton>
                     ) : (
                         <p className="text-secondary">
-                            The PostHog Code Slack integration is not configured for this instance.
+                            The PostHog Code Discord integration is not configured for this instance.
                         </p>
                     )}
                 </div>
