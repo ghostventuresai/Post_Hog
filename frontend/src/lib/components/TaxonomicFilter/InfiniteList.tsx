@@ -21,6 +21,7 @@ import { hasPinnedContext } from 'lib/components/TaxonomicFilter/taxonomicFilter
 import {
     DataWarehousePopoverField,
     DefinitionPopoverRenderer,
+    isCurrentSelectionItem,
     isQuickFilterItem,
     isSkeletonItem,
     QuickFilterItem,
@@ -456,7 +457,7 @@ export const InfiniteListRow = ({
 
     const normalizedValue = typeof itemValue === 'number' && typeof value === 'string' ? Number(value) : value
 
-    const isSelected = listGroupType === groupType && itemValue === normalizedValue
+    const isSelected = (listGroupType === groupType && itemValue === normalizedValue) || isCurrentSelectionItem(item)
 
     const isHighlighted = rowIndex === highlightedIndex && isActiveTab
 
@@ -587,8 +588,17 @@ export const InfiniteListRow = ({
                     isActive,
                 })}
                 {isCrossGroupItem && (
-                    <LemonTag size="small" type="highlight">
-                        {localListLabel ? `${itemGroup.name} - ${localListLabel}` : itemGroup.name}
+                    <LemonTag size="small" type={isSelected ? 'primary' : 'highlight'}>
+                        {isSelected
+                            ? `${itemGroup.name} - currently selected`
+                            : localListLabel
+                              ? `${itemGroup.name} - ${localListLabel}`
+                              : itemGroup.name}
+                    </LemonTag>
+                )}
+                {!isCrossGroupItem && isSelected && (
+                    <LemonTag size="small" type="primary">
+                        Currently selected
                     </LemonTag>
                 )}
                 {isPinnable && (

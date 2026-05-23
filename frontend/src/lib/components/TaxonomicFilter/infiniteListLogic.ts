@@ -19,6 +19,7 @@ import {
     InfiniteListLogicProps,
     QuickFilterItem,
     SkeletonItem,
+    hoistCurrentSelection,
     isQuickFilterItem,
     isSkeletonItem,
     ListFuse,
@@ -747,34 +748,105 @@ export const infiniteListLogic = kea<infiniteListLogicType>([
                 s.contextFilteredPinnedItems,
                 s.suggestedPinnedMatches,
                 s.keywordShortcutItems,
+                s.value,
+                s.groupType,
+                s.taxonomicGroups,
             ],
             (
-                remoteItems,
-                localItems,
-                listGroupType,
-                topMatchItemsWithSkeletons,
-                searchQuery,
-                contextFilteredRecentItems,
-                contextFilteredPinnedItems,
-                suggestedPinnedMatches,
-                keywordShortcutItems
+                remoteItems: ListStorage,
+                localItems: ListStorage,
+                listGroupType: TaxonomicFilterGroupType,
+                topMatchItemsWithSkeletons: (TaxonomicDefinitionTypes | SkeletonItem)[],
+                searchQuery: string,
+                contextFilteredRecentItems: TaxonomicDefinitionTypes[],
+                contextFilteredPinnedItems: TaxonomicDefinitionTypes[],
+                suggestedPinnedMatches: TaxonomicDefinitionTypes[],
+                keywordShortcutItems: QuickFilterItem[],
+                value: string | number | null | undefined,
+                groupType: TaxonomicFilterGroupType | undefined,
+                taxonomicGroups: TaxonomicFilterGroup[]
             ) => {
                 const isSuggested = listGroupType === TaxonomicFilterGroupType.SuggestedFilters
                 const topMatches = isSuggested ? topMatchItemsWithSkeletons : []
-                const recentPrefix = isSuggested && !searchQuery ? (contextFilteredRecentItems || []).slice(0, 3) : []
-                const pinnedPrefix = isSuggested && !searchQuery ? (contextFilteredPinnedItems || []).slice(0, 3) : []
+                // Hoist the host's current-selection above recents/pinned so it always
+                // anchors the top of the Suggested-filters tab.
+                const { hoisted: currentSelectionItems, rest: localItemsWithoutCurrentSelection } = isSuggested
+                    ? hoistCurrentSelection(localItems.results)
+                    : { hoisted: [], rest: localItems.results }
+                // Build a set of "groupType:value" keys for the current selection, so the same
+                // series doesn't also appear in the recents/pinned prefixes below.
+                const currentSelectionKeys = new Set(
+                    currentSelectionItems.map((item) => `${item.group}:${item.id ?? ''}`)
+                )
+                const dropDuplicateOfCurrentSelection = (item: TaxonomicDefinitionTypes): boolean => {
+                    let sourceGroupType: TaxonomicFilterGroupType | undefined
+                    let itemValue: string | number | null | undefined
+                    if (hasRecentContext(item)) {
+                        sourceGroupType = item._recentContext.sourceGroupType
+                        // Recent context's sourceValue is the canonical key the user picked
+                        // (event name for events, action id for actions); item.id may be a
+                        // UUID from the underlying definition and would not match.
+                        itemValue = item._recentContext.sourceValue
+                    } else if (hasPinnedContext(item)) {
+                        sourceGroupType = item._pinnedContext.sourceGroupType
+                        // PinnedItemContext doesn't carry sourceValue; fall back to id/name.
+                        itemValue = 'id' in item ? item.id : 'name' in item ? item.name : undefined
+                    } else {
+                        return true
+                    }
+                    return !currentSelectionKeys.has(`${sourceGroupType}:${itemValue ?? ''}`)
+                }
+                const recentPrefix =
+                    isSuggested && !searchQuery
+                        ? (contextFilteredRecentItems || []).filter(dropDuplicateOfCurrentSelection).slice(0, 3)
+                        : []
+                const pinnedPrefix =
+                    isSuggested && !searchQuery
+                        ? (contextFilteredPinnedItems || []).filter(dropDuplicateOfCurrentSelection).slice(0, 3)
+                        : []
                 // Shortcuts lead the list so users searching for the verb they mean (e.g. "click")
                 // see the autocapture/event-type shortcut prominently and pressing Enter picks it.
                 // Real events with the same name remain accessible below the shortcut.
-                const combinedResults = [
+                let combinedResults = [
+                    ...currentSelectionItems,
                     ...keywordShortcutItems,
                     ...recentPrefix,
                     ...pinnedPrefix,
                     ...suggestedPinnedMatches,
-                    ...localItems.results,
+                    ...localItemsWithoutCurrentSelection,
                     ...remoteItems.results,
                     ...topMatches,
                 ]
+                // For non-suggested tabs that don't have their own hoisting machinery, lift the
+                // currently-selected row to the top of the list so the user can see at a glance
+                // what's already chosen — without this it sits in alphabetical position.
+                // DataWarehouse has its own pin lifecycle via `getInitialPinnedRowIndex` (a
+                // separate row-pinning UX, unrelated to current-selection hoisting); leaving its
+                // row order alone keeps that flow working.
+                if (
+                    !isSuggested &&
+                    listGroupType !== TaxonomicFilterGroupType.DataWarehouse &&
+                    value != null &&
+                    listGroupType === groupType
+                ) {
+                    const listGroup = taxonomicGroups.find((g) => g.type === listGroupType)
+                    const selectedIndex = combinedResults.findIndex((result) => {
+                        if (!result || isSkeletonItem(result)) {
+                            return false
+                        }
+                        const resultValue = listGroup?.getValue?.(result)
+                        if (resultValue == null) {
+                            return false
+                        }
+                        const normalizedValue =
+                            typeof resultValue === 'number' && typeof value === 'string' ? Number(value) : value
+                        return resultValue === normalizedValue
+                    })
+                    if (selectedIndex > 0) {
+                        const [selected] = combinedResults.splice(selectedIndex, 1)
+                        combinedResults = [selected, ...combinedResults]
+                    }
+                }
                 return {
                     results: searchQuery ? promoteMatchingProperties(combinedResults, searchQuery) : combinedResults,
                     count:

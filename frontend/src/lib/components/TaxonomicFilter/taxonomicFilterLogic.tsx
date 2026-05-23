@@ -35,6 +35,7 @@ import {
     taxonomicFilterPinnedPropertiesLogic,
 } from 'lib/components/TaxonomicFilter/taxonomicFilterPinnedPropertiesLogic'
 import {
+    CurrentSelection,
     DataWarehousePopoverField,
     ExcludedProperties,
     ListStorage,
@@ -47,6 +48,8 @@ import {
     TaxonomicFilterGroupType,
     TaxonomicFilterLogicProps,
     TaxonomicFilterValue,
+    hoistCurrentSelection,
+    isCurrentSelectionItem,
     isQuickFilterItem,
 } from 'lib/components/TaxonomicFilter/types'
 import { FEATURE_FLAGS } from 'lib/constants'
@@ -492,6 +495,21 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
             () => [(_, props) => props.suggestedFiltersLabel],
             (suggestedFiltersLabel) => suggestedFiltersLabel,
         ],
+        currentSelection: [
+            () => [(_, props) => props.currentSelection],
+            (currentSelection): CurrentSelection | null => currentSelection ?? null,
+        ],
+        // Composite selector so `taxonomicGroups` stays under the 16-tuple kea limit.
+        suggestedFiltersContext: [
+            (s) => [s.suggestedFiltersLabel, s.currentSelection],
+            (
+                suggestedFiltersLabel: string | undefined,
+                currentSelection: CurrentSelection | null
+            ): { suggestedFiltersLabel: string | undefined; currentSelection: CurrentSelection | null } => ({
+                suggestedFiltersLabel,
+                currentSelection,
+            }),
+        ],
         metadataSource: [
             () => [(_, props) => props.metadataSource],
             (metadataSource): AnyDataNode =>
@@ -545,7 +563,7 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
                 s.schemaColumns,
                 (_, props) => props.schemaColumnsLoading,
                 s.metadataSource,
-                s.suggestedFiltersLabel,
+                s.suggestedFiltersContext,
                 s.propertyFilters,
                 s.eventMetadataPropertyDefinitions,
                 s.maxContextOptions,
@@ -566,7 +584,10 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
                 schemaColumns: DatabaseSchemaField[],
                 schemaColumnsLoading: boolean | undefined,
                 metadataSource: AnyDataNode,
-                suggestedFiltersLabel: string | undefined,
+                suggestedFiltersContext: {
+                    suggestedFiltersLabel: string | undefined
+                    currentSelection: CurrentSelection | null
+                },
                 propertyFilters,
                 eventMetadataPropertyDefinitions: PropertyDefinition[],
                 maxContextOptions: MaxContextTaxonomicFilterOption[],
@@ -578,6 +599,7 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
                 },
                 featureFlags: Record<string, boolean | string | undefined>
             ): TaxonomicFilterGroup[] => {
+                const { suggestedFiltersLabel, currentSelection } = suggestedFiltersContext
                 const { eventNames, primaryPropertiesForContextEvents } = eventNamesWithPrimaryProperties
                 const { id: teamId } = currentTeam
                 const { excludedProperties, propertyAllowList } = propertyFilters
@@ -1414,6 +1436,19 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
                         isLocalOnly: true,
                         isMetaGroup: true,
                         options: [
+                            // Hoist the host's current selection to the top so it stays visible
+                            // alongside the suggestions. The cross-group dispatch in InfiniteList
+                            // routes rendering to the Events / Actions / DataWarehouse renderer.
+                            ...(currentSelection
+                                ? [
+                                      {
+                                          id: currentSelection.value,
+                                          name: currentSelection.name,
+                                          group: currentSelection.groupType,
+                                          isCurrentSelection: true,
+                                      },
+                                  ]
+                                : []),
                             // Promoted properties for any event in context come first — if a team
                             // has marked a property as the one that summarises this event, it's
                             // the property they almost certainly want to filter or break down by.
@@ -1429,8 +1464,27 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>([
                                 : []),
                         ],
                         getName: (item: TaxonomicDefinitionTypes) => ('name' in item ? item.name : '') || '',
-                        getValue: (item: TaxonomicDefinitionTypes): TaxonomicFilterValue =>
-                            'name' in item ? (item.name ?? null) : null,
+                        getValue: (item: TaxonomicDefinitionTypes): TaxonomicFilterValue => {
+                            // The hoisted current-selection row carries its own value (action id
+                            // or event name); other suggested items are property names.
+                            if (isCurrentSelectionItem(item)) {
+                                return item.id ?? null
+                            }
+                            return 'name' in item ? (item.name ?? null) : null
+                        },
+                        // Keep the hoisted current-selection at the top regardless of search
+                        // query, and run a substring filter over the remaining suggestions.
+                        localItemsSearch: (items, query) => {
+                            const { hoisted, rest } = hoistCurrentSelection(items)
+                            const trimmedQuery = query.trim().toLowerCase()
+                            const filteredRest = trimmedQuery
+                                ? rest.filter((item) => {
+                                      const name = 'name' in item ? item.name : ''
+                                      return name?.toLowerCase().includes(trimmedQuery)
+                                  })
+                                : rest
+                            return [...hoisted, ...filteredRest]
+                        },
                         getPopoverHeader: () => suggestedFiltersLabel ?? 'Suggested filters',
                     },
                     {

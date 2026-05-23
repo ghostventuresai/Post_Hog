@@ -178,6 +178,55 @@ export interface TaxonomicFilterProps {
      *  - `TaxonomicPropertyFilter` hides the operator+value pair on rows whose group is key-only.
      *  See `SelectingKeyOnly` for the boolean-or-per-group-dict shape. */
     selectingKeyOnly?: SelectingKeyOnly
+    /** Hoist the host's current selection to the top of the Suggested-filters tab with a
+     *  "Currently selected" tag. Used by the series picker so the active event/action stays
+     *  visible alongside suggested properties. */
+    currentSelection?: CurrentSelection | null
+}
+
+export interface CurrentSelection {
+    groupType: TaxonomicFilterGroupType
+    value: TaxonomicFilterValue
+    name: string
+}
+
+/**
+ * Synthetic item shape inserted into the `SuggestedFilters` group's `options` array to
+ * surface the host's current selection at the top of the picker. `group` carries the
+ * source group type so cross-group dispatch in `InfiniteList` routes rendering to the
+ * correct (Events / Actions / DataWarehouse) renderer.
+ */
+export interface CurrentSelectionItem {
+    id: TaxonomicFilterValue
+    name: string
+    group: TaxonomicFilterGroupType
+    isCurrentSelection: true
+}
+
+export function isCurrentSelectionItem(item: unknown): item is CurrentSelectionItem {
+    return (
+        typeof item === 'object' &&
+        item !== null &&
+        'isCurrentSelection' in item &&
+        (item as { isCurrentSelection?: boolean }).isCurrentSelection === true
+    )
+}
+
+/**
+ * Single-pass lift of the synthetic current-selection rows out of a list, so callers can
+ * place them at the top of every Suggested-filters list.
+ */
+export function hoistCurrentSelection<T>(items: readonly T[]): { hoisted: CurrentSelectionItem[]; rest: T[] } {
+    const hoisted: CurrentSelectionItem[] = []
+    const rest: T[] = []
+    for (const item of items) {
+        if (isCurrentSelectionItem(item)) {
+            hoisted.push(item)
+        } else {
+            rest.push(item)
+        }
+    }
+    return { hoisted, rest }
 }
 
 export interface DataWarehousePopoverField {
@@ -380,6 +429,7 @@ export type TaxonomicDefinitionTypes =
     | DataWarehouseTableForInsight
     | MaxContextTaxonomicFilterOption
     | QuickFilterItem
+    | CurrentSelectionItem
 
 export const CATEGORY_DROPDOWN_VARIANTS = ['control', 'pill'] as const
 
