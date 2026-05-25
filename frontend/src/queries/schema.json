@@ -4534,6 +4534,10 @@
                 }
             ]
         },
+        "BreakdownSortBy": {
+            "enum": ["aggregate_value", "name"],
+            "type": "string"
+        },
         "BreakdownType": {
             "enum": [
                 "cohort",
@@ -38394,6 +38398,11 @@
                 "aggregationAxisPrefix": {
                     "description": "Literal prefix applied to every value (e.g. `$`). Use to pin a unit or currency symbol that does not depend on `aggregationAxisFormat` — for example, when values are denominated in a fixed currency regardless of the project's base currency. Include any trailing space yourself.",
                     "type": "string"
+                },
+                "breakdownSortBy": {
+                    "$ref": "#/definitions/BreakdownSortBy",
+                    "default": "aggregate_value",
+                    "description": "How breakdown series are ordered on the chart and in the legend. \"aggregate_value\" preserves the default order (largest first, with Other/null pushed to the end). \"name\" sorts alphabetically by breakdown_value so series stack the same way across insights."
                 },
                 "breakdown_histogram_bin_count": {
                     "type": "number"

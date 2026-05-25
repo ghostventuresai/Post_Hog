@@ -3,12 +3,23 @@ import { expectLogic } from 'kea-test-utils'
 import { insightDataLogic } from 'scenes/insights/insightDataLogic'
 import { insightLogic } from 'scenes/insights/insightLogic'
 import { insightVizDataLogic } from 'scenes/insights/insightVizDataLogic'
-import { getTrendResultCustomizationKey } from 'scenes/insights/utils'
+import {
+    BREAKDOWN_NULL_STRING_LABEL,
+    BREAKDOWN_OTHER_STRING_LABEL,
+    getTrendResultCustomizationKey,
+} from 'scenes/insights/utils'
 
 import { dataNodeLogic } from '~/queries/nodes/DataNode/dataNodeLogic'
-import { DataNode, LifecycleQuery, NodeKind, ResultCustomizationBy, TrendsQuery } from '~/queries/schema/schema-general'
+import {
+    BreakdownSortBy,
+    DataNode,
+    LifecycleQuery,
+    NodeKind,
+    ResultCustomizationBy,
+    TrendsQuery,
+} from '~/queries/schema/schema-general'
 import { initKeaTests } from '~/test/init'
-import { ChartDisplayType, InsightLogicProps, InsightModel } from '~/types'
+import { ChartDisplayType, InsightLogicProps, InsightModel, TrendResult } from '~/types'
 
 import { breakdownPieResult, lifecycleResult, trendPieResult, trendResult } from './__mocks__/trendsDataLogicMocks'
 import { trendsDataLogic } from './trendsDataLogic'
@@ -238,6 +249,127 @@ describe('trendsDataLogic', () => {
                 }).toMatchValues({
                     labelGroupType: 1,
                 })
+            })
+        })
+
+        describe('breakdownSortBy', () => {
+            const fixture = (breakdown_value: string, aggregated_value: number): TrendResult =>
+                ({
+                    action: {
+                        id: '$pageview',
+                        type: 'events',
+                        order: 0,
+                        name: '$pageview',
+                        custom_name: null,
+                        math: null,
+                        math_property: null,
+                        math_group_type_index: null,
+                        properties: {},
+                    },
+                    label: breakdown_value,
+                    count: 0,
+                    data: [],
+                    labels: [],
+                    days: [],
+                    breakdown_value,
+                    aggregated_value,
+                    filter: {},
+                }) as unknown as TrendResult
+
+            // Tests the indexedResults sort dispatch: same input, two sort modes, two expected orderings.
+            // Shared fixture intentionally pairs aggregate magnitude inverse to alphabetical order so
+            // a Name-mode bug that fell through to aggregate sort (or vice versa) would flip the assertion.
+            const sharedSortInput = [fixture('zeta', 300), fixture('alpha', 100), fixture('beta', 200)]
+            it.each([
+                {
+                    name: 'name mode sorts breakdowns alphabetically regardless of aggregate magnitude',
+                    sortMode: BreakdownSortBy.Name,
+                    display: ChartDisplayType.ActionsBar,
+                    expectedOrder: ['alpha', 'beta', 'zeta'],
+                },
+                {
+                    name: 'aggregate-value mode sorts pie breakdowns by aggregated value descending',
+                    sortMode: BreakdownSortBy.AggregateValue,
+                    display: ChartDisplayType.ActionsPie,
+                    expectedOrder: ['zeta', 'beta', 'alpha'],
+                },
+            ])('$name', async ({ sortMode, display, expectedOrder }) => {
+                const query: TrendsQuery = {
+                    kind: NodeKind.TrendsQuery,
+                    series: [],
+                    trendsFilter: { display, breakdownSortBy: sortMode },
+                    breakdownFilter: { breakdown: '$survey_response', breakdown_type: 'event' },
+                }
+                const insight: Partial<InsightModel> = { result: sharedSortInput }
+
+                await expectLogic(logic, () => {
+                    insightVizDataLogic.findMounted(insightProps)?.actions.updateQuerySource(query)
+                    builtDataNodeLogic.actions.loadDataSuccess(insight)
+                }).toMatchValues({
+                    indexedResults: expectedOrder.map((bv) => expect.objectContaining({ breakdown_value: bv })),
+                })
+            })
+
+            it('name mode keeps Other and null buckets at the end', async () => {
+                const query: TrendsQuery = {
+                    kind: NodeKind.TrendsQuery,
+                    series: [],
+                    trendsFilter: {
+                        display: ChartDisplayType.ActionsPie,
+                        breakdownSortBy: BreakdownSortBy.Name,
+                    },
+                    breakdownFilter: { breakdown: '$active_feature_flags', breakdown_type: 'event' },
+                }
+                const insight: Partial<InsightModel> = {
+                    result: breakdownPieResult.result,
+                }
+
+                await expectLogic(logic, () => {
+                    insightVizDataLogic.findMounted(insightProps)?.actions.updateQuerySource(query)
+                    builtDataNodeLogic.actions.loadDataSuccess(insight)
+                }).toFinishAllListeners()
+
+                const indexedResults = logic.values.indexedResults
+                const tail = indexedResults.slice(-2).map((r) => r.breakdown_value)
+                expect(tail).toEqual([BREAKDOWN_OTHER_STRING_LABEL, BREAKDOWN_NULL_STRING_LABEL])
+            })
+
+            it('name mode interleaves compare-mode pairs by breakdown_value (stable sort)', async () => {
+                const query: TrendsQuery = {
+                    kind: NodeKind.TrendsQuery,
+                    series: [],
+                    trendsFilter: {
+                        display: ChartDisplayType.ActionsUnstackedBar,
+                        breakdownSortBy: BreakdownSortBy.Name,
+                    },
+                    breakdownFilter: { breakdown: '$survey_response', breakdown_type: 'event' },
+                }
+                const make = (breakdown_value: string, compare_label: 'previous' | 'current'): TrendResult =>
+                    ({ ...fixture(breakdown_value, 1), compare: true, compare_label }) as unknown as TrendResult
+
+                const insight: Partial<InsightModel> = {
+                    result: [
+                        make('zeta', 'current'),
+                        make('zeta', 'previous'),
+                        make('alpha', 'current'),
+                        make('alpha', 'previous'),
+                    ],
+                }
+
+                await expectLogic(logic, () => {
+                    insightVizDataLogic.findMounted(insightProps)?.actions.updateQuerySource(query)
+                    builtDataNodeLogic.actions.loadDataSuccess(insight)
+                }).toFinishAllListeners()
+
+                // Compare-mode pre-sort puts previous before current; Name mode then sorts by breakdown_value
+                // stably, so the previous/current pairing is preserved within each breakdown group.
+                const pairs = logic.values.indexedResults.map((r) => [r.breakdown_value, r.compare_label])
+                expect(pairs).toEqual([
+                    ['alpha', 'previous'],
+                    ['alpha', 'current'],
+                    ['zeta', 'previous'],
+                    ['zeta', 'current'],
+                ])
             })
         })
     })
