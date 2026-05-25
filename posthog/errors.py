@@ -24,6 +24,29 @@ class QueryErrorCategory(StrEnum):
     USER_ERROR = "user_error"
     ERROR = "error"
     QUERY_PERFORMANCE_ERROR = "query_performance_error"
+    QUERY_BUILD_BUG = "query_build_bug"
+
+
+# ClickHouse codes that imply the platform built bad SQL when no user HogQL is involved.
+QUERY_BUILD_BUG_CODES: frozenset[int] = frozenset(
+    {
+        6,  # CANNOT_PARSE_TEXT
+        36,  # BAD_ARGUMENTS
+        42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
+        43,  # ILLEGAL_TYPE_OF_ARGUMENT
+        46,  # UNKNOWN_FUNCTION
+        47,  # UNKNOWN_IDENTIFIER
+        53,  # TYPE_MISMATCH
+        60,  # UNKNOWN_TABLE
+        72,  # CANNOT_PARSE_NUMBER
+        184,  # ILLEGAL_AGGREGATION
+        215,  # NOT_AN_AGGREGATE
+        376,  # CANNOT_PARSE_UUID
+        386,  # NO_COMMON_TYPE
+        427,  # CANNOT_COMPILE_REGEXP
+        467,  # CANNOT_PARSE_BOOL
+    }
+)
 
 
 class InternalCHQueryError(ServerException):
@@ -162,9 +185,16 @@ def look_up_clickhouse_error_code_meta(error: ServerException) -> ErrorCodeMeta:
     return CLICKHOUSE_ERROR_CODE_LOOKUP[code]
 
 
-def classify_query_error(e: Exception) -> QueryErrorCategory:
-    """Classify a query execution exception into a high-level category for observability."""
+def classify_query_error(e: Exception, *, has_user_authored_hogql: bool | None = None) -> QueryErrorCategory:
+    """Classify a query execution exception into a high-level category for observability.
+
+    Pass `has_user_authored_hogql=False` to promote builder-bug ClickHouse codes
+    (`QUERY_BUILD_BUG_CODES`) to `QUERY_BUILD_BUG`. Default `None` preserves today's
+    behavior.
+    """
     if isinstance(e, ServerException):
+        if has_user_authored_hogql is False and e.code in QUERY_BUILD_BUG_CODES:
+            return QueryErrorCategory.QUERY_BUILD_BUG
         return look_up_clickhouse_error_code_meta(e).get_category()
 
     if isinstance(e, (ClickHouseAtCapacity, ConcurrencyLimitExceeded)):

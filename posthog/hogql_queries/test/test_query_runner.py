@@ -9,17 +9,22 @@ from unittest import mock
 
 from django.core.cache import cache
 
+from clickhouse_driver.errors import ServerException
 from parameterized import parameterized
 from pydantic import BaseModel
 from rest_framework.exceptions import ValidationError
 
 from posthog.schema import (
     BounceRatePageViewMode,
+    BreakdownFilter,
     CacheMissResponse,
     CurrencyCode,
     DataTableNode,
     DataVisualizationNode,
     EventsNode,
+    FunnelsFilter,
+    FunnelsQuery,
+    HogQLPropertyFilter,
     HogQLQuery,
     HogQLQueryModifiers,
     InCohortVia,
@@ -42,9 +47,11 @@ from posthog.hogql.constants import LimitContext
 from posthog.clickhouse.client.limit import ConcurrencyLimitExceeded
 from posthog.hogql_queries.insights.trends.trends_query_runner import TrendsQueryRunner
 from posthog.hogql_queries.query_runner import (
+    QUERY_EXECUTION_TOTAL,
     ExecutionMode,
     QueryRunner,
     get_query_runner,
+    query_uses_user_authored_hogql,
     shared_insights_execution_mode,
 )
 from posthog.hogql_queries.utils.query_date_range import QueryDateRange
@@ -501,10 +508,10 @@ class TestQueryRunner(BaseTest):
         runner = TestQueryRunner(query={"some_attr": "bla"}, team=self.team)
 
         before_success = QUERY_EXECUTION_TOTAL.labels(
-            query_type="TestQuery", category="success", error_type="none"
+            query_type="TestQuery", category="success", error_type="none", has_user_authored_hogql="false"
         )._value.get()
         before_failure = QUERY_EXECUTION_TOTAL.labels(
-            query_type="TestQuery", category="error", error_type="ValueError"
+            query_type="TestQuery", category="error", error_type="ValueError", has_user_authored_hogql="false"
         )._value.get()
         before_duration_sum = QUERY_EXECUTION_DURATION.labels(query_type="TestQuery")._sum.get()
 
@@ -515,12 +522,16 @@ class TestQueryRunner(BaseTest):
             runner.run(execution_mode=ExecutionMode.CALCULATE_BLOCKING_ALWAYS)
 
         assert (
-            QUERY_EXECUTION_TOTAL.labels(query_type="TestQuery", category="success", error_type="none")._value.get()
+            QUERY_EXECUTION_TOTAL.labels(
+                query_type="TestQuery", category="success", error_type="none", has_user_authored_hogql="false"
+            )._value.get()
             - before_success
             == success_delta
         )
         assert (
-            QUERY_EXECUTION_TOTAL.labels(query_type="TestQuery", category="error", error_type="ValueError")._value.get()
+            QUERY_EXECUTION_TOTAL.labels(
+                query_type="TestQuery", category="error", error_type="ValueError", has_user_authored_hogql="false"
+            )._value.get()
             - before_failure
             == failure_delta
         )
@@ -559,6 +570,29 @@ class TestQueryRunner(BaseTest):
         assert completed_kwargs["properties"].outcome == expected_outcome
         assert completed_kwargs["extra_properties"]["error_category"] == expected_error_category
 
+    def test_query_execution_metric_promotes_query_build_bug_category(self):
+        TestQueryRunner = self.setup_test_query_runner_class()
+
+        def calculate_raises(self):
+            raise ServerException("DB::Exception: synthetic UNKNOWN_IDENTIFIER", code=47)
+
+        TestQueryRunner.calculate = calculate_raises
+        runner = TestQueryRunner(query={"some_attr": "bla"}, team=self.team)
+
+        labels = {
+            "query_type": "TestQuery",
+            "category": "query_build_bug",
+            "error_type": "CHQueryErrorUnknownIdentifier",
+            "has_user_authored_hogql": "false",
+        }
+        before = QUERY_EXECUTION_TOTAL.labels(**labels)._value.get()
+
+        with pytest.raises(ServerException):
+            runner.run(execution_mode=ExecutionMode.CALCULATE_BLOCKING_ALWAYS)
+
+        after = QUERY_EXECUTION_TOTAL.labels(**labels)._value.get()
+        assert after - before == 1
+
     def test_query_execution_metrics_not_recorded_on_cache_hit(self):
         from posthog.hogql_queries.query_runner import QUERY_EXECUTION_DURATION, QUERY_EXECUTION_TOTAL
 
@@ -569,10 +603,10 @@ class TestQueryRunner(BaseTest):
             runner.run(execution_mode=ExecutionMode.CALCULATE_BLOCKING_ALWAYS)
 
         before_success = QUERY_EXECUTION_TOTAL.labels(
-            query_type="TestQuery", category="success", error_type="none"
+            query_type="TestQuery", category="success", error_type="none", has_user_authored_hogql="false"
         )._value.get()
         before_failure = QUERY_EXECUTION_TOTAL.labels(
-            query_type="TestQuery", category="error", error_type="ValueError"
+            query_type="TestQuery", category="error", error_type="ValueError", has_user_authored_hogql="false"
         )._value.get()
         before_duration_sum = QUERY_EXECUTION_DURATION.labels(query_type="TestQuery")._sum.get()
 
@@ -581,11 +615,15 @@ class TestQueryRunner(BaseTest):
             runner.run(execution_mode=ExecutionMode.RECENT_CACHE_CALCULATE_BLOCKING_IF_STALE)
 
         assert (
-            QUERY_EXECUTION_TOTAL.labels(query_type="TestQuery", category="success", error_type="none")._value.get()
+            QUERY_EXECUTION_TOTAL.labels(
+                query_type="TestQuery", category="success", error_type="none", has_user_authored_hogql="false"
+            )._value.get()
             == before_success
         )
         assert (
-            QUERY_EXECUTION_TOTAL.labels(query_type="TestQuery", category="error", error_type="ValueError")._value.get()
+            QUERY_EXECUTION_TOTAL.labels(
+                query_type="TestQuery", category="error", error_type="ValueError", has_user_authored_hogql="false"
+            )._value.get()
             == before_failure
         )
         assert QUERY_EXECUTION_DURATION.labels(query_type="TestQuery")._sum.get() == before_duration_sum
@@ -1140,3 +1178,58 @@ class TestSharedInsightsExecutionMode(BaseTest):
         last_refresh = None if last_refresh_offset is None else datetime.now(UTC) - last_refresh_offset
         result = shared_insights_execution_mode(execution_mode, last_refresh=last_refresh)
         self.assertEqual(result, expected_mode)
+
+
+class TestQueryUsesUserAuthoredHogQL(BaseTest):
+    @parameterized.expand(
+        [
+            ("plain_trends", TrendsQuery(series=[EventsNode(event="$pageview")]), False),
+            (
+                "hogql_property_filter",
+                TrendsQuery(
+                    series=[EventsNode(event="$pageview", properties=[HogQLPropertyFilter(type="hogql", key="1 = 1")])]
+                ),
+                True,
+            ),
+            (
+                "hogql_breakdown",
+                TrendsQuery(
+                    series=[EventsNode(event="$pageview")],
+                    breakdownFilter=BreakdownFilter(breakdown_type="hogql", breakdown="properties.x"),
+                ),
+                True,
+            ),
+            ("hogql_query", HogQLQuery(query="select 1"), True),
+            (
+                "hogql_series_math",
+                TrendsQuery(series=[EventsNode(event="$pageview", math="hogql", math_hogql="properties.revenue")]),
+                True,
+            ),
+            (
+                "funnel_hogql_aggregation",
+                FunnelsQuery(
+                    series=[EventsNode(event="a"), EventsNode(event="b")],
+                    funnelsFilter=FunnelsFilter(funnelAggregateByHogQL="properties.x"),
+                ),
+                True,
+            ),
+            (
+                "funnel_group_aggregation_is_structured",
+                FunnelsQuery(
+                    series=[EventsNode(event="a"), EventsNode(event="b")],
+                    funnelsFilter=FunnelsFilter(funnelAggregateByHogQL="$group_0"),
+                ),
+                False,
+            ),
+            (
+                "funnel_person_id_aggregation_is_structured",
+                FunnelsQuery(
+                    series=[EventsNode(event="a"), EventsNode(event="b")],
+                    funnelsFilter=FunnelsFilter(funnelAggregateByHogQL="person_id"),
+                ),
+                False,
+            ),
+        ]
+    )
+    def test_detects_user_authored_hogql(self, _name: str, query: Any, expected: bool) -> None:
+        assert query_uses_user_authored_hogql(query) is expected

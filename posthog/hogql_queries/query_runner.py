@@ -1,3 +1,4 @@
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -121,7 +122,7 @@ logger = structlog.get_logger(__name__)
 QUERY_EXECUTION_TOTAL = Counter(
     "posthog_query_execution_total",
     "Query executions by category",
-    labelnames=["query_type", "category", "error_type"],
+    labelnames=["query_type", "category", "error_type", "has_user_authored_hogql"],
 )
 
 QUERY_EXECUTION_DURATION = Histogram(
@@ -143,6 +144,43 @@ SURVEY_QUERY_EXECUTION_DURATION = Histogram(
     labelnames=["query_type", "query_name"],
     buckets=[0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0],
 )
+
+
+_GROUP_AGGREGATION_RE = re.compile(r"^\$group_\d+$")
+
+
+def query_uses_user_authored_hogql(query: Any) -> bool | None:
+    """Whether the query contains a user-authored HogQL expression — a HogQL property
+    filter, breakdown, funnel aggregation, or series math. Returns None if the walk
+    fails so callers can distinguish "unknown" from a confident False (the
+    QUERY_BUILD_BUG promotion in classify_query_error only fires on explicit False)."""
+
+    def _walk(obj: Any) -> bool:
+        if isinstance(obj, dict):
+            if obj.get("type") == "hogql" or obj.get("kind") == "HogQLQuery":
+                return True
+            if obj.get("breakdown_type") == "hogql":
+                return True
+            # math_hogql is only meaningful alongside math == "hogql"; checking
+            # it standalone would false-positive on stale data where math changed.
+            if obj.get("math") == "hogql":
+                return True
+            # funnelAggregateByHogQL holds a user-authored HogQL expression, except
+            # for the structured "person_id" / "$group_N" values picked from a dropdown.
+            funnel_agg = obj.get("funnelAggregateByHogQL")
+            if funnel_agg and funnel_agg != "person_id" and not _GROUP_AGGREGATION_RE.match(funnel_agg):
+                return True
+            return any(_walk(value) for value in obj.values())
+        if isinstance(obj, list):
+            return any(_walk(item) for item in obj)
+        return False
+
+    try:
+        return _walk(query.model_dump())
+    except Exception:
+        logger.warning("query_uses_user_authored_hogql failed", exc_info=True)
+        return None
+
 
 EXTENDED_CACHE_AGE = timedelta(days=1)
 
@@ -1651,26 +1689,38 @@ class QueryRunner(ABC, Generic[Q, R, CR]):
             self.modifiers.useMaterializedViews = True
 
         query_type = getattr(self.query, "kind", "Other")
+        has_user_authored_hogql = query_uses_user_authored_hogql(self.query)
+        has_user_authored_hogql_label = (
+            "unknown" if has_user_authored_hogql is None else str(has_user_authored_hogql).lower()
+        )
         survey_query_metric_labels = get_survey_query_metric_labels(self.query)
         query_start = perf_counter()
         try:
             query_result, query_duration_ms = self._call_with_rate_limits(dashboard_id=dashboard_id)
-            QUERY_EXECUTION_TOTAL.labels(query_type=query_type, category="success", error_type="none").inc()
+            QUERY_EXECUTION_TOTAL.labels(
+                query_type=query_type,
+                category="success",
+                error_type="none",
+                has_user_authored_hogql=has_user_authored_hogql_label,
+            ).inc()
             if survey_query_metric_labels:
                 SURVEY_QUERY_EXECUTION_TOTAL.labels(
                     **survey_query_metric_labels, category="success", error_type="none"
                 ).inc()
         except Exception as e:
+            category = classify_query_error(e, has_user_authored_hogql=has_user_authored_hogql)
+            error_type = clickhouse_error_type(e)
             QUERY_EXECUTION_TOTAL.labels(
                 query_type=query_type,
-                category=classify_query_error(e),
-                error_type=clickhouse_error_type(e),
+                category=category,
+                error_type=error_type,
+                has_user_authored_hogql=has_user_authored_hogql_label,
             ).inc()
             if survey_query_metric_labels:
                 SURVEY_QUERY_EXECUTION_TOTAL.labels(
                     **survey_query_metric_labels,
-                    category=classify_query_error(e),
-                    error_type=clickhouse_error_type(e),
+                    category=category,
+                    error_type=error_type,
                 ).inc()
             raise
         finally:
