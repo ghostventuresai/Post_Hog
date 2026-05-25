@@ -307,11 +307,24 @@ class QueryInfo:
 
 @dataclass
 class LazyComputationResult:
-    """Result of executing lazy computation jobs."""
+    """Result of executing lazy computation jobs.
+
+    `job_ids` is the full set covering the requested range (cache hits + any
+    fresh writes), suitable for the downstream `WHERE job_id IN (…)` SELECT.
+
+    `inserted_job_ids` is the subset that **this** executor created+wrote
+    during the current call — i.e., the ones whose parts may still be
+    propagating across Replicated*MergeTree replicas. Callers that read
+    through the Distributed table immediately after this returns can use
+    this to decide whether to wait for replication; `len(job_ids)` cannot
+    serve that purpose because it includes pre-existing READY jobs from
+    prior requests, which replicated long ago and need no wait.
+    """
 
     ready: bool
     job_ids: list[uuid.UUID]
     errors: list[str] = field(default_factory=list)
+    inserted_job_ids: list[uuid.UUID] = field(default_factory=list)
 
 
 def compute_query_hash(query_info: QueryInfo) -> str:
@@ -687,6 +700,11 @@ class LazyComputationExecutor:
         subscribed_ids: set[uuid.UUID] = set()
         pubsub: redis_lib.client.PubSub | None = None
         jobs_created = 0
+        # IDs of jobs this executor INSERTed successfully (status flipped READY)
+        # during this call. Surfaced to the caller via `LazyComputationResult.
+        # inserted_job_ids` so they can gate replication-visibility waits on
+        # the exact subset of writes that hasn't propagated yet.
+        inserted_job_ids: list[uuid.UUID] = []
         waited_job_ids: set[uuid.UUID] = set()
 
         had_ready_at_start: bool | None = None
@@ -758,6 +776,7 @@ class LazyComputationExecutor:
                             new_job.save()
                             publish_job_completion(new_job.id, "ready")
                             jobs_created += 1
+                            inserted_job_ids.append(new_job.id)
                             logger.info(
                                 "lazy_computation.job_completed",
                                 job_id=str(new_job.id),
@@ -858,7 +877,11 @@ class LazyComputationExecutor:
         final_jobs = find_existing_jobs(team, query_hash, start, end)
         final_fresh = self._filter_by_freshness(final_jobs)
         final_ready = filter_overlapping_jobs([j for j in final_fresh if j.status == PreaggregationJob.Status.READY])
-        result = LazyComputationResult(ready=True, job_ids=[j.id for j in final_ready])
+        result = LazyComputationResult(
+            ready=True,
+            job_ids=[j.id for j in final_ready],
+            inserted_job_ids=inserted_job_ids,
+        )
         _log_execution("success", result)
         return result
 
