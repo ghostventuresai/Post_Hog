@@ -20,6 +20,7 @@ from posthog.temporal.data_imports.pipelines.common.extract import (
     finalize_desc_sort_incremental_value,
     handle_reset_or_full_refresh,
     reset_rows_synced_if_needed,
+    run_pre_write_defensive_compact,
     setup_row_tracking_with_billing_check,
     should_check_shutdown,
     update_incremental_field_values,
@@ -212,6 +213,16 @@ class PipelineNonDLT(Generic[ResumableData]):
 
             # If the schema has no DWH table, it's a first ever sync
             is_first_ever_sync: bool = self._table is None
+
+            # Defensive pre-write compaction so a sync that arrived at a
+            # fragmented Delta target cleans up before adding more small
+            # files. Skipped cheaply when the table is healthy. Shared
+            # implementation lives in `extract.run_pre_write_defensive_compact`
+            # so the v3 pipeline picks up the same behaviour.
+            if not is_first_ever_sync:
+                await run_pre_write_defensive_compact(
+                    self._delta_table_helper, self._schema, self._resource, self._logger
+                )
 
             async for item in async_iterate(self._resource.items()):
                 py_table = None
