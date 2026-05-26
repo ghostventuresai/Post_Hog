@@ -28,7 +28,7 @@ from rest_framework.request import Request
 from webauthn.helpers import base64url_to_bytes
 from zxcvbn import zxcvbn
 
-from posthog.clickhouse.query_tagging import tag_queries
+from posthog.clickhouse.query_tagging import AccessMethod, tag_queries
 from posthog.constants import AvailableFeature
 from posthog.helpers.two_factor_session import enforce_two_factor
 from posthog.jwt import PosthogJwtAudience, decode_jwt
@@ -331,15 +331,12 @@ class PersonalAPIKeyAuthentication(authentication.BaseAuthentication):
         return cls.keyword
 
 
-def _extract_phs_token(request: Union[HttpRequest, Request], auth_kind: str) -> Optional[str]:
+def _extract_phs_token(request: Union[HttpRequest, Request], allow_body_token: bool = False) -> Optional[str]:
     """
     Find a `phs_` secret token in the request. Checks the Authorization header first
     (Bearer scheme), then the request body field `secret_api_key`. Used by both
     TeamSecretTokenAuthentication (legacy Team.secret_api_token) and
     ProjectSecretAPIKeyAuthentication (PSAK model).
-
-    `auth_kind` is the value used to label the body-token counter so the two auth
-    paths can be told apart on dashboards. Pass `"team_secret_token"` or `"psak"`.
     """
     if "authorization" in request.headers:
         authorization_match = re.match(r"^Bearer\s+(.+)$", request.headers["authorization"])
@@ -352,22 +349,15 @@ def _extract_phs_token(request: Union[HttpRequest, Request], auth_kind: str) -> 
     if not isinstance(request, Request):
         request = Request(request)
 
-    data = request.data
-    if isinstance(data, dict):
-        candidate = data.get(SECRET_API_KEY_BODY_FIELD)
-        if isinstance(candidate, str) and _SECRET_API_KEY_RE.match(candidate):
-            SECRET_API_KEY_BODY_COUNTER.labels(auth_kind=auth_kind).inc()
-            return candidate
+    if allow_body_token:
+        data = request.data
+        if isinstance(data, dict):
+            candidate = data.get(SECRET_API_KEY_BODY_FIELD)
+            if isinstance(candidate, str) and _SECRET_API_KEY_RE.match(candidate):
+                SECRET_API_KEY_BODY_COUNTER.inc()
+                return candidate
 
     return None
-
-
-def body_without_auth_fields(request: Union[HttpRequest, Request]) -> dict:
-    """Return the request body as a dict with auth-only fields stripped, or {} for non-dict bodies."""
-    data = getattr(request, "data", None)
-    if not isinstance(data, dict):
-        return {}
-    return {k: v for k, v in data.items() if k != SECRET_API_KEY_BODY_FIELD}
 
 
 class TeamSecretTokenUser(SyntheticUser):
@@ -400,7 +390,7 @@ class TeamSecretTokenAuthentication(authentication.BaseAuthentication):
     keyword = "Bearer"
 
     def authenticate(self, request: Union[HttpRequest, Request]) -> Optional[tuple[Any, None]]:
-        secret_api_token = _extract_phs_token(request, auth_kind="team_secret_token")
+        secret_api_token = _extract_phs_token(request, allow_body_token=True)
 
         if not secret_api_token:
             return None
@@ -411,6 +401,12 @@ class TeamSecretTokenAuthentication(authentication.BaseAuthentication):
 
             if team is None:
                 return None
+
+            tag_queries(
+                user_id=None,
+                team_id=team.id,
+                access_method=AccessMethod.TEAM_SECRET_TOKEN,
+            )
 
             return (TeamSecretTokenUser(team), None)
         except Team.DoesNotExist:
@@ -448,7 +444,7 @@ class ProjectSecretAPIKeyAuthentication(authentication.BaseAuthentication):
     def authenticate(self, request: Union[HttpRequest, Request]) -> Optional[tuple[Any, None]]:
         from posthog.models.project_secret_api_key import ProjectSecretAPIKey, find_project_secret_api_key
 
-        token = _extract_phs_token(request, auth_kind="psak")
+        token = _extract_phs_token(request, allow_body_token=False)
         if not token:
             return None
 
@@ -463,6 +459,15 @@ class ProjectSecretAPIKeyAuthentication(authentication.BaseAuthentication):
             ProjectSecretAPIKey.objects.filter(pk=psak.pk).update(last_used_at=now)
 
         self.project_secret_api_key = psak
+
+        tag_queries(
+            user_id=None,
+            team_id=psak.team_id,
+            access_method=AccessMethod.PROJECT_SECRET_API_KEY,
+            api_key_mask=psak.mask_value,
+            api_key_label=psak.label,
+        )
+
         return (ProjectSecretAPIKeyUser(psak), None)
 
     @classmethod

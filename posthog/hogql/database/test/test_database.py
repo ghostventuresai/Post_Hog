@@ -2649,3 +2649,14 @@ class TestDatabase(BaseTest, QueryMatchingTest):
 
         user_path.assert_not_called()
         anon_path.assert_called_once()
+
+    def test_create_for_with_real_user_uses_user_rbac(self):
+        with (
+            patch("posthoganalytics.feature_enabled", return_value=True),
+            patch.object(Database, "_filter_system_tables_for_user") as user_path,
+            patch.object(Database, "_filter_all_scoped_system_tables") as anon_path,
+        ):
+            Database.create_for(team=self.team, user=self.user)
+
+        user_path.assert_called_once()
+        anon_path.assert_not_called()

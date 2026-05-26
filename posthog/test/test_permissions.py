@@ -479,6 +479,23 @@ class TestProjectSecretAPIKeyAPIScopePermission(SimpleTestCase):
 
         self.assertIn("only supported on project-based endpoints", str(ctx.exception.detail))
 
+    def test_team_check_does_not_exist_denies(self):
+        from rest_framework.exceptions import PermissionDenied
+
+        from posthog.models.team import Team
+
+        request, _ = self._make_psak_request()
+
+        class StaleTeamView:
+            @property
+            def team(self):
+                raise Team.DoesNotExist
+
+        with self.assertRaises(PermissionDenied) as ctx:
+            self.permission._check_project_secret_api_key_team(request, StaleTeamView())
+
+        self.assertIn("only supported on project-based endpoints", str(ctx.exception.detail))
+
 
 class TestTeamMemberAccessPermission(BaseTest):
     """Direct unit tests for TeamMemberAccessPermission.has_permission method"""

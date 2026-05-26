@@ -69,28 +69,7 @@ class TestEndpointViewSetPSAKAuth(ClickhouseTestMixin, APIBaseTest):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
-
-    @parameterized.expand(
-        [
-            ("empty_list", "[]"),
-            ("non_empty_list", "[1, 2, 3]"),
-            ("string", '"hello"'),
-            ("number", "42"),
-            ("null", "null"),
-        ]
-    )
-    def test_psak_run_with_non_dict_body_returns_200(self, _name, raw_body):
-        token, _ = _make_psak(self.team, label=f"non-dict-{_name}")
-
-        response = self.client.post(
-            f"/api/projects/{self.team.id}/endpoints/my_endpoint/run/",
-            data=raw_body,
-            content_type="application/json",
-            **self._auth_headers(token),
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(response.status_code, status.HTTP_401, response.content)
 
     def test_psak_can_run_endpoint_with_hogql_access_control_on(self):
         # Without the FF mock, the test path skips the access-control branch
@@ -126,6 +105,7 @@ class TestEndpointViewSetPSAKAuth(ClickhouseTestMixin, APIBaseTest):
             ("materialization_status", "GET", "my_endpoint/materialization_status/"),
             ("materialization_preview", "POST", "my_endpoint/materialization_preview/"),
             ("versions", "GET", "my_endpoint/versions/"),
+            ("last_execution_times", "POST", "last_execution_times/"),
         ]
     )
     def test_psak_blocked_on_non_run_actions(self, _name, method, path_suffix):

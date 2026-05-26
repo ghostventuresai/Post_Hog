@@ -58,13 +58,17 @@ from posthog.api.services.query import process_query_model
 from posthog.api.shared import UserBasicSerializer
 from posthog.api.tagged_item import TaggedItemViewSetMixin, cleanup_orphan_tags, set_tags_on_object
 from posthog.api.utils import action
-from posthog.auth import ProjectSecretAPIKeyAuthentication, body_without_auth_fields
+from posthog.auth import ProjectSecretAPIKeyAuthentication
 from posthog.clickhouse.client.connection import Workload
 from posthog.clickhouse.client.limit import ConcurrencyLimitExceeded
 from posthog.clickhouse.query_tagging import Feature, Product, get_query_tag_value, tag_queries
 from posthog.ducklake.common import get_duckgres_server_for_organization
 from posthog.errors import ExposedCHQueryError
-from posthog.event_usage import get_request_analytics_properties, report_user_action
+from posthog.event_usage import (
+    get_request_analytics_properties,
+    groups as event_usage_groups,
+    report_user_action,
+)
 from posthog.exceptions_capture import capture_exception
 from posthog.hogql_queries.hogql_query_runner import HogQLQueryRunner
 from posthog.hogql_queries.insights.utils.breakdowns import BREAKDOWN_NULL_STRING_LABEL, BREAKDOWN_OTHER_STRING_LABEL
@@ -78,6 +82,7 @@ from posthog.models.activity_logging.activity_log import (
     log_activity,
 )
 from posthog.schema_migrations.upgrade import upgrade
+from posthog.synthetic_user import SyntheticUser
 from posthog.types import InsightQueryNode
 
 from products.data_modeling.backend.models.datawarehouse_saved_query import DataWarehouseSavedQuery
@@ -2041,24 +2046,24 @@ class EndpointViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, TaggedItemView
         return DashboardFilter(date_from=date_from, date_to=date_to, properties=properties)
 
     def _should_use_ducklake(self, endpoint: Endpoint, version: EndpointVersion | None) -> bool:
-        if version is None:
-            return False
-        if version.query.get("kind") != "HogQLQuery":
+        if version is None or version.query.get("kind") != "HogQLQuery":
             return False
 
-        user_email = getattr(self.request.user, "email", "") if self.request else ""
         ff_result = posthoganalytics.feature_enabled(
             "endpoints-ducklake-execution",
-            user_email,
-            person_properties={"email": str(user_email)},
+            str(self.team.uuid),
+            groups={
+                "organization": str(self.team.organization_id),
+                "project": str(self.team.id),
+            },
+            group_properties={
+                "organization": {"id": str(self.team.organization_id)},
+                "project": {"id": str(self.team.id)},
+            },
             only_evaluate_locally=True,
             send_feature_flag_events=False,
         )
-        logger.info(
-            "Ducklake FF evaluation",
-            endpoint_name=endpoint.name,
-            ff_result=ff_result,
-        )
+        logger.info("Ducklake FF evaluation", endpoint_name=endpoint.name, ff_result=ff_result)
         if not ff_result:
             return False
 
@@ -2207,24 +2212,36 @@ class EndpointViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, TaggedItemView
     def run(self, request: Request, name=None, *args, **kwargs) -> Response:
         """Execute endpoint with optional parameters."""
         endpoint = get_object_or_404(Endpoint, team=self.team, name=name, is_active=True, deleted=False)
-        data = self.get_model(body_without_auth_fields(request), EndpointRunRequest)
+        data = self.get_model(request.data, EndpointRunRequest)
 
-        # Track endpoint execution for deprecation monitoring
-        report_user_action(
-            user=cast(User, request.user),
-            event="endpoint executed",
-            properties={
-                "endpoint_id": str(endpoint.id),
-                "endpoint_name": endpoint.name,
-                "has_filters_override": bool(data.filters_override),
-                "has_variables": bool(data.variables),
-                "has_limit": data.limit is not None,
-                "has_offset": data.offset is not None,
-                "refresh_mode": data.refresh.value if data.refresh else None,
-            },
-            team=self.team,
-            request=request,
-        )
+        # report_user_action drops non-User principals; capture synthetic users explicitly.
+        execution_properties = {
+            "endpoint_id": str(endpoint.id),
+            "endpoint_name": endpoint.name,
+            "has_filters_override": bool(data.filters_override),
+            "has_variables": bool(data.variables),
+            "has_limit": data.limit is not None,
+            "has_offset": data.offset is not None,
+            "refresh_mode": data.refresh.value if data.refresh else None,
+        }
+        if isinstance(request.user, SyntheticUser):
+            posthoganalytics.capture(
+                distinct_id=request.user.distinct_id,
+                event="endpoint executed",
+                properties={
+                    **get_request_analytics_properties(request),
+                    **execution_properties,
+                },
+                groups=event_usage_groups(self.team.organization, self.team),
+            )
+        else:
+            report_user_action(
+                user=cast(User, request.user),
+                event="endpoint executed",
+                properties=execution_properties,
+                team=self.team,
+                request=request,
+            )
 
         version_number, err = self._parse_int_param(data.version, request.query_params.get("version"), "version")
         if err:

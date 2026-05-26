@@ -151,10 +151,9 @@ from posthog.hogql.timings import HogQLTimings
 from posthog.exceptions_capture import capture_exception
 from posthog.models.group_type_mapping import get_group_types_for_project
 from posthog.models.team.team import WeekStartDay
-
-from products.data_warehouse.backend.sync_status import get_warehouse_sync_warnings
 from posthog.synthetic_user import SyntheticUser
 
+from products.data_warehouse.backend.sync_status import get_warehouse_sync_warnings
 from products.revenue_analytics.backend.views import RevenueAnalyticsBaseView
 from products.revenue_analytics.backend.views.orchestrator import build_all_revenue_analytics_views
 from products.warehouse_sources.backend.models.external_data_job import ExternalDataJob

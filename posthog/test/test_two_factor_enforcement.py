@@ -13,7 +13,12 @@ from django.test import RequestFactory, TestCase
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient, APIRequestFactory
 
-from posthog.auth import PersonalAPIKeyAuthentication, SessionAuthentication, TeamSecretTokenAuthentication
+from posthog.auth import (
+    PersonalAPIKeyAuthentication,
+    ProjectSecretAPIKeyAuthentication,
+    SessionAuthentication,
+    TeamSecretTokenAuthentication,
+)
 from posthog.helpers.two_factor_session import (
     TWO_FACTOR_ENFORCEMENT_FROM_DATE,
     clear_two_factor_session_flags,
@@ -441,6 +446,13 @@ class TestAPIAuthenticationTwoFactorBypass(TestCase):
     def test_team_secret_token_authentication_bypasses_two_factor(self):
         auth = TeamSecretTokenAuthentication()
         request = self.factory.get("/api/users/@me/")
+
+        result = auth.authenticate(request)
+        self.assertIsNone(result)
+
+    def test_project_secret_api_key_authentication_bypasses_two_factor(self):
+        auth = ProjectSecretAPIKeyAuthentication()
+        request = self.factory.get("/api/projects/1/endpoints/my_endpoint/run/")
 
         result = auth.authenticate(request)
         self.assertIsNone(result)

@@ -40,9 +40,11 @@ from posthog.api.utils import ClassicBehaviorBooleanFieldSerializer, ErrorRespon
 from posthog.approvals.decorators import approval_gate
 from posthog.approvals.mixins import ApprovalHandlingMixin
 from posthog.auth import (
+    SECRET_API_KEY_BODY_FIELD,
     JwtAuthentication,
     OAuthAccessTokenAuthentication,
     PersonalAPIKeyAuthentication,
+    ProjectSecretAPIKeyAuthentication,
     SessionAuthentication,
     TeamSecretTokenAuthentication,
 )
@@ -303,6 +305,7 @@ LOCAL_EVALUATION_PERSONAL_API_KEY_SOURCE_COUNTER = Counter(
 
 _AUTH_METHOD_BY_CLASS: dict[type, str] = {
     TeamSecretTokenAuthentication: "secret_api_key",
+    ProjectSecretAPIKeyAuthentication: "project_secret_api_key",
     PersonalAPIKeyAuthentication: "personal_api_key",
     OAuthAccessTokenAuthentication: "oauth",
     JwtAuthentication: "jwt",
@@ -3458,7 +3461,7 @@ class FeatureFlagViewSet(
         # so Rust (header-only) would still authenticate fine — no need to count those.
         auth_header = request.headers.get("authorization", "")
         if (
-            request.data.get("secret_api_key")
+            request.data.get(SECRET_API_KEY_BODY_FIELD)
             and isinstance(request.successful_authenticator, TeamSecretTokenAuthentication)
             and not re.match(r"^Bearer\s+phs_[a-zA-Z0-9]+$", auth_header)
         ):

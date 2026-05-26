@@ -488,35 +488,35 @@ class APIScopePermission(ScopeBasePermission):
 
         # API Scopes apply to PersonalAPIKeyAuthentication and OAuthAccessTokenAuthentication
 
-        if isinstance(request.successful_authenticator, PersonalAPIKeyAuthentication):
-            key_scopes = request.successful_authenticator.personal_api_key.scopes
-        elif isinstance(request.successful_authenticator, OAuthAccessTokenAuthentication):
+        authenticator = request.successful_authenticator
+        is_psak = isinstance(authenticator, ProjectSecretAPIKeyAuthentication)
+
+        if isinstance(authenticator, PersonalAPIKeyAuthentication):
+            key_scopes = authenticator.personal_api_key.scopes
+        elif isinstance(authenticator, OAuthAccessTokenAuthentication):
             # OAuth tokens store scopes as space-separated string
-            token_scope_string = request.successful_authenticator.access_token.scope
+            token_scope_string = authenticator.access_token.scope
             key_scopes = token_scope_string.split() if token_scope_string else []
             # OAuth tokens with no scopes should not have access
             if not key_scopes:
                 self.message = "OAuth token has no scopes and cannot access this resource"
                 return False
-        elif isinstance(request.successful_authenticator, ProjectSecretAPIKeyAuthentication):
+        elif is_psak:
             psak_allowed_actions = getattr(view, "psak_allowed_actions", self.psak_allowed_actions)
             if view.action not in psak_allowed_actions:
                 self.message = "This action does not support project secret API key access"
                 return False
-            key_scopes = request.successful_authenticator.project_secret_api_key.scopes or []
+            key_scopes = authenticator.project_secret_api_key.scopes or []
         else:
             return True
 
         required_scopes = self._get_required_scopes(request, view)
 
         if not required_scopes:
-            if isinstance(request.successful_authenticator, ProjectSecretAPIKeyAuthentication):
-                self.message = "This action does not support project secret API key access"
-            else:
-                self.message = "This action does not support personal API key access"
+            self.message = "This action does not support personal API key access"
             return False
 
-        if isinstance(request.successful_authenticator, ProjectSecretAPIKeyAuthentication):
+        if is_psak:
             self._check_project_secret_api_key_team(request, view)
         else:
             self.check_team_and_org_permissions(request, view)
