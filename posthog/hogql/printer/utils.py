@@ -24,11 +24,14 @@ from posthog.hogql.workload import WorkloadCollector
 
 from posthog.clickhouse.workload import Workload
 from posthog.models.team import Team
+from posthog.models.user import User
 
 from products.access_control.backend.property_access_control import get_restricted_properties_for_team
 
 
-def to_printed_hogql(query: ast.Expr, team: Team, modifiers: HogQLQueryModifiers | None = None) -> str:
+def to_printed_hogql(
+    query: ast.Expr, team: Team, modifiers: HogQLQueryModifiers | None = None, user: User | None = None
+) -> str:
     """Prints the HogQL query without mutating the node"""
     return prepare_and_print_ast(
         clone_expr(query),
@@ -37,6 +40,7 @@ def to_printed_hogql(query: ast.Expr, team: Team, modifiers: HogQLQueryModifiers
             team_id=team.pk,
             enable_select_queries=True,
             modifiers=create_default_modifiers_for_team(team, modifiers),
+            user=user,
         ),
         pretty=True,
     )[0]

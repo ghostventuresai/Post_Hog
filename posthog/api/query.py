@@ -20,6 +20,7 @@ from posthog.schema import (
     HogQLQuery,
     HogQLQueryModifiers,
     LimitContext as SchemaLimitContext,
+    ProductKey,
     QueryRequest,
     QueryResponseAlternative,
     QueryStatusResponse,
@@ -35,17 +36,14 @@ from posthog.hogql.metadata import enrich_hogql_validation_error
 from posthog import settings
 from posthog.api.documentation import _FallbackSerializer, extend_schema
 from posthog.api.mixins import PydanticModelMixin
-from posthog.api.monitoring import (
-    Feature as MonitoringFeature,
-    monitor,
-)
+from posthog.api.monitoring import Feature, monitor
 from posthog.api.query_coalescer import QueryCoalescingMixin
 from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.api.services.query import process_query_model
 from posthog.api.utils import action, is_async_query, is_insight_actors_options_query, is_insight_actors_query
 from posthog.clickhouse.client.execute_async import cancel_query, get_query_status
 from posthog.clickhouse.client.limit import ConcurrencyLimitExceeded
-from posthog.clickhouse.query_tagging import get_query_tag_value, get_query_tags, tag_queries
+from posthog.clickhouse.query_tagging import Product, get_query_tag_value, get_query_tags, tag_queries
 from posthog.constants import AvailableFeature
 from posthog.errors import ExposedCHQueryError, InternalCHQueryError
 from posthog.event_usage import get_request_analytics_properties, report_user_or_team_action
@@ -78,6 +76,21 @@ QUERY_VALIDATION_ERROR_TOTAL = Counter(
     "Query validation failures returned from the query API.",
     labelnames=["query_type", "validation_code"],
 )
+
+
+# Scene -> tags to apply. The scene is set by the frontend in the query payload's
+# `tags.scene` (see addTags in dataNodeLogic.ts). Add entries as new scenes need specific
+# tagging. Scenes not listed here stay untagged and trip UntaggedQueryError in DEBUG,
+# which is the signal to register them.
+_SCENE_TO_TAGS: dict[str, dict[str, Product | ProductKey | Feature]] = {
+    "Cohort": {"product": ProductKey.COHORTS, "feature": Feature.COHORT},
+    "Insight": {"product": ProductKey.PRODUCT_ANALYTICS, "feature": Feature.QUERY},
+}
+
+
+def _infer_query_tags(query: BaseModel) -> dict[str, Product | ProductKey | Feature]:
+    scene = getattr(getattr(query, "tags", None), "scene", None) or ""
+    return _SCENE_TO_TAGS.get(scene, {})
 
 
 def _extract_validation_code(error: ValidationError) -> str:
@@ -167,7 +180,7 @@ class QueryViewSet(QueryCoalescingMixin, TeamAndOrgViewSetMixin, PydanticModelMi
             200: QueryResponseAlternative,
         },
     )
-    @monitor(feature=MonitoringFeature.QUERY, endpoint="query", method="POST")
+    @monitor(feature=Feature.QUERY, endpoint="query", method="POST")
     def create(self, request: Request, *args, **kwargs) -> Response:
         self._validate_query_kind(request, kwargs.get("query_kind"))
         start_time = perf_counter()
@@ -181,6 +194,13 @@ class QueryViewSet(QueryCoalescingMixin, TeamAndOrgViewSetMixin, PydanticModelMi
                 data, self.team, data.client_query_id, request.user
             )
 
+            # Tag product and feature based on the frontend-supplied `tags.scene`. A per-query
+            # `tags.productKey` or a product-specific runner can still override this inside
+            # QueryRunner.run or QueryRunner.calculate before sync_execute fires. Scenes not
+            # registered in `_infer_query_tags` stay untagged and surface as
+            # UntaggedQueryError in DEBUG, which is the signal to add them.
+            if inferred_tags := _infer_query_tags(query):
+                tag_queries(**inferred_tags)
             self._tag_client_query_id(client_query_id)
             analytics_props = get_request_analytics_properties(request)
             query_dict = query.model_dump()
@@ -290,7 +310,7 @@ class QueryViewSet(QueryCoalescingMixin, TeamAndOrgViewSetMixin, PydanticModelMi
         parameters=[OpenApiParameter("id", OpenApiTypes.STR, OpenApiParameter.PATH)],
         responses={200: QueryStatusResponse},
     )
-    @monitor(feature=MonitoringFeature.QUERY, endpoint="query", method="GET")
+    @monitor(feature=Feature.QUERY, endpoint="query", method="GET")
     def retrieve(self, request: Request, pk=None, *args, **kwargs) -> JsonResponse:
         show_progress: bool = request.query_params.get("show_progress", False) == "true"
         show_progress = (
@@ -321,7 +341,7 @@ class QueryViewSet(QueryCoalescingMixin, TeamAndOrgViewSetMixin, PydanticModelMi
             204: OpenApiResponse(description="Query cancelled"),
         },
     )
-    @monitor(feature=MonitoringFeature.QUERY, endpoint="query", method="DELETE")
+    @monitor(feature=Feature.QUERY, endpoint="query", method="DELETE")
     def destroy(self, request, pk=None, *args, **kwargs):
         dequeue_only = request.query_params.get("dequeue_only", False) == "true"
         message = cancel_query(self.team.pk, pk, dequeue_only=dequeue_only)

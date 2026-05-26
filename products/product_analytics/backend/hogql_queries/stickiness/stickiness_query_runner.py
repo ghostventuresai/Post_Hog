@@ -306,7 +306,9 @@ class StickinessQueryRunner(AnalyticsQueryRunner[StickinessQueryResponse]):
 
     def _calculate(self) -> StickinessQueryResponse:
         queries = self.to_queries()
-        response_hogql = get_response_hogql(queries, team=self.team, timings=self.timings, modifiers=self.modifiers)
+        response_hogql = get_response_hogql(
+            queries, team=self.team, timings=self.timings, modifiers=self.modifiers, user=self.user
+        )
 
         res = []
         timings = []

@@ -883,7 +883,7 @@ class PathsQueryRunner(AnalyticsQueryRunner[PathsQueryResponse]):
 
     def _calculate(self) -> PathsQueryResponse:
         query = self.to_query()
-        hogql = to_printed_hogql(query, self.team)
+        hogql = to_printed_hogql(query, self.team, user=self.user)
 
         response = execute_hogql_query(
             query_type="PathsQuery",

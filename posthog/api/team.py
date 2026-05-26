@@ -222,9 +222,11 @@ TEAM_CONFIG_FIELDS = (
     "conversations_enabled",
     "conversations_settings",
     "proactive_tasks_enabled",
+    "can_query_across_organization_projects",
 )
 
 TEAM_CONFIG_FIELDS_SET = set(TEAM_CONFIG_FIELDS)
+ORG_ADMIN_ONLY_TEAM_CONFIG_FIELDS = {"can_query_across_organization_projects"}
 
 TEAM_CONFIG_MEMBER_FIELDS = (
     "completed_snippet_onboarding",
@@ -1534,13 +1536,20 @@ class TeamViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.Mo
         # Return early for non-actions (e.g. OPTIONS)
         if self.action:
             if self.action == "create":
-                if "is_demo" not in self.request.data or not self.request.data["is_demo"]:
+                request_fields = set(self.request.data.keys())
+                if request_fields.intersection(ORG_ADMIN_ONLY_TEAM_CONFIG_FIELDS):
+                    permissions.append(OrganizationAdminWritePermissions)
+                elif "is_demo" not in self.request.data or not self.request.data["is_demo"]:
                     permissions.append(OrganizationAdminWritePermissions)
                 else:
                     permissions.append(OrganizationMemberPermissions)
             elif self.action != "list":
                 # Skip TeamMemberAccessPermission for list action, as list is serialized with limited TeamBasicSerializer
                 permissions.append(TeamMemberLightManagementPermission)
+                if self.action in ("update", "partial_update") and set(self.request.data.keys()).intersection(
+                    ORG_ADMIN_ONLY_TEAM_CONFIG_FIELDS
+                ):
+                    permissions.append(OrganizationAdminWritePermissions)
 
         return [permission() for permission in permissions]
 

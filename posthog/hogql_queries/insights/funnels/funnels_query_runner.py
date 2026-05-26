@@ -61,7 +61,7 @@ class FunnelsQueryRunner(AnalyticsQueryRunner[FunnelsQueryResponse]):
             timings=timings,
             modifiers=modifiers,
             limit_context=limit_context,
-            user=user,
+            user=self.user,
         )
 
     def validators(self) -> Sequence[QueryValidationRule[FunnelsQuery]]:
@@ -101,7 +101,7 @@ class FunnelsQueryRunner(AnalyticsQueryRunner[FunnelsQueryResponse]):
         timings = []
 
         # TODO: can we get this from execute_hogql_query as well?
-        hogql = to_printed_hogql(query, self.team)
+        hogql = to_printed_hogql(query, self.team, user=self.user)
 
         response = execute_hogql_query(
             query_type="FunnelsQuery",

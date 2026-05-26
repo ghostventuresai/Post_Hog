@@ -31,8 +31,8 @@ class QueryContext(ABC):
         timings: Optional[HogQLTimings] = None,
         modifiers: Optional[HogQLQueryModifiers] = None,
         limit_context: Optional[LimitContext] = None,
-        now: Optional[datetime] = None,
         user: Optional[User] = None,
+        now: Optional[datetime] = None,
     ):
         self.query = query
         self.team = team
@@ -45,7 +45,7 @@ class QueryContext(ABC):
             enable_select_queries=True,
             timings=self.timings,
             modifiers=self.modifiers,
-            user=user,
+            user=self.user,
         )
         self.now = now or datetime.now()
 

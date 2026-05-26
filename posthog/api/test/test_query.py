@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 from freezegun import freeze_time
 from posthog.test.base import (
@@ -13,30 +14,42 @@ from posthog.test.base import (
 from unittest import mock
 from unittest.mock import patch
 
+from pydantic import BaseModel
 from rest_framework import status
 
 from posthog.schema import (
+    ActorsQuery,
     CachedEventsQueryResponse,
     CachedHogQLQueryResponse,
     CachedRetentionQueryResponse,
+    CohortPropertyFilter,
     EventPropertyFilter,
+    EventsNode,
     EventsQuery,
     HogLanguage,
     HogQLAutocomplete,
     HogQLPropertyFilter,
     HogQLQuery,
+    InsightVizNode,
     MeanRetentionCalculation,
     PersonPropertyFilter,
+    ProductKey,
     PropertyOperator,
+    QueryLogTags,
     RetentionQuery,
+    TrendsQuery,
 )
 
 from posthog.hogql.constants import LimitContext
 
+from posthog.api.monitoring import Feature
+from posthog.api.query import _infer_query_tags
 from posthog.api.services.query import process_query_dict, process_query_model
 from posthog.clickhouse.client import sync_execute
 from posthog.clickhouse.query_tagging import Product, QueryTags
+from posthog.models import Project
 from posthog.models.insight_variable import InsightVariable
+from posthog.models.organization import OrganizationMembership
 from posthog.models.utils import UUIDT
 
 from products.event_definitions.backend.models.property_definition import PropertyDefinition, PropertyType
@@ -44,6 +57,30 @@ from products.event_definitions.backend.models.property_definition import Proper
 
 class TestQuery(ClickhouseTestMixin, APIBaseTest):
     ENDPOINT = "query"
+
+    def test_insight_query_can_run_across_projects_when_enabled(self):
+        _, other_team = Project.objects.create_with_team(organization=self.organization, initiating_user=self.user)
+        OrganizationMembership.objects.filter(user=self.user, organization=self.organization).update(
+            level=OrganizationMembership.Level.ADMIN
+        )
+        self.team.can_query_across_organization_projects = True
+        self.team.save()
+
+        _create_event(team=other_team, event="$pageview", distinct_id="other-user")
+        flush_persons_and_events()
+
+        query = InsightVizNode(
+            source=TrendsQuery(
+                series=[EventsNode(event="$pageview", name="Pageview")],
+            )
+        )
+
+        response = process_query_model(self.team, query, user=self.user)
+        response_data = cast(dict, response.model_dump() if isinstance(response, BaseModel) else response)
+
+        assert response_data["results"] is not None
+        assert len(response_data["results"]) == 1
+        assert "data" in response_data["results"][0]
 
     @snapshot_clickhouse_queries
     def test_select_hogql_expressions(self):
@@ -1486,3 +1523,15 @@ class TestMcpProductTaggingEndToEnd(ClickhouseTestMixin, APIBaseTest):
         comment = self._get_log_comment_for_team()
         self.assertNotEqual(comment.get("source"), "mcp")
         self.assertNotEqual(comment.get("product"), Product.MCP.value)
+
+
+class TestInferQueryTags(APIBaseTest):
+    def test_cohort_scene_infers_cohorts_product_and_cohort_feature(self):
+        # Mirrors the payload fired by the Cohort scene when listing members: the frontend's
+        # addTags attaches `tags.scene = "Cohort"` to every query issued from that scene.
+        query = ActorsQuery(
+            fixedProperties=[CohortPropertyFilter(value=1)],
+            select=["person_display_name -- Person", "id", "created_at"],
+            tags=QueryLogTags(scene="Cohort"),
+        )
+        assert _infer_query_tags(query) == {"product": ProductKey.COHORTS, "feature": Feature.COHORT}

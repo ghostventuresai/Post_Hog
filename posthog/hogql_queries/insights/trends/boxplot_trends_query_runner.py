@@ -94,6 +94,7 @@ class BoxPlotTrendsQueryRunner(TrendsQueryRunner):
             team=self.team,
             timings=self.timings,
             modifiers=self.modifiers,
+            user=self.user,
         )
 
         all_boxplot_data: list[BoxPlotDatum] = []

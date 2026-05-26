@@ -457,11 +457,13 @@ rules:
           - pattern-not: $M.objects. ... .$METHOD2(..., effective_project_id=$T, ...)
           - pattern-not: $M.objects. ... .$METHOD2(..., team=$T, ...)
           - pattern-not: $M.objects. ... .$METHOD2(..., team_id=$T, ...)
+          - pattern-not: $M.objects. ... .$METHOD2(..., team_id__in=$T, ...)
           # get_object_or_404
           - pattern-not: get_object_or_404($M, ..., team__project_id=$T, ...)
           - pattern-not: get_object_or_404($M, ..., effective_project_id=$T, ...)
           - pattern-not: get_object_or_404($M, ..., team=$T, ...)
           - pattern-not: get_object_or_404($M, ..., team_id=$T, ...)
+          - pattern-not: get_object_or_404($M, ..., team_id__in=$T, ...)
           # Refetching an existing instance by its pk/id attribute
           - pattern-not: $M.objects. ... .$METHOD2(pk=$X.pk, ...)
           - pattern-not: $M.objects. ... .$METHOD2(pk=$X.id, ...)

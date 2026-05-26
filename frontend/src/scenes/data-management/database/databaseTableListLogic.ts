@@ -54,8 +54,7 @@ export const databaseTableListLogic = kea<databaseTableListLogicType>([
                     const requestKey = requestConnectionId ?? '__posthog__'
 
                     if (inFlightDatabaseLoadKey === requestKey && inFlightDatabaseLoadPromise) {
-                        const inFlight = inFlightDatabaseLoadPromise
-                        const result = await inFlight
+                        const result = await inFlightDatabaseLoadPromise
                         if (!databaseTableListLogic.isMounted()) {
                             return null
                         }

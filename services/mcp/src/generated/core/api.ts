@@ -264,6 +264,10 @@ export const OrganizationsProjectsPartialUpdateBody = /* @__PURE__ */ zod
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 

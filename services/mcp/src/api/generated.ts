@@ -29728,6 +29728,8 @@ export namespace Schemas {
       logs_settings?: unknown;
       /** @nullable */
       proactive_tasks_enabled?: boolean | null;
+      /** Whether this project can run HogQL queries against other projects in the same organization. */
+      can_query_across_organization_projects?: boolean;
       readonly available_setup_task_ids?: readonly AvailableSetupTaskIdsEnum[];
     }
 
@@ -31297,6 +31299,8 @@ export namespace Schemas {
       conversations_settings?: unknown;
       /** @nullable */
       proactive_tasks_enabled?: boolean | null;
+      /** Whether this project can run HogQL queries against other projects in the same organization. */
+      can_query_across_organization_projects?: boolean;
       readonly effective_membership_level?: EffectiveMembershipLevelEnum;
       readonly has_group_types?: boolean;
       readonly group_types?: readonly PatchedTeamGroupTypesItem[];
@@ -32729,6 +32733,8 @@ export namespace Schemas {
       logs_settings?: unknown;
       /** @nullable */
       proactive_tasks_enabled?: boolean | null;
+      /** Whether this project can run HogQL queries against other projects in the same organization. */
+      can_query_across_organization_projects?: boolean;
       readonly available_setup_task_ids: readonly AvailableSetupTaskIdsEnum[];
     }
 
@@ -36758,6 +36764,8 @@ export namespace Schemas {
       conversations_settings?: unknown;
       /** @nullable */
       proactive_tasks_enabled?: boolean | null;
+      /** Whether this project can run HogQL queries against other projects in the same organization. */
+      can_query_across_organization_projects?: boolean;
       readonly effective_membership_level: EffectiveMembershipLevelEnum;
       readonly has_group_types: boolean;
       readonly group_types: readonly TeamGroupTypesItem[];

@@ -213,6 +213,7 @@ export type SettingId =
     | 'web-analytics-opt-in-pre-aggregated-tables-and-api'
     | 'csp-reporting'
     | 'base-currency'
+    | 'cross-project-querying'
     | 'marketing-settings'
     | 'posthog-mcp-configure'
     | 'mcp-servers-manage'

@@ -377,6 +377,10 @@ export const OrganizationsProjectsCreateBody = /* @__PURE__ */ zod
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -567,6 +571,10 @@ export const OrganizationsProjectsUpdateBody = /* @__PURE__ */ zod
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -759,6 +767,10 @@ export const OrganizationsProjectsPartialUpdateBody = /* @__PURE__ */ zod
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -963,6 +975,10 @@ export const OrganizationsProjectsAddProductIntentPartialUpdateBody = /* @__PURE
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -1159,6 +1175,10 @@ export const OrganizationsProjectsChangeOrganizationCreateBody = /* @__PURE__ */
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -1375,6 +1395,10 @@ export const OrganizationsProjectsCompleteProductOnboardingPartialUpdateBody = /
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -1587,6 +1611,10 @@ export const OrganizationsProjectsDeleteSecretTokenBackupPartialUpdateBody = /* 
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -1803,6 +1831,10 @@ export const OrganizationsProjectsGenerateConversationsPublicTokenCreateBody = /
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -1995,6 +2027,10 @@ export const OrganizationsProjectsResetTokenPartialUpdateBody = /* @__PURE__ */ 
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
@@ -2199,6 +2235,10 @@ export const OrganizationsProjectsRotateSecretTokenPartialUpdateBody = /* @__PUR
         conversations_settings: zod.unknown().optional(),
         logs_settings: zod.unknown().optional(),
         proactive_tasks_enabled: zod.boolean().nullish(),
+        can_query_across_organization_projects: zod
+            .boolean()
+            .optional()
+            .describe('Whether this project can run HogQL queries against other projects in the same organization.'),
     })
     .describe('Mixin for serializers to add user access control fields')
 
