@@ -2771,6 +2771,13 @@ class LLMTracePerson(BaseModel):
     uuid: str
 
 
+class LegendPosition(StrEnum):
+    TOP = "top"
+    RIGHT = "right"
+    BOTTOM = "bottom"
+    LEFT = "left"
+
+
 class LifecycleToggle(StrEnum):
     NEW = "new"
     RESURRECTING = "resurrecting"
@@ -9040,6 +9047,13 @@ class TrendsFilter(BaseModel):
     goalLines: list[GoalLine] | None = Field(default=None, description="Goal Lines")
     hiddenLegendIndexes: list[int] | None = None
     hideWeekends: bool | None = False
+    legendPosition: LegendPosition | None = Field(
+        default=LegendPosition.RIGHT,
+        description=(
+            "Where the legend renders relative to the chart when `showLegend` is true.\n"
+            "Presentation-only — excluded from the insight cache key."
+        ),
+    )
     minDecimalPlaces: float | None = None
     movingAverageIntervals: float | None = None
     resultCustomizationBy: ResultCustomizationBy | None = Field(

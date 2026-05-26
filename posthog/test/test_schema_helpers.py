@@ -98,6 +98,24 @@ class TestSchemaHelpers(TestCase):
 
         self.assertEqual(result_dict, {"kind": "TrendsQuery", "series": []})
 
+    @parameterized.expand(
+        [
+            ("right", "bottom"),
+            ("right", "top"),
+            ("right", "left"),
+            ("top", "bottom"),
+            ("top", "left"),
+            ("bottom", "left"),
+        ]
+    )
+    def test_legend_position_is_stripped_from_cache_payload(self, position_a: str, position_b: str):
+        # legendPosition is presentation-only and must not change the cache key
+        q_a = TrendsQuery(**{**base_trends, "trendsFilter": {"showLegend": True, "legendPosition": position_a}})
+        q_b = TrendsQuery(**{**base_trends, "trendsFilter": {"showLegend": True, "legendPosition": position_b}})
+
+        self.assertEqual(to_dict(q_a), to_dict(q_b))
+        self.assertEqual(to_dict(q_a), {"kind": "TrendsQuery", "series": []})
+
     def test_serializes_retention_filter_without_frontend_only_props(self):
         query = RetentionQuery(
             **{

@@ -41,7 +41,7 @@ import { TrendInsight } from 'scenes/trends/Trends'
 import { WebAnalyticsInsight } from 'scenes/web-analytics/WebAnalyticsInsight'
 
 import { SceneSection } from '~/layout/scenes/components/SceneSection'
-import { InsightVizNode, TrendsQuery } from '~/queries/schema/schema-general'
+import { InsightVizNode, LegendPosition, TrendsQuery } from '~/queries/schema/schema-general'
 import { QueryContext } from '~/queries/types'
 import { shouldQueryBeAsync } from '~/queries/utils'
 import { ChartDisplayType, ExporterFormat, FunnelVizType, InsightLogicProps, InsightType } from '~/types'
@@ -83,6 +83,64 @@ function DashboardInsightRefreshHintOrLoading({
         )
     }
     return <InsightRefreshDataHint onRetry={onRetry} />
+}
+
+function InsightVizContent({
+    display,
+    legendPosition,
+    supportsDisplay,
+    showLegend,
+    blockingEmptyState,
+    renderActiveView,
+}: {
+    display: ChartDisplayType | undefined
+    legendPosition: LegendPosition
+    supportsDisplay: boolean
+    showLegend: boolean
+    blockingEmptyState: JSX.Element | null
+    renderActiveView: () => JSX.Element | null
+}): JSX.Element {
+    const isHorizontalLegend = legendPosition === LegendPosition.Top || legendPosition === LegendPosition.Bottom
+    const legendFirst = legendPosition === LegendPosition.Top || legendPosition === LegendPosition.Left
+    const contentClassName = clsx(
+        'InsightVizDisplay__content',
+        supportsDisplay && showLegend && `InsightVizDisplay__content--with-legend-${legendPosition}`
+    )
+
+    if (blockingEmptyState) {
+        return <div className={contentClassName}>{blockingEmptyState}</div>
+    }
+
+    if (!supportsDisplay || !showLegend) {
+        return <div className={contentClassName}>{renderActiveView()}</div>
+    }
+
+    const chartSlot = <div className="InsightVizDisplay__content__left">{renderActiveView()}</div>
+    const legendSlot = (
+        <div className="InsightVizDisplay__content__right empty:hidden">
+            {display === ChartDisplayType.BoxPlot ? (
+                <BoxPlotLegend horizontal={isHorizontalLegend} />
+            ) : (
+                <InsightLegend horizontal={isHorizontalLegend} />
+            )}
+        </div>
+    )
+
+    return (
+        <div className={contentClassName}>
+            {legendFirst ? (
+                <>
+                    {legendSlot}
+                    {chartSlot}
+                </>
+            ) : (
+                <>
+                    {chartSlot}
+                    {legendSlot}
+                </>
+            )}
+        </div>
+    )
 }
 
 /** Dashboard tile: show refresh when merged `result` is still nullish (empty success is `[]`, not `null`). */
@@ -137,6 +195,7 @@ export function InsightVizDisplay({
         isPaths,
         hasDetailedResultsTable,
         showLegend,
+        legendPosition,
         hasFormula,
         supportsDisplay,
         samplingFactor,
@@ -463,25 +522,14 @@ export function InsightVizDisplay({
                                 </div>
                             )}
 
-                        <div
-                            className={clsx(
-                                'InsightVizDisplay__content',
-                                supportsDisplay && showLegend && 'InsightVizDisplay__content--with-legend'
-                            )}
-                        >
-                            {BlockingEmptyState ? (
-                                BlockingEmptyState
-                            ) : supportsDisplay && showLegend ? (
-                                <>
-                                    <div className="InsightVizDisplay__content__left">{renderActiveView()}</div>
-                                    <div className="InsightVizDisplay__content__right empty:hidden">
-                                        {display === ChartDisplayType.BoxPlot ? <BoxPlotLegend /> : <InsightLegend />}
-                                    </div>
-                                </>
-                            ) : (
-                                <>{renderActiveView()}</>
-                            )}
-                        </div>
+                        <InsightVizContent
+                            display={display}
+                            legendPosition={legendPosition}
+                            supportsDisplay={supportsDisplay}
+                            showLegend={showLegend}
+                            blockingEmptyState={BlockingEmptyState}
+                            renderActiveView={renderActiveView}
+                        />
                     </>
                 )}
             </div>

@@ -1,6 +1,7 @@
-import { NodeKind } from '~/queries/schema/schema-general'
+import { LegendPosition, NodeKind, TrendsQuery } from '~/queries/schema/schema-general'
 
 import {
+    compareQuery,
     filterVariablesReferencedInQuery,
     hasInvalidRegexFilter,
     isBoxPlotMissingProperty,
@@ -214,5 +215,25 @@ describe('isBoxPlotMissingProperty', () => {
                 { kind: NodeKind.EventsNode, event: '$signup', math_property: 'revenue' },
             ])
         ).toBe(false)
+    })
+})
+
+describe('compareQuery with ignoreVisualizationOnlyChanges', () => {
+    const baseTrends: TrendsQuery = {
+        kind: NodeKind.TrendsQuery,
+        series: [{ kind: NodeKind.EventsNode, event: '$pageview' }],
+    }
+
+    it.each([
+        [LegendPosition.Right, LegendPosition.Bottom],
+        [LegendPosition.Right, LegendPosition.Top],
+        [LegendPosition.Right, LegendPosition.Left],
+        [LegendPosition.Top, LegendPosition.Bottom],
+        [LegendPosition.Top, LegendPosition.Left],
+        [LegendPosition.Bottom, LegendPosition.Left],
+    ])('treats two queries differing only by legendPosition (%s vs %s) as semantically equal', (a, b) => {
+        const queryA: TrendsQuery = { ...baseTrends, trendsFilter: { showLegend: true, legendPosition: a } }
+        const queryB: TrendsQuery = { ...baseTrends, trendsFilter: { showLegend: true, legendPosition: b } }
+        expect(compareQuery(queryA, queryB, { ignoreVisualizationOnlyChanges: true })).toBe(true)
     })
 })

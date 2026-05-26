@@ -2001,6 +2001,16 @@ export namespace Schemas {
       value: number;
     }
 
+    export type LegendPosition = typeof LegendPosition[keyof typeof LegendPosition];
+
+
+    export const LegendPosition = {
+      Top: 'top',
+      Right: 'right',
+      Bottom: 'bottom',
+      Left: 'left',
+    } as const;
+
     export type ResultCustomizationBy = typeof ResultCustomizationBy[keyof typeof ResultCustomizationBy];
 
 
@@ -2086,6 +2096,9 @@ export namespace Schemas {
       goalLines?: GoalLine[] | null;
       hiddenLegendIndexes?: number[] | null;
       hideWeekends?: boolean | null;
+      /** Where the legend renders relative to the chart when `showLegend` is true.
+      Presentation-only — excluded from the insight cache key. */
+      legendPosition?: LegendPosition | null;
       minDecimalPlaces?: number | null;
       movingAverageIntervals?: number | null;
       /** Wether result datasets are associated by their values or by their order. */
