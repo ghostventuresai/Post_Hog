@@ -4769,7 +4769,7 @@ snapshots:
     scenes-app-insights-funnels--funnel-left-to-right-edit--dark:
         hash: v1.k794b7964.293297b83994468984576e5c15fa2cbbb2c4c0a7a8234959b9deba539efa383b.xupnP9sdcp25xPBOMzrhSHwtRpKPLKHaqLDBncapvQA
     scenes-app-insights-funnels--funnel-left-to-right-edit--light:
-        hash: v1.k794b7964.c63132bb5b13cbe97938ebdb2e59e320ebc338bd12b2d3bfd6af81e56270650a.3gc3UBg-8GVo4HkNBH7UrogK2q1uh9pXPDjTdYGT8nc
+        hash: v1.k794b7964.6c391cbc05b64230fbd8defdbb960b131fd433409817497873fb9ffc705cd360.dtIb8VK_HAoAvzi8YbVjGpt2Y8yONsVV7mEiD9DrclQ
     scenes-app-insights-funnels--funnel-left-to-right-edit-viewports--medium--dark:
         hash: v1.k794b7964.dad9df902a133cafd6b3314a3800fcb45dabbbb59a0766c87c226549392104fc.u8mciTuIKrwI-d3yiUx6dVpr3oLoJJ7tgvRU7hutwhU
     scenes-app-insights-funnels--funnel-left-to-right-edit-viewports--medium--light:
@@ -5902,6 +5902,26 @@ snapshots:
         hash: v1.k794b7964.3623574f2104632bc59abb6ecfe014303ce040f9164a04ce7428c2464c42b52d.YUJsdX3szpIEcFJzdRLqcxvgRA2LGqUBKqysmXy82Q4
     scenes-app-web-analytics--web-analytics-dashboard-loading--light:
         hash: v1.k794b7964.14c98d2be2e0a815929fe4571e09f268fb5e334c7317df6bfbc0530197843186.pU-pE_UnnowEjnHyJo2e4OhFMJB672Krvmo7jyBT2-M
+    scenes-other-account-connected--github-integration-connected--dark:
+        hash: v1.k794b7964.4e895f74b7fb8d39935f04c2edf581d43608a31c44ab62ecc6038e7821fa1131.H_PLI37PcQoJDtpHpDS_NunE7_FeFMq_1kPpnUUOqrI
+    scenes-other-account-connected--github-integration-connected--light:
+        hash: v1.k794b7964.3529f6d00e8414e32945129497a41b40fe7ee280181169550dde1eed26b40d8b.RSA__Xy-z54FFudpa5s8UhKubTq2zW2GSmxsB0LvhWk
+    scenes-other-account-connected--github-integration-failed--dark:
+        hash: v1.k794b7964.c69a687a939bb664f0c9aa0e91ac4d7fe7ba81fad16ac9ec0e2c7f5be61a82c1.p5pdHkz74fKc_fF4VlPASePvfz5MeUaNQ73W4oPPrN0
+    scenes-other-account-connected--github-integration-failed--light:
+        hash: v1.k794b7964.e32c529c62f93e2cca00b1773da7dfcb0657a68d2743fd4759e8532e05f40af7.cquCWBI2-kp-TzE6ZjcnCFxaRe2zluWW6uL6vZ8LE0Y
+    scenes-other-account-connected--github-login-failed--dark:
+        hash: v1.k794b7964.546dc6f580d4bb044f9efeb6cd658c3c947b9b9edc8528a2219615e8396dbf64.oRT8D2kYGZCBQ07iWGew7t2dECKKXzMVqIBKfeoP_-A
+    scenes-other-account-connected--github-login-failed--light:
+        hash: v1.k794b7964.78bcde85a391889ba445a81c2f82e31f685b8767ac1d12510be8c14c2dc31151.lNEz8wQ1M3pnL6AGUg52SF9hhC-3Ou4bVPtB1Itzfec
+    scenes-other-account-connected--github-login-linked--dark:
+        hash: v1.k794b7964.d7dcc2a0a08b34dbdf0cdda0bdb2aa4de6c5066e68cfc331a52166895b4c86ad.9_rRzR4BrOC7h132BnTUena47aSZdbnUz64tyCBx_Mg
+    scenes-other-account-connected--github-login-linked--light:
+        hash: v1.k794b7964.c8544e9aad573f35e736bda8ca643a194534e98e6379e6d0d1c2866084ea7936.JNuyUY2XzVEinQKPJmIssPpPUC7lP6ezTvVhX8sjQ1A
+    scenes-other-account-connected--invalid-link--dark:
+        hash: v1.k794b7964.fa6295354a29177578360e5b3324eaddaf39b91e76f8462a3e7f0933c3649f4c.B4ilBfF7PYwAe7KFacq0mPXG13JqxSoZrpiRx5tyZJE
+    scenes-other-account-connected--invalid-link--light:
+        hash: v1.k794b7964.82818108e6d414b027618d869a21fc75ac72b42bb3dab128f5d78bc396ae3dde.n3UJGaAnD7rki_PD5iqZIGg6gg30MJDUhFJyxkomLzQ
     scenes-other-billing--billing--dark:
         hash: v1.k794b7964.0fbd211a7ee299a4abb1afb6d3d1e0589eb349c82c59bd5997b16e434356ee18.HyWfDl8iMD41jnar9y2uxNCx2MJJ6DuHch0n18cCWBA
     scenes-other-billing--billing--light:
@@ -6323,7 +6343,7 @@ snapshots:
     scenes-other-verify-email--verify-email-pending--light:
         hash: v1.k794b7964.97c56875d39cb63726d22e9871e519976294bd13fb0e361ea7ccfc450a17120b.YCyZzFRLWk3S0Ll-D4kL23PatAtQhAPKZgXKzwhuoxM
     scenes-other-verify-email--verify-email-success--dark:
-        hash: v1.k794b7964.65fdb5940b3229a62167344887e55d693fd1fa8a21455245f33fd6065954fe5d.25UGcCMOWLOuTe2KEC2j-GDCENHnaxtwNrgc4iINKTA
+        hash: v1.k794b7964.9b917a620485e8e2f7ab2f23e8376da57f2a19d886c622ac4b743435623d6abe.kYNsjaA1_KhtchbZ2A9x4QUMxaQLeHVIpLB40Rf1IYA
     scenes-other-verify-email--verify-email-success--light:
         hash: v1.k794b7964.a4a0bd8ac986a1114f4733370f3e6734cdf1f6958dd96e1e5a32961edc45e48f.ctEZRTxo8flU8SAgrjoCqAN3So_m-JFuq60EUI2Qkbw
     scenes-other-verify-email--verifying-email--dark:
