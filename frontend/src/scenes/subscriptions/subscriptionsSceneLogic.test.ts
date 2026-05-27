@@ -91,7 +91,7 @@ describe('subscriptionsSceneLogic', () => {
             subscriptionRequestUrls.length = 0
 
             await expectLogic(logic, () => {
-                logic.actions.setCurrentTab(SubscriptionsTab.Ai)
+                logic.actions.setCurrentTab(SubscriptionsTab.AI)
             }).toDispatchActions(['setCurrentTab', 'loadSubscriptions', 'loadSubscriptionsSuccess'])
 
             expect(subscriptionRequestUrls).toHaveLength(1)

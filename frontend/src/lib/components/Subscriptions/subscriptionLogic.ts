@@ -25,10 +25,11 @@ function validatePrompt(
     if (content_type !== 'ai_prompt') {
         return undefined
     }
-    if (!prompt?.trim()) {
+    const trimmedPrompt = prompt?.trim()
+    if (!trimmedPrompt) {
         return 'A prompt is required for AI subscriptions'
     }
-    if (prompt.length > AI_PROMPT_MAX_LENGTH) {
+    if (trimmedPrompt.length > AI_PROMPT_MAX_LENGTH) {
         return `Prompt cannot exceed ${AI_PROMPT_MAX_LENGTH} characters`
     }
     return undefined
@@ -174,6 +175,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                     ...subscription,
                     insight: isAi ? null : insightId,
                     dashboard: isAi ? null : props.dashboardId,
+                    prompt: isAi ? subscription.prompt?.trim() : subscription.prompt,
                 }
 
                 breakpoint()
@@ -332,11 +334,6 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
     })),
 
     urlToAction(({ actions }) => ({
-        // Existing nested-modal flows: `/insights/:shortId/subscriptions/new`,
-        // `/dashboard/:id/subscriptions/new`. The project prefix is stripped by
-        // `pathFromWindowToRoutes`, leaving two leading segments for the parent
-        // resource. Top-level AI flows (next entries) match after that strip too,
-        // but with no parent resource at all.
         '/*/*/subscriptions/new': (_, searchParams) => {
             actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION })
             if (searchParams.target_type) {
@@ -346,15 +343,6 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
         '/*/*/subscriptions/:id': () => {
             actions.loadSubscription()
         },
-        // Top-level parent-less (AI prompt) flows. Browser URL is
-        // `/project/:teamId/subscriptions/...`; after project-prefix strip the
-        // path is `/subscriptions/...`, which has fewer segments than the nested
-        // patterns above match. Without these entries, loadSubscription never
-        // fires and the form shows the NEW_SUBSCRIPTION defaults.
-        //
-        // The top-level page has no insight/dashboard to snapshot, so a new
-        // subscription here is always an AI report — default content_type
-        // accordingly (the form hides the snapshot option in this context).
         '/subscriptions/new': (_, searchParams) => {
             actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION, content_type: 'ai_prompt' })
             if (searchParams.target_type) {

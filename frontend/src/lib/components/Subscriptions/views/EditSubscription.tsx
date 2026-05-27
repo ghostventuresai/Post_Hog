@@ -356,21 +356,14 @@ function EditSubscriptionForm({
                                     </LemonBanner>
                                 )}
                                 <LemonBanner type="info" className="text-sm">
-                                    The AI plans up to 3 HogQL queries against your project's events and writes a
-                                    markdown report. It cannot access other tables, run actions, or use prior reports as
-                                    context — each delivery is independent.
+                                    The AI analyzes your project's recent events and writes a markdown report. Each
+                                    delivery is generated independently.
                                 </LemonBanner>
                                 <LemonField
                                     name="prompt"
                                     label="Prompt"
                                     help="Describe what the AI should look for. The same prompt runs every time the subscription fires."
                                 >
-                                    {/*
-                                     * Char counter is rendered natively by LemonTextArea when `maxLength` is set
-                                     * (turns red at the cap), so we don't add our own. Example chips sit beneath
-                                     * the textarea on their own row so they wrap cleanly without competing with
-                                     * the counter for horizontal space.
-                                     */}
                                     <LemonTextArea
                                         placeholder="e.g. Which events grew the most week-over-week? Highlight any unusual spikes."
                                         minRows={4}

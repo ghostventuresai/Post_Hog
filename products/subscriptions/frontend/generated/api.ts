@@ -9,8 +9,6 @@ import { apiMutator } from '../../../../frontend/src/lib/api-orval-mutator'
  * OpenAPI spec version: 1.0.0
  */
 import type {
-    AiReportRequestApi,
-    AiReportResponseApi,
     PaginatedSubscriptionDeliveryListApi,
     PaginatedSubscriptionListApi,
     PatchedSubscriptionApi,
@@ -218,30 +216,6 @@ export const subscriptionsTestDeliveryCreate = async (
     return apiMutator<void>(getSubscriptionsTestDeliveryCreateUrl(projectId, id), {
         ...options,
         method: 'POST',
-    })
-}
-
-export const getSubscriptionsAiReportCreateUrl = (projectId: string) => {
-    return `/api/projects/${projectId}/subscriptions/ai_report/`
-}
-
-/**
- * Generate an ad-hoc AI report from a prompt without creating a recurring subscription.
-
-Runs the same planner → HogQL → synthesis pipeline as a scheduled AI subscription
-and returns the rendered markdown. Subject to the same cloud + consent + feature-flag
-gates as creating an AI subscription. Each call burns LLM tokens — throttled.
- */
-export const subscriptionsAiReportCreate = async (
-    projectId: string,
-    aiReportRequestApi: AiReportRequestApi,
-    options?: RequestInit
-): Promise<AiReportResponseApi> => {
-    return apiMutator<AiReportResponseApi>(getSubscriptionsAiReportCreateUrl(projectId), {
-        ...options,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
-        body: JSON.stringify(aiReportRequestApi),
     })
 }
 

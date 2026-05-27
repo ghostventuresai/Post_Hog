@@ -51,12 +51,6 @@ export const SubscriptionsCreateBody = /* @__PURE__ */ zod
             .describe(
                 "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
             ),
-        ai_config: zod
-            .unknown()
-            .optional()
-            .describe(
-                "Optional AI subscription configuration. Currently supports the keys 'model' (synthesis model) and 'planner_model'. Unknown keys and values outside the allowed model whitelist are rejected with a 400 at the API boundary."
-            ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
             .describe('\* `email` - Email\n\* `slack` - Slack\n\* `webhook` - Webhook')
@@ -175,12 +169,6 @@ export const SubscriptionsUpdateBody = /* @__PURE__ */ zod
             .nullish()
             .describe(
                 "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
-            ),
-        ai_config: zod
-            .unknown()
-            .optional()
-            .describe(
-                "Optional AI subscription configuration. Currently supports the keys 'model' (synthesis model) and 'planner_model'. Unknown keys and values outside the allowed model whitelist are rejected with a 400 at the API boundary."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
@@ -301,12 +289,6 @@ export const SubscriptionsPartialUpdateBody = /* @__PURE__ */ zod
             .describe(
                 "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
             ),
-        ai_config: zod
-            .unknown()
-            .optional()
-            .describe(
-                "Optional AI subscription configuration. Currently supports the keys 'model' (synthesis model) and 'planner_model'. Unknown keys and values outside the allowed model whitelist are rejected with a 400 at the API boundary."
-            ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
             .describe('\* `email` - Email\n\* `slack` - Slack\n\* `webhook` - Webhook')
@@ -389,36 +371,3 @@ export const SubscriptionsPartialUpdateBody = /* @__PURE__ */ zod
         summary_prompt_guide: zod.string().max(subscriptionsPartialUpdateBodySummaryPromptGuideMax).optional(),
     })
     .describe('Standard Subscription serializer.')
-
-/**
- * Generate an ad-hoc AI report from a prompt without creating a recurring subscription.
-
-Runs the same planner → HogQL → synthesis pipeline as a scheduled AI subscription
-and returns the rendered markdown. Subject to the same cloud + consent + feature-flag
-gates as creating an AI subscription. Each call burns LLM tokens — throttled.
- */
-export const subscriptionsAiReportCreateBodyPromptMax = 4000
-
-export const subscriptionsAiReportCreateBodyWindowDaysDefault = 7
-export const subscriptionsAiReportCreateBodyWindowDaysMax = 365
-
-export const SubscriptionsAiReportCreateBody = /* @__PURE__ */ zod
-    .object({
-        prompt: zod
-            .string()
-            .max(subscriptionsAiReportCreateBodyPromptMax)
-            .describe('Natural-language prompt describing the report. Max 4000 characters.'),
-        window_days: zod
-            .number()
-            .min(1)
-            .max(subscriptionsAiReportCreateBodyWindowDaysMax)
-            .default(subscriptionsAiReportCreateBodyWindowDaysDefault)
-            .describe('Analysis window in days the planner should consider. Defaults to 7 (last week).'),
-        ai_config: zod
-            .unknown()
-            .optional()
-            .describe(
-                'Optional configuration; supports keys `model` (synthesis model) and `planner_model`. Values outside the allowed model whitelist are rejected.'
-            ),
-    })
-    .describe('Input for the ad-hoc AI report endpoint — same prompt validation as a scheduled AI subscription.')

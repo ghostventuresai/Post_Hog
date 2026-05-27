@@ -233,8 +233,6 @@ export interface SubscriptionApi {
      * @nullable
      */
     prompt?: string | null
-    /** Optional AI subscription configuration. Currently supports the keys 'model' (synthesis model) and 'planner_model'. Unknown keys and values outside the allowed model whitelist are rejected with a 400 at the API boundary. */
-    ai_config?: unknown
     /** Delivery channel: email, slack, or webhook.
 
   * `email` - Email
@@ -376,8 +374,6 @@ export interface PatchedSubscriptionApi {
      * @nullable
      */
     prompt?: string | null
-    /** Optional AI subscription configuration. Currently supports the keys 'model' (synthesis model) and 'planner_model'. Unknown keys and values outside the allowed model whitelist are rejected with a 400 at the API boundary. */
-    ai_config?: unknown
     /** Delivery channel: email, slack, or webhook.
 
   * `email` - Email
@@ -456,33 +452,6 @@ export interface PatchedSubscriptionApi {
     summary_prompt_guide?: string
 }
 
-/**
- * Input for the ad-hoc AI report endpoint — same prompt validation as a scheduled AI subscription.
- */
-export interface AiReportRequestApi {
-    /**
-     * Natural-language prompt describing the report. Max 4000 characters.
-     * @maxLength 4000
-     */
-    prompt: string
-    /**
-     * Analysis window in days the planner should consider. Defaults to 7 (last week).
-     * @minimum 1
-     * @maximum 365
-     */
-    window_days?: number
-    /** Optional configuration; supports keys `model` (synthesis model) and `planner_model`. Values outside the allowed model whitelist are rejected. */
-    ai_config?: unknown
-}
-
-/**
- * Output for the ad-hoc AI report endpoint.
- */
-export interface AiReportResponseApi {
-    /** The LLM-synthesized report, rendered as commonmark markdown. */
-    markdown: string
-}
-
 export type SubscriptionsDeliveriesListParams = {
     /**
      * The pagination cursor value.
@@ -530,7 +499,7 @@ export type SubscriptionsListParams = {
      */
     ordering?: string
     /**
-     * Filter by subscription resource: insight vs dashboard export.
+     * Filter by subscription resource: insight, dashboard export, or AI report.
      */
     resource_type?: SubscriptionsListResourceType
     /**
@@ -547,6 +516,7 @@ export type SubscriptionsListResourceType =
     (typeof SubscriptionsListResourceType)[keyof typeof SubscriptionsListResourceType]
 
 export const SubscriptionsListResourceType = {
+    AiPrompt: 'ai_prompt',
     Dashboard: 'dashboard',
     Insight: 'insight',
 } as const

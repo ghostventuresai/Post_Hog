@@ -47,9 +47,7 @@ from posthog.temporal.subscriptions.types import ProcessSubscriptionWorkflowInpu
 from posthog.utils import str_to_bool
 
 from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
-from ee.hogai.ai_reports import AiReportStageError, generate_ai_report
 from ee.tasks.subscriptions.ai_subscription.spec_generator import (
-    ALLOWED_AI_MODELS,
     PROMPT_MAX_LENGTH as AI_PROMPT_MAX_LENGTH,
     PromptRejectedError,
     sanitize_prompt,
@@ -84,46 +82,13 @@ def _invalidate_summary_quota_cache(organization_id) -> None:
     cache.delete(_summary_quota_cache_key(organization_id))
 
 
-_AI_CONFIG_ALLOWED_KEYS = frozenset({"model", "planner_model"})
-
-
-def _validate_ai_config_dict(value):
-    """Reject unknown keys + non-whitelisted models at the API boundary so the only
-    values we ever persist are the ones `resolve_ai_model` actually consumes —
-    otherwise an attacker can stash arbitrary JSON that activates later if the
-    delivery-time allowlist grows. Shared between `AiReportRequestSerializer` and
-    `SubscriptionSerializer` so the two field validators don't drift."""
-    if value is None:
-        return value
-    if not isinstance(value, dict):
-        raise ValidationError("ai_config must be an object.")
-    unknown = set(value.keys()) - _AI_CONFIG_ALLOWED_KEYS
-    if unknown:
-        raise ValidationError(
-            f"ai_config keys must be a subset of {sorted(_AI_CONFIG_ALLOWED_KEYS)}; got unknown {sorted(unknown)}."
-        )
-    for key in _AI_CONFIG_ALLOWED_KEYS & value.keys():
-        model_val = value[key]
-        if not isinstance(model_val, str) or model_val not in ALLOWED_AI_MODELS:
-            raise ValidationError(f"ai_config.{key} must be one of {sorted(ALLOWED_AI_MODELS)}; got {model_val!r}.")
-    return value
-
-
-def _ai_create_gate_reason(organization, *, kind: str = "subscriptions", verb: str = "creating") -> Optional[str]:
-    """Returns the human-readable reason why creating an AI subscription / ad-hoc AI
-    report should be rejected, or `None` if all gates pass. Shared between
-    `SubscriptionSerializer`'s create-time validation and the ad-hoc `ai_report`
-    endpoint so the gate set stays in sync as new gates are added. Callers
-    translate the returned reason into the response shape appropriate for their
-    context (ValidationError vs. 403 Response).
-
-    `kind` and `verb` swap the noun in the messages so the caller controls user-facing
-    wording ("AI subscriptions" vs "AI reports", "creating" vs "generating").
-    """
+def _ai_create_gate_reason(organization) -> Optional[str]:
+    """Human-readable reason why creating an AI subscription should be rejected, or
+    `None` if all gates pass — cloud, org AI-data-processing consent, and the feature flag."""
     if not settings.DEBUG and not is_cloud():
-        return f"AI {kind} are only available in PostHog Cloud."
+        return "AI subscriptions are only available in PostHog Cloud."
     if not organization.is_ai_data_processing_approved:
-        return f"Your organization must approve AI data processing before {verb} AI {kind}."
+        return "Your organization must approve AI data processing before creating AI subscriptions."
     # DEBUG-mode dev environments skip the network feature-flag check so local
     # testing doesn't require provisioning a flag in the analytics backend.
     if not settings.DEBUG and not posthoganalytics.feature_enabled(
@@ -133,42 +98,8 @@ def _ai_create_gate_reason(organization, *, kind: str = "subscriptions", verb: s
         only_evaluate_locally=False,
         send_feature_flag_events=False,
     ):
-        return f"AI {kind} are not enabled for your organization."
+        return "AI subscriptions are not enabled for your organization."
     return None
-
-
-class AiReportRequestSerializer(serializers.Serializer):
-    """Input for the ad-hoc AI report endpoint — same prompt validation as a scheduled AI subscription."""
-
-    prompt = serializers.CharField(
-        required=True,
-        max_length=AI_PROMPT_MAX_LENGTH,
-        help_text=f"Natural-language prompt describing the report. Max {AI_PROMPT_MAX_LENGTH} characters.",
-    )
-    window_days = serializers.IntegerField(
-        required=False,
-        min_value=1,
-        max_value=365,
-        default=7,
-        help_text="Analysis window in days the planner should consider. Defaults to 7 (last week).",
-    )
-    ai_config = serializers.JSONField(
-        required=False,
-        allow_null=True,
-        help_text=(
-            "Optional configuration; supports keys `model` (synthesis model) and `planner_model`. "
-            "Values outside the allowed model whitelist are rejected."
-        ),
-    )
-
-    def validate_ai_config(self, value):
-        return _validate_ai_config_dict(value)
-
-
-class AiReportResponseSerializer(serializers.Serializer):
-    """Output for the ad-hoc AI report endpoint."""
-
-    markdown = serializers.CharField(help_text="The LLM-synthesized report, rendered as commonmark markdown.")
 
 
 @extend_schema_field({"type": "array", "items": {"type": "integer"}})
@@ -221,7 +152,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             "resource_name",
             "dashboard_export_insights",
             "prompt",
-            "ai_config",
             "target_type",
             "target_value",
             "frequency",
@@ -266,13 +196,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                     "content_type is 'ai_prompt'. Max 4000 characters."
                 ),
             },
-            "ai_config": {
-                "help_text": (
-                    "Optional AI subscription configuration. Currently supports the keys "
-                    "'model' (synthesis model) and 'planner_model'. Unknown keys and values "
-                    "outside the allowed model whitelist are rejected with a 400 at the API boundary."
-                ),
-            },
             "dashboard": {"help_text": "Dashboard ID to subscribe to (mutually exclusive with insight on create)."},
             "insight": {"help_text": "Insight ID to subscribe to (mutually exclusive with dashboard on create)."},
             "target_type": {"help_text": "Delivery channel: email, slack, or webhook."},
@@ -308,8 +231,71 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         info = obj.resource_info
         return info.name if info else None
 
-    def validate_ai_config(self, value):
-        return _validate_ai_config_dict(value)
+    def _resolve_content_type(self, attrs: dict, existing: Optional[Subscription]) -> str:
+        # `content_type` is pinned at create and immutable after — switching kind mid-life
+        # would strand fields from the previous kind (`insight_id` on an AI sub, `prompt` on
+        # an insight sub) that the delivery path can't reason about.
+        if existing is not None and "content_type" in attrs and attrs["content_type"] != existing.content_type:
+            raise ValidationError(
+                {"content_type": ["content_type cannot be changed after the subscription is created."]}
+            )
+        if existing is not None:
+            return existing.content_type
+        # Honour an explicit `content_type`; otherwise infer from the populated FK so callers
+        # that omit it (the original dashboard/insight API contract predates this field) keep
+        # working. Persist the inferred value so `create()` stores the right discriminator —
+        # the model default is INSIGHT, which would mis-classify a dashboard subscription.
+        if "content_type" in attrs:
+            return attrs["content_type"]
+        content_type = (
+            Subscription.ContentType.DASHBOARD if attrs.get("dashboard") else Subscription.ContentType.INSIGHT
+        )
+        attrs["content_type"] = content_type
+        return content_type
+
+    def _validate_insight_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
+        if not (attrs.get("insight") or (existing and existing.insight_id)):
+            raise ValidationError({"insight": ["Insight is required for insight subscriptions."]})
+        if attrs.get("dashboard") or attrs.get("prompt"):
+            raise ValidationError({"insight": ["Insight subscriptions cannot also set dashboard or prompt."]})
+
+    def _validate_dashboard_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
+        if not (attrs.get("dashboard") or (existing and existing.dashboard_id)):
+            raise ValidationError({"dashboard": ["Dashboard is required for dashboard subscriptions."]})
+        if attrs.get("insight") or attrs.get("prompt"):
+            raise ValidationError({"dashboard": ["Dashboard subscriptions cannot also set insight or prompt."]})
+
+    def _validate_ai_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
+        if attrs.get("insight") or attrs.get("dashboard"):
+            raise ValidationError({"prompt": ["AI subscriptions cannot also set insight or dashboard."]})
+        # Explicit-key check so a deliberate `""` in a PATCH body doesn't fall through to the
+        # stale instance value and pass validation while writing empty to the DB (the next
+        # delivery would then PromptRejectedError + auto-disable).
+        prompt = (attrs["prompt"] if "prompt" in attrs else (existing.prompt if existing else None)) or ""
+        prompt = prompt.strip()
+        if not prompt:
+            raise ValidationError({"prompt": ["Prompt is required for AI subscriptions."]})
+        if len(prompt) > AI_PROMPT_MAX_LENGTH:
+            raise ValidationError({"prompt": [f"Prompt cannot exceed {AI_PROMPT_MAX_LENGTH} characters."]})
+        # Persist the trimmed prompt so the stored value matches what we validated — keeps
+        # the DB free of boundary whitespace rather than relying on delivery-time stripping.
+        if "prompt" in attrs:
+            attrs["prompt"] = prompt
+        # The delivery activity rejects unsupported targets, but auto-disabling on the first
+        # scheduled run is a poor first impression — fail fast here.
+        target_type = attrs.get("target_type") or (existing.target_type if existing else None)
+        if target_type and target_type not in (
+            Subscription.SubscriptionTarget.EMAIL,
+            Subscription.SubscriptionTarget.SLACK,
+        ):
+            raise ValidationError({"target_type": ["AI subscriptions only support email or slack delivery."]})
+        # Cloud / consent / feature-flag gates fire on create only. `content_type` is pinned,
+        # so an existing AI sub can't be created by mutation; existing AI subs stay editable
+        # (owners can still disable/delete) and the delivery path is the authoritative cost gate.
+        if existing is None:
+            gate_reason = _ai_create_gate_reason(self.context["get_organization"]())
+            if gate_reason is not None:
+                raise ValidationError(gate_reason)
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -326,78 +312,17 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         if attrs.get("insight") and attrs["insight"].team.id != self.context["team_id"]:
             raise ValidationError({"insight": ["This insight does not belong to your team."]})
 
-        # `content_type` is set at create time and pinned afterwards — switching kind
-        # mid-life would leave stale fields populated for the previous kind
-        # (`insight_id` on an AI sub, `prompt` on an insight sub) and the delivery
-        # path can't reason about that. Surfaces the help_text contract as code.
-        if existing is not None and "content_type" in attrs and attrs["content_type"] != existing.content_type:
-            raise ValidationError(
-                {"content_type": ["content_type cannot be changed after the subscription is created."]}
-            )
-
-        has_insight = attrs.get("insight") or (existing and existing.insight_id)
-        has_dashboard = attrs.get("dashboard") or (existing and existing.dashboard_id)
-        # Use explicit-key check so a deliberate `""` in the PATCH body doesn't fall
-        # through to the stale instance value and pass validation while writing empty
-        # to the DB (the next delivery would then PromptRejectedError + auto-disable).
-        prompt_value = attrs["prompt"] if "prompt" in attrs else (existing.prompt if existing else None)
-        has_prompt = (prompt_value or "").strip()
-
-        # `content_type` was added late; legacy callers (and the dashboard-subscription
-        # tests they shipped against) omit it and rely on `dashboard`/`insight` to imply
-        # the kind. Honour an explicit value if present, otherwise infer from the
-        # populated FK so existing paths keep their original validation errors. Persist
-        # the inferred value to `attrs` so the create path stores the right discriminator
-        # (the model default is INSIGHT, which would mis-classify dashboard subs).
-        explicit_content_type = attrs.get("content_type") or (existing.content_type if existing else None)
-        if explicit_content_type:
-            content_type = explicit_content_type
-        elif has_dashboard:
-            content_type = Subscription.ContentType.DASHBOARD
-        else:
-            content_type = Subscription.ContentType.INSIGHT
-        if existing is None and "content_type" not in attrs:
-            attrs["content_type"] = content_type
-
-        if content_type == Subscription.ContentType.INSIGHT:
-            if not has_insight:
-                raise ValidationError({"insight": ["Insight is required for insight subscriptions."]})
-            if attrs.get("dashboard") or attrs.get("prompt"):
-                raise ValidationError({"insight": ["Insight subscriptions cannot also set dashboard or prompt."]})
-            if attrs.get("ai_config") is not None:
-                raise ValidationError({"ai_config": ["ai_config is only valid on AI subscriptions."]})
-        elif content_type == Subscription.ContentType.DASHBOARD:
-            if not has_dashboard:
-                raise ValidationError({"dashboard": ["Dashboard is required for dashboard subscriptions."]})
-            if attrs.get("insight") or attrs.get("prompt"):
-                raise ValidationError("Dashboard subscriptions cannot also set insight or prompt.")
-            if attrs.get("ai_config") is not None:
-                raise ValidationError({"ai_config": ["ai_config is only valid on AI subscriptions."]})
-        elif content_type == Subscription.ContentType.AI_PROMPT:
-            if attrs.get("insight") or attrs.get("dashboard"):
-                raise ValidationError("AI subscriptions cannot also set insight or dashboard.")
-            if not has_prompt:
-                raise ValidationError({"prompt": ["Prompt is required for AI subscriptions."]})
-            if len(has_prompt) > AI_PROMPT_MAX_LENGTH:
-                raise ValidationError({"prompt": [f"Prompt cannot exceed {AI_PROMPT_MAX_LENGTH} characters."]})
-            # The delivery activity rejects unsupported targets, but auto-disabling
-            # on the first scheduled run is a poor first impression — fail fast here.
-            effective_target_type = attrs.get("target_type") or (existing.target_type if existing else None)
-            if effective_target_type and effective_target_type not in (
-                Subscription.SubscriptionTarget.EMAIL,
-                Subscription.SubscriptionTarget.SLACK,
-            ):
-                raise ValidationError({"target_type": ["AI subscriptions only support email or slack delivery."]})
-
-            # Cloud / consent / feature-flag gates fire on create only. `content_type` is
-            # pinned (rejected earlier in this method), so an existing AI subscription
-            # cannot be created by mutation. Existing AI subs remain editable after
-            # consent revoke or flag-off — owners can still disable/delete them, and
-            # the delivery path is the authoritative cost gate.
-            if existing is None:
-                gate_reason = _ai_create_gate_reason(self.context["get_organization"]())
-                if gate_reason is not None:
-                    raise ValidationError(gate_reason)
+        content_type = self._resolve_content_type(attrs, existing)
+        validate_for_content_type = {
+            Subscription.ContentType.INSIGHT: self._validate_insight_content,
+            Subscription.ContentType.DASHBOARD: self._validate_dashboard_content,
+            Subscription.ContentType.AI_PROMPT: self._validate_ai_content,
+        }.get(content_type)
+        # Fail soft on an unexpected content_type (e.g. a stale DB row) — a 400 is
+        # diagnosable, an unhandled KeyError surfaces as a 500.
+        if validate_for_content_type is None:
+            raise ValidationError({"content_type": [f"Unsupported content_type: {content_type}."]})
+        validate_for_content_type(attrs, existing)
 
         self._validate_dashboard_export_subscription(attrs)
 
@@ -554,30 +479,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             return str(request.user.distinct_id)
         return f"team_{self.context.get('team_id')}"
 
-    def _capture_subscription_event(self, instance: Subscription, event: str) -> None:
-        # Adoption telemetry, split by `content_type` (AI vs insight vs dashboard). Fires on every
-        # create/update regardless of enabled state — distinct from the slo_operation block, which
-        # only tracks the delivery-workflow trigger for enabled subscriptions.
-        try:
-            posthoganalytics.capture(
-                distinct_id=self._caller_distinct_id(),
-                event=event,
-                properties={
-                    "subscription_id": instance.id,
-                    "team_id": instance.team_id,
-                    "content_type": instance.content_type,
-                    "target_type": instance.target_type,
-                    "frequency": instance.frequency,
-                    "interval": instance.interval,
-                    "enabled": instance.enabled,
-                    "summary_enabled": instance.summary_enabled,
-                },
-                groups=groups(None, instance.team),
-            )
-        except Exception:
-            # Telemetry must never poison the create/update path.
-            pass
-
     def _capture_summary_cap_hit(self, organization, active_count: int, limit: int) -> None:
         # Rate-limited to one event per org per 10 minutes so a misbehaving
         # client retrying in a loop doesn't spam the analytics stream. Within
@@ -707,8 +608,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         if dashboard_export_insight_ids:
             instance.dashboard_export_insights.set(dashboard_export_insight_ids)
 
-        self._capture_subscription_event(instance, "subscription_created")
-
         # Skip the workflow trigger when the new subscription is created in a disabled
         # state — mirrors the equivalent guard in `update()`. Avoids firing a delivery
         # for a subscription that won't fire on its schedule either.
@@ -731,6 +630,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                 "byweekday": instance.byweekday,
                 "bysetpos": instance.bysetpos,
                 "count": instance.count,
+                "content_type": instance.content_type,
                 "resource_type": "dashboard" if instance.dashboard_id else "insight" if instance.insight_id else None,
                 "dashboard_export_insights_count": len(dashboard_export_insight_ids),
                 "summary_enabled": instance.summary_enabled,
@@ -783,6 +683,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                     "subscription_id": instance.id,
                     "target_type": instance.target_type,
                     "frequency": instance.frequency,
+                    "content_type": instance.content_type,
                     "resource_type": "dashboard"
                     if instance.dashboard_id
                     else "insight"
@@ -796,7 +697,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
         instance = super().update(instance, validated_data)
         _invalidate_summary_quota_cache(instance.team.organization_id)
-        self._capture_subscription_event(instance, "subscription_updated")
 
         if dashboard_export_insight_ids:
             instance.dashboard_export_insights.set(dashboard_export_insight_ids)
@@ -996,61 +896,6 @@ class SubscriptionViewSet(TeamAndOrgViewSetMixin, ForbidDestroyModel, viewsets.M
         }
         cache.set(cache_key, payload, SUMMARY_QUOTA_CACHE_TTL_SECONDS)
         return Response(payload)
-
-    @extend_schema(
-        request=AiReportRequestSerializer,
-        responses={
-            200: AiReportResponseSerializer,
-            400: OpenApiResponse(description="Validation failed (e.g. prompt empty or oversized)"),
-            403: OpenApiResponse(description="AI subscriptions not enabled for this organization"),
-        },
-    )
-    @action(
-        methods=["POST"],
-        detail=False,
-        url_path="ai_report",
-        throttle_classes=[SubscriptionTestDeliveryThrottle],
-        # query:read in addition to subscription:write — the response returns
-        # LLM-summarized HogQL results, so a subscription-only token must not reach it.
-        required_scopes=["subscription:write", "query:read"],
-    )
-    def ai_report(self, request, **kwargs):
-        """Generate an ad-hoc AI report from a prompt without creating a recurring subscription.
-
-        Runs the same planner → HogQL → synthesis pipeline as a scheduled AI subscription
-        and returns the rendered markdown. Subject to the same cloud + consent + feature-flag
-        gates as creating an AI subscription. Each call burns LLM tokens — throttled.
-        """
-        # Same gate set as `SubscriptionSerializer` AI create, with response shape
-        # adapted: ValidationError there → 403 Response here. Helper-driven so a
-        # new gate (e.g. quota) only needs adding in one place.
-        gate_reason = _ai_create_gate_reason(self.organization, kind="reports", verb="generating")
-        if gate_reason is not None:
-            return Response({"detail": gate_reason}, status=status.HTTP_403_FORBIDDEN)
-
-        serializer = AiReportRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            markdown = generate_ai_report(
-                team=self.team,
-                user=request.user,
-                prompt=serializer.validated_data["prompt"],
-                window_days=serializer.validated_data["window_days"],
-                ai_config=serializer.validated_data.get("ai_config"),
-                trace_correlation_id=f"adhoc-team-{self.team.id}",
-            )
-        except PromptRejectedError as exc:
-            raise ValidationError({"prompt": [str(exc)]})
-        except AiReportStageError as exc:
-            # Transient pipeline failure (planner/query/synthesis). 503 signals "retry";
-            # naming the stage helps the caller understand what failed.
-            return Response(
-                {"detail": f"Report generation failed at the {exc.stage} stage. Please try again."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        return Response({"markdown": markdown})
 
     @extend_schema(
         request=None,
