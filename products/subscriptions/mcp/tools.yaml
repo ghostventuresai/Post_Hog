@@ -4,6 +4,9 @@
 #
 # To enable a tool, set enabled: true and add required scopes + annotations.
 # All other fields (title, description, enrich_url, etc.) are yours to configure.
+#
+# This file is the single source of truth for the Subscriptions MCP tools — the
+# corresponding entries in services/mcp/definitions/core.yaml are disabled stubs.
 category: Subscriptions
 feature: subscriptions
 url_prefix: /subscriptions
@@ -28,33 +31,20 @@ tools:
             and `dashboard_export_insights` (the subset of the dashboard's insights to include, max 6).
 
             (3) `content_type: "ai_prompt"` — schedule a recurring LLM-generated report from a free-text prompt.
-            Requires `prompt` (≤4000 chars). Subject to cloud + org-level AI data-processing consent +
-            `SUBSCRIPTION_AI_PROMPT` feature flag. `target_type` must be `email` or `slack` (no webhook for
-            AI subs). `ai_config` (optional) accepts `model` and `planner_model` from a whitelisted set.
+            Requires `prompt` (≤4000 chars). Available on PostHog Cloud (self-hosted production is not eligible)
+            once the organization has approved AI data processing and AI subscriptions are enabled for it;
+            otherwise create is rejected with a 400.
 
-            `content_type` is pinned at create time — switching kind via PATCH is rejected. For an
-            immediately-delivered ad-hoc AI report (no schedule, no recipient), use subscriptions-ai-report-create
-            instead.
+            Delivery is set by `target_type` (`email`, `slack`, or `webhook`); AI-prompt subscriptions support
+            `email` and `slack` only.
+
+            `content_type` is pinned at create time — switching kind via PATCH is rejected.
         exclude_params:
             - deleted
             - next_delivery_date
             - resource_name
             - insight_short_id
-    subscriptions-list:
-        operation: subscriptions_list
-        enabled: true
-        scopes:
-            - subscription:read
-        annotations:
-            readOnly: true
-            destructive: false
-            idempotent: true
-        title: List subscriptions
-        description: >
-            List the team's subscriptions. Use `search` to filter by title, insight name, or dashboard name.
-        response:
-            exclude:
-                - results.*.invite_message
+            - ai_config
     subscriptions-retrieve:
         operation: subscriptions_retrieve
         enabled: true
@@ -66,6 +56,24 @@ tools:
             idempotent: true
         title: Get subscription
         description: Retrieve a single subscription by ID.
+    subscriptions-list:
+        operation: subscriptions_list
+        enabled: true
+        scopes:
+            - subscription:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        list: true
+        title: List subscriptions
+        description: >
+            List the team's subscriptions. Use `search` to filter by title, insight name (including the
+            auto-generated name of an unnamed insight), or dashboard name. AI-prompt subscriptions are only
+            matched on their `title` — the `prompt` text is not searchable.
+        response:
+            exclude:
+                - invite_message
     subscriptions-partial-update:
         operation: subscriptions_partial_update
         enabled: true
@@ -81,9 +89,9 @@ tools:
             `content_type` is immutable after create — rejected with 400 if supplied with a different value.
             For AI subs, re-enabling a previously auto-disabled sub requires either a valid `prompt` already
             persisted or one supplied in the PATCH body.
-    subscriptions-update:
-        operation: subscriptions_update
-        enabled: false
+        exclude_params:
+            # Deletion goes through the dedicated subscriptions-delete tool, not a PATCH.
+            - deleted
     subscriptions-delete:
         operation: subscriptions_destroy
         enabled: true
@@ -95,32 +103,80 @@ tools:
             idempotent: true
         title: Delete subscription
         description: Soft-delete a subscription. Stops all future deliveries.
-    subscriptions-ai-report-create:
-        operation: subscriptions_ai_report_create
+        param_overrides:
+            id:
+                cast: string-int
+        # The viewset forbids hard DELETE (ForbidDestroyModel); soft-delete is a
+        # PATCH with `{deleted: true}`. soft_delete: true makes the generated handler
+        # issue that PATCH instead of a DELETE that would 405.
+        soft_delete: true
+    subscriptions-deliveries-list:
+        operation: subscriptions_deliveries_list
         enabled: true
-        # Gated by the same flag as the underlying ad-hoc endpoint — the tool is
-        # hidden from MCP clients (Claude Desktop, Cursor, etc.) until the org has
-        # `subscription-ai-prompt` enabled. Behavior is `enable` by default: tool
-        # visible only when the flag is on. Fail-closed if flag eval errors.
-        feature_flag: subscription-ai-prompt
+        scopes:
+            - subscription:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        list: true
+        title: List subscription deliveries
+        description: >
+            List delivery history for a subscription — one row per send attempt. Each entry includes status (starting,
+            completed, failed, skipped), trigger_type (scheduled, manual, target_change), and timestamps (created_at,
+            finished_at). Filter with status=failed to quickly surface failed deliveries. Results are cursor-paginated
+            newest first. content_snapshot, recipient_results, and error are excluded to match what the web UI exposes
+            and to avoid leaking recipient identifiers or upstream response bodies that may contain tokens / PII.
+        response:
+            exclude:
+                - content_snapshot
+                - recipient_results
+                - error
+    subscriptions-deliveries-retrieve:
+        operation: subscriptions_deliveries_retrieve
+        enabled: true
+        scopes:
+            - subscription:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        title: Get subscription delivery
+        description: >
+            Fetch a single subscription delivery attempt by id. Returns status, trigger_type, target_type, target_value,
+            timestamps, workflow/idempotency metadata, and exported_asset_ids. content_snapshot (the frozen
+            dashboard/insight state at send time) is not returned — use the insight/dashboard tools for current state.
+            recipient_results and error are also excluded to match what the web UI exposes and to avoid leaking
+            recipient identifiers or upstream response bodies that may contain tokens / PII.
+        response:
+            exclude:
+                - content_snapshot
+                - recipient_results
+                - error
+    subscriptions-test-delivery-create:
+        operation: subscriptions_test_delivery_create
+        enabled: true
         scopes:
             - subscription:write
         annotations:
             readOnly: false
-            destructive: false
+            destructive: true
             idempotent: false
-        title: Generate an ad-hoc AI report
+        title: Send test delivery
         description: >
-            Run the planner → HogQL → synthesis pipeline once and return the rendered markdown — no
-            recurring schedule, no email/Slack delivery, no DB row created. Same gates as creating an AI
-            subscription (cloud + org-level AI data-processing consent + `SUBSCRIPTION_AI_PROMPT` flag).
-
-            Use for one-off "summarize how the product is doing" questions where the agent will render the
-            output itself. To make this report recur on a schedule and deliver to email/Slack, call
-            subscriptions-create with `content_type: "ai_prompt"` instead.
+            Trigger an immediate test delivery of a subscription to its configured target(s) (email, Slack, or webhook).
+            Runs the same pipeline as a scheduled delivery but with trigger_type=manual, producing a real delivery
+            record you can inspect via subscriptions-deliveries-list / subscriptions-deliveries-retrieve. Returns 202
+            Accepted once the delivery workflow is queued; poll subscriptions-deliveries-list (newest first) or
+            subscriptions-deliveries-retrieve for the outcome. Returns 409 if a test delivery for the same
+            subscription is already in flight, or if the subscription is disabled (re-enable it first); 404 if it
+            has been deleted.
+    subscriptions-update:
+        operation: subscriptions_update
+        enabled: false
+    subscriptions-ai-report-create:
+        operation: subscriptions_ai_report_create
+        enabled: false
     subscriptions-summary-quota-retrieve:
         operation: subscriptions_summary_quota_retrieve
-        enabled: false
-    subscriptions-test-delivery-create:
-        operation: subscriptions_test_delivery_create
         enabled: false

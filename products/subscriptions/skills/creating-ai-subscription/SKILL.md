@@ -10,16 +10,16 @@ description: >
 # Creating an AI subscription
 
 Use this skill when the user wants a **recurring** AI-generated report delivered on
-a schedule. For a one-off "generate now and return markdown" (no schedule, no
-delivery), use `generating-ad-hoc-ai-report` instead.
+a schedule.
 
 ## Tools
 
-| Tool                           | Purpose                                           |
-| ------------------------------ | ------------------------------------------------- |
-| `posthog:subscriptions-create` | Create the recurring AI subscription              |
-| `posthog:subscriptions-list`   | Confirm it landed; inspect existing subscriptions |
-| `posthog:integrations-list`    | Find a Slack `integration_id` when needed         |
+| Tool                                     | Purpose                                             |
+| ---------------------------------------- | --------------------------------------------------- |
+| `posthog:subscriptions-create`           | Create the recurring AI subscription                |
+| `posthog:subscriptions-list`             | Confirm it landed; inspect existing subscriptions   |
+| `posthog:integrations-list`              | Find a Slack `integration_id` (filter `kind=slack`) |
+| `posthog:integrations-channels-retrieve` | List a Slack integration's channels (id + name)     |
 
 ## What you need before calling
 
@@ -30,7 +30,7 @@ The endpoint enforces three create-time gates and will return 400 if any fails:
 2. **Org-level "AI data processing approved"** — must be toggled on in
    `Org settings → Data → AI data processing`. The user must opt in to AI features
    for the organization first.
-3. **`SUBSCRIPTION_AI_PROMPT` feature flag enabled** for the organization.
+3. **AI subscriptions enabled** for the organization.
 
 If any of the three is missing, stop and tell the user which one to fix —
 re-calling the tool will not help.
@@ -44,7 +44,7 @@ target_type: "email" | "slack"        # webhook is rejected for AI subs
 target_value: "..."                   # comma-separated emails, or "<channel_id>|<channel_name>"
 frequency: "daily" | "weekly" | "monthly" | "yearly"
 interval: 1                            # 1 = every tick; 2 = every other tick; etc.
-start_date: "2026-01-15T09:00:00Z"   # first delivery, also defines time-of-day
+start_date: "2026-09-15T09:00:00Z"   # first delivery (must be in the future), also defines time-of-day
 title: "..."                          # display name in the subscriptions list
 ```
 
@@ -52,22 +52,25 @@ title: "..."                          # display name in the subscriptions list
 
 ```yaml
 byweekday: ['monday', 'wednesday'] # weekly only — days the rrule fires
-bysetpos: 1 # monthly only — 1=first, 2=second, -1=last
+bysetpos: 1 # monthly only, requires byweekday — e.g. byweekday:['monday']+bysetpos:-1 = last Monday
 count: 10 # cap total deliveries
 until_date: '2026-12-31T00:00:00Z' # stop on/before this date
-ai_config: # rarely needed; whitelisted only
-  model: 'gpt-4.1-mini' # synthesis model
-  planner_model: 'gpt-4.1-mini' # planner model
-integration_id: 42 # required when target_type is "slack"
+integration_id: 42 # Slack only — required; from integrations-list (see "Slack target")
 ```
 
 ## Slack target
 
 `target_value` must be `<channel_id>|<channel_name>` (the format the integration
-returns). Look up an integration with `posthog:integrations-list` filtered by
-`kind=slack`, then pick a channel from that integration. Pass that integration's
-ID as `integration_id` — the subscription is pinned to one specific Slack
-integration so reconnections elsewhere don't accidentally re-route deliveries.
+returns). Build it in three steps:
+
+1. `posthog:integrations-list` filtered by `kind=slack` → pick the Slack
+   integration's `id`.
+2. `posthog:integrations-channels-retrieve` with that `id` → pick a channel; it
+   returns each channel's `id` and `name`, which you assemble into `target_value`
+   as `<id>|<name>`.
+3. Pass that integration's `id` as `integration_id` — the subscription is pinned
+   to one specific Slack integration so reconnections elsewhere don't accidentally
+   re-route deliveries.
 
 ## Examples
 
@@ -81,7 +84,7 @@ target_value: founders@acme.example
 frequency: weekly
 interval: 1
 byweekday: ['monday']
-start_date: '2026-01-19T08:00:00Z'
+start_date: '2026-09-14T08:00:00Z'
 title: 'Weekly product pulse'
 ```
 
@@ -91,11 +94,11 @@ title: 'Weekly product pulse'
 content_type: ai_prompt
 prompt: "Yesterday's sign-ups, where they came from, and any errors they hit during onboarding."
 target_type: slack
-target_value: 'C0123456789|#growth-updates'
+target_value: 'C0123456789|growth-updates' # <channel_id>|<channel_name>, name has no leading #
 integration_id: 42
 frequency: daily
 interval: 1
-start_date: '2026-01-15T09:00:00Z'
+start_date: '2026-09-15T09:00:00Z'
 title: 'Daily onboarding watch'
 ```
 
@@ -108,12 +111,17 @@ title: 'Daily onboarding watch'
   `{"enabled": true}` is rejected until the underlying prompt issue is fixed.
 - **`next_delivery_date` is server-computed from the rrule.** Don't try to set it
   manually — it's read-only. The first delivery fires at the first `start_date`
-  occurrence that is at least 15 minutes in the future.
-- **One transient send failure auto-fails the whole delivery** (the cached markdown
-  means a retry is cheap). Slack rate limits or SMTP blips will trigger Temporal
-  retries on the next tick; persistent failures auto-disable the subscription.
-- **Test the prompt first with `generating-ad-hoc-ai-report`** before scheduling
-  it — much faster feedback than waiting for the next cron tick.
+  occurrence that is at least a short buffer (currently ~15 minutes) in the future,
+  so a `start_date` only seconds ahead rolls to the next occurrence.
+- **Transient send failures retry; only permanent failures auto-disable.** A
+  transient failure (Slack rate limit, SMTP blip, network) fails that delivery and
+  is retried by Temporal within the run, then re-fires on the next scheduled tick —
+  it does **not** auto-disable the subscription, so a persistently-failing channel
+  will keep retrying every tick until you fix it. Only permanent/structural causes
+  auto-disable: a disconnected Slack integration, a revoked channel permission, an
+  invalid prompt, or revoked AI data-processing consent. (For multi-recipient email,
+  a delivery only fails when _every_ recipient fails; partial successes still send.)
+  The rendered markdown is cached, so retries don't re-run the LLM pipeline.
 
 ## After it lands
 
