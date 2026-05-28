@@ -90,7 +90,7 @@ export function FullscreenModeActions(): JSX.Element {
 }
 
 export function ViewModeActions(): JSX.Element {
-    const { dashboard, canEditDashboard, tiles } = useValues(dashboardLogic)
+    const { dashboard, canEditDashboard, tiles, isMinimalViewActive } = useValues(dashboardLogic)
     const { setDashboardMode, loadDashboard } = useActions(dashboardLogic)
     const { showAddInsightToDashboardModal } = useActions(addInsightToDashboardLogic)
     const { push } = useActions(router)
@@ -100,92 +100,100 @@ export function ViewModeActions(): JSX.Element {
 
     return (
         <>
-            <LemonButton
-                type="secondary"
-                data-attr="dashboard-share-button"
-                onClick={() => push(urls.dashboardSharing(dashboard.id))}
-                size="small"
-                icon={<IconShare fontSize="16" />}
-                disabledReason={tiles.length === 0 ? 'Add at least one tile before sharing this dashboard' : undefined}
-            >
-                Share
-            </LemonButton>
-            {canEditDashboard && (
-                <AppShortcut
-                    name="EnterEditMode"
-                    scope={Scene.Dashboard}
-                    keybind={[keyBinds.edit]}
-                    intent="Enter edit mode"
-                    interaction="click"
-                    disabled={tiles.length === 0}
-                >
+            {!isMinimalViewActive && (
+                <>
                     <LemonButton
                         type="secondary"
-                        data-attr="dashboard-edit-mode-button"
-                        onClick={() => setDashboardMode(DashboardMode.Edit, DashboardEventSource.SceneCommonButtons)}
+                        data-attr="dashboard-share-button"
+                        onClick={() => push(urls.dashboardSharing(dashboard.id))}
                         size="small"
-                        icon={<IconGridMasonry fontSize="16" />}
-                        tooltip="Edit layout"
-                        tooltipPlacement="top"
-                        disabledReason={tiles.length === 0 ? 'Add at least one tile to edit layout' : undefined}
+                        icon={<IconShare fontSize="16" />}
+                        disabledReason={
+                            tiles.length === 0 ? 'Add at least one tile before sharing this dashboard' : undefined
+                        }
                     >
-                        Edit layout
+                        Share
                     </LemonButton>
-                </AppShortcut>
-            )}
-            <MaxTool
-                identifier="upsert_dashboard"
-                context={{
-                    current_dashboard: {
-                        id: dashboard.id,
-                        name: dashboard.name,
-                        description: dashboard.description,
-                        tags: dashboard.tags,
-                    },
-                }}
-                contextDescription={{
-                    text: dashboard.name,
-                    icon: iconForType('dashboard'),
-                }}
-                active={false}
-                callback={() => loadDashboard({ action: DashboardLoadAction.Update })}
-                position="top-right"
-            >
-                <AccessControlAction
-                    resourceType={AccessControlResourceType.Dashboard}
-                    minAccessLevel={AccessControlLevel.Editor}
-                    userAccessLevel={dashboard.user_access_level}
-                >
-                    <LemonMenu
-                        items={[
-                            {
-                                label: 'Insight',
-                                onClick: showAddInsightToDashboardModal,
-                                'data-attr': 'dashboard-add-insight',
-                            },
-                            {
-                                label: 'Text card',
-                                onClick: () => push(urls.dashboardTextTile(dashboard.id, 'new')),
-                                'data-attr': 'dashboard-add-text-tile',
-                            },
-                            {
-                                label: 'Button',
-                                onClick: () => push(urls.dashboardButtonTile(dashboard.id, 'new')),
-                                'data-attr': 'dashboard-add-button-tile',
-                            },
-                        ]}
-                    >
-                        <LemonButton
-                            type="primary"
-                            data-attr="dashboard-add-tile"
-                            size="small"
-                            icon={<IconPlusSmall />}
+                    {canEditDashboard && (
+                        <AppShortcut
+                            name="EnterEditMode"
+                            scope={Scene.Dashboard}
+                            keybind={[keyBinds.edit]}
+                            intent="Enter edit mode"
+                            interaction="click"
+                            disabled={tiles.length === 0}
                         >
-                            Add
-                        </LemonButton>
-                    </LemonMenu>
-                </AccessControlAction>
-            </MaxTool>
+                            <LemonButton
+                                type="secondary"
+                                data-attr="dashboard-edit-mode-button"
+                                onClick={() =>
+                                    setDashboardMode(DashboardMode.Edit, DashboardEventSource.SceneCommonButtons)
+                                }
+                                size="small"
+                                icon={<IconGridMasonry fontSize="16" />}
+                                tooltip="Edit layout"
+                                tooltipPlacement="top"
+                                disabledReason={tiles.length === 0 ? 'Add at least one tile to edit layout' : undefined}
+                            >
+                                Edit layout
+                            </LemonButton>
+                        </AppShortcut>
+                    )}
+                    <MaxTool
+                        identifier="upsert_dashboard"
+                        context={{
+                            current_dashboard: {
+                                id: dashboard.id,
+                                name: dashboard.name,
+                                description: dashboard.description,
+                                tags: dashboard.tags,
+                            },
+                        }}
+                        contextDescription={{
+                            text: dashboard.name,
+                            icon: iconForType('dashboard'),
+                        }}
+                        active={false}
+                        callback={() => loadDashboard({ action: DashboardLoadAction.Update })}
+                        position="top-right"
+                    >
+                        <AccessControlAction
+                            resourceType={AccessControlResourceType.Dashboard}
+                            minAccessLevel={AccessControlLevel.Editor}
+                            userAccessLevel={dashboard.user_access_level}
+                        >
+                            <LemonMenu
+                                items={[
+                                    {
+                                        label: 'Insight',
+                                        onClick: showAddInsightToDashboardModal,
+                                        'data-attr': 'dashboard-add-insight',
+                                    },
+                                    {
+                                        label: 'Text card',
+                                        onClick: () => push(urls.dashboardTextTile(dashboard.id, 'new')),
+                                        'data-attr': 'dashboard-add-text-tile',
+                                    },
+                                    {
+                                        label: 'Button',
+                                        onClick: () => push(urls.dashboardButtonTile(dashboard.id, 'new')),
+                                        'data-attr': 'dashboard-add-button-tile',
+                                    },
+                                ]}
+                            >
+                                <LemonButton
+                                    type="primary"
+                                    data-attr="dashboard-add-tile"
+                                    size="small"
+                                    icon={<IconPlusSmall />}
+                                >
+                                    Add
+                                </LemonButton>
+                            </LemonMenu>
+                        </AccessControlAction>
+                    </MaxTool>
+                </>
+            )}
         </>
     )
 }

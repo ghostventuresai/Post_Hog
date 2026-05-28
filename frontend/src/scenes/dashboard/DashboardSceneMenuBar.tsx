@@ -76,8 +76,11 @@ function DashboardSceneMenuBarInner(): JSX.Element | null {
         effectiveDashboardVariableOverrides,
         tiles,
         apiUrl,
+        minimalViewEnabled,
+        isMinimalViewFeatureEnabled,
     } = useValues(dashboardLogic)
-    const { setDashboardMode, updateDashboardTags, togglePinned, setTerraformModalOpen } = useActions(dashboardLogic)
+    const { setDashboardMode, updateDashboardTags, togglePinned, setTerraformModalOpen, setMinimalViewEnabled } =
+        useActions(dashboardLogic)
     const { startExport } = useActions(exportsLogic)
     const { createNotebookFromDashboard } = useActions(notebooksModel)
     const { showInsightColorsModal } = useActions(dashboardInsightColorsModalLogic)
@@ -127,6 +130,7 @@ function DashboardSceneMenuBarInner(): JSX.Element | null {
     const showCreateMenu = canEditDashboard // notebook + subscribe both gated on canEdit
     const showEditMenu = true // duplicate always
     const showFileMenu = true
+    const showViewMenu = true
     const showMetadataMenu = true
 
     return (
@@ -304,6 +308,19 @@ function DashboardSceneMenuBarInner(): JSX.Element | null {
                     >
                         Pinned
                     </SceneMenuBarCheckboxItem>
+                </SceneMenuBarMenu>
+            )}
+            {showViewMenu && (
+                <SceneMenuBarMenu label="View" dataAttr={`${RESOURCE_TYPE}-menubar-view`}>
+                    {isMinimalViewFeatureEnabled && (
+                        <SceneMenuBarCheckboxItem
+                            checked={minimalViewEnabled}
+                            onCheckedChange={(checked) => setMinimalViewEnabled(checked)}
+                            data-attr={`${RESOURCE_TYPE}-menubar-minimal-view`}
+                        >
+                            Minimal view
+                        </SceneMenuBarCheckboxItem>
+                    )}
                     <SceneMenuBarCheckboxItem
                         checked={dashboardMode === DashboardMode.Fullscreen}
                         onCheckedChange={(checked) => {

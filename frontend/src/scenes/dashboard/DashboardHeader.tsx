@@ -20,7 +20,8 @@ export const DASHBOARD_CANNOT_EDIT_MESSAGE =
     "You don't have edit permissions for this dashboard. Ask a dashboard collaborator with edit access to add you."
 
 export function DashboardHeader(): JSX.Element | null {
-    const { dashboard, dashboardLoading, dashboardMode, canEditDashboard } = useValues(dashboardLogic)
+    const { dashboard, dashboardLoading, dashboardMode, canEditDashboard, isMinimalViewActive } =
+        useValues(dashboardLogic)
     const { setDashboardMode, loadDashboard } = useActions(dashboardLogic)
     const { updateDashboard } = useActions(dashboardsModel)
 
@@ -41,7 +42,7 @@ export function DashboardHeader(): JSX.Element | null {
 
             <SceneTitleSection
                 name={dashboard?.name}
-                description={dashboard?.description}
+                description={isMinimalViewActive ? null : dashboard?.description}
                 resourceType={{
                     type: sceneConfigurations[Scene.Dashboard].iconType || 'default_icon_type',
                 }}

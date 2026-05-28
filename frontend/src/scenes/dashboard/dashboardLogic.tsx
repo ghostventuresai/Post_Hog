@@ -249,6 +249,7 @@ export const dashboardLogic = kea<dashboardLogicType>([
          **/
         setAutoRefresh: (enabled: boolean, interval: number) => ({ enabled, interval }),
         resetInterval: true,
+        setMinimalViewEnabled: (enabled: boolean) => ({ enabled }),
 
         /*
          * Dashboard filters & variables.
@@ -966,6 +967,13 @@ export const dashboardLogic = kea<dashboardLogicType>([
                 setAutoRefresh: (_, { enabled, interval }) => ({ enabled, interval }),
             },
         ],
+        minimalViewEnabled: [
+            false,
+            { persist: true },
+            {
+                setMinimalViewEnabled: (_, { enabled }) => enabled,
+            },
+        ],
         shouldReportOnAPILoad: [
             /* Whether to report viewed/analyzed events after the API is loaded (and this logic is mounted).
             We need this because the DashboardView component might be mounted (and subsequent `useEffect`) before the API request
@@ -1152,6 +1160,20 @@ export const dashboardLogic = kea<dashboardLogicType>([
                 const hasSSESupport = typeof EventSource !== 'undefined'
                 return hasFeatureFlag && hasSSESupport
             },
+        ],
+        isMinimalViewFeatureEnabled: [
+            (s) => [s.featureFlags],
+            (featureFlags): boolean => !!featureFlags[FEATURE_FLAGS.DASHBOARD_MINIMAL_VIEW],
+        ],
+        isMinimalViewActive: [
+            (s) => [s.isMinimalViewFeatureEnabled, s.minimalViewEnabled],
+            (isMinimalViewFeatureEnabled, minimalViewEnabled): boolean =>
+                isMinimalViewFeatureEnabled && minimalViewEnabled,
+        ],
+        shouldHideDashboardFilterBar: [
+            (s) => [s.isMinimalViewActive, s.placement],
+            (isMinimalViewActive, placement): boolean =>
+                isMinimalViewActive && placement === DashboardPlacement.Dashboard,
         ],
         canAutoPreview: [
             (s) => [s.dashboard],

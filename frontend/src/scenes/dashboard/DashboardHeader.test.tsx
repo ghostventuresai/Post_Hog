@@ -3,6 +3,7 @@ import '@testing-library/jest-dom'
 import { cleanup, render } from '@testing-library/react'
 import { BindLogic } from 'kea'
 
+import { FEATURE_FLAGS } from 'lib/constants'
 import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 import { DashboardEventSource } from 'lib/utils/eventUsageLogic'
 
@@ -49,6 +50,26 @@ function makeDashboard(overrides: Record<string, any> = {}): DashboardType<Query
     return { ...MOCK_DASHBOARD, ...overrides }
 }
 
+function setDashboardHeaderFeatureFlags({
+    minimalViewFlag = false,
+    sceneMenuBar = false,
+}: {
+    minimalViewFlag?: boolean
+    sceneMenuBar?: boolean
+}): void {
+    const flags: string[] = []
+    const variants: Record<string, boolean> = {}
+    if (sceneMenuBar) {
+        flags.push(FEATURE_FLAGS.SCENE_MENU_BAR)
+        variants[FEATURE_FLAGS.SCENE_MENU_BAR] = true
+    }
+    if (minimalViewFlag) {
+        flags.push(FEATURE_FLAGS.DASHBOARD_MINIMAL_VIEW)
+        variants[FEATURE_FLAGS.DASHBOARD_MINIMAL_VIEW] = true
+    }
+    featureFlagLogic.actions.setFeatureFlags(flags, variants)
+}
+
 beforeAll(() => {
     const root = document.createElement('div')
     root.id = 'root'
@@ -66,6 +87,7 @@ describe('DashboardHeader', () => {
         })
         initKeaTests()
         featureFlagLogic.mount()
+        setDashboardHeaderFeatureFlags({})
     })
 
     afterEach(() => {
@@ -75,11 +97,22 @@ describe('DashboardHeader', () => {
     function renderHeader(opts: {
         dashboard?: DashboardType<QueryBasedInsightModel>
         dashboardMode?: DashboardMode | null
+        minimalViewFlag?: boolean
+        minimalView?: boolean
     }): { logic: ReturnType<typeof dashboardLogic.build> } {
-        const { dashboard = MOCK_DASHBOARD, dashboardMode = null } = opts
+        const { dashboard = MOCK_DASHBOARD, dashboardMode = null, minimalViewFlag = false, minimalView = false } = opts
+
+        setDashboardHeaderFeatureFlags({
+            minimalViewFlag,
+            sceneMenuBar: minimalViewFlag,
+        })
 
         const logic = dashboardLogic({ id: dashboard.id, dashboard })
         logic.mount()
+
+        if (minimalView) {
+            logic.actions.setMinimalViewEnabled(true)
+        }
 
         if (dashboardMode) {
             logic.actions.setDashboardMode(dashboardMode, DashboardEventSource.Browser)
@@ -100,7 +133,35 @@ describe('DashboardHeader', () => {
             dashboardMode: null as DashboardMode | null,
             canEdit: true,
             visible: ['dashboard-share-button', 'dashboard-add-tile', 'dashboard-edit-mode-button'],
-            notVisible: ['dashboard-edit-mode-discard', 'dashboard-edit-mode-save'],
+            notVisible: ['dashboard-edit-mode-discard', 'dashboard-edit-mode-save', 'dashboard-menubar-minimal-view'],
+        },
+        {
+            scenario: 'Minimal view flag on, toggle off',
+            dashboardMode: null as DashboardMode | null,
+            canEdit: true,
+            minimalViewFlag: true,
+            visible: [
+                'dashboard-menubar-view',
+                'dashboard-share-button',
+                'dashboard-add-tile',
+                'dashboard-edit-mode-button',
+            ],
+            notVisible: ['dashboard-edit-mode-discard', 'dashboard-edit-mode-save', 'dashboard-menubar-minimal-view'],
+        },
+        {
+            scenario: 'Minimal view, can edit',
+            dashboardMode: null as DashboardMode | null,
+            canEdit: true,
+            minimalViewFlag: true,
+            minimalView: true,
+            visible: ['dashboard-menubar-view'],
+            notVisible: [
+                'dashboard-add-tile',
+                'dashboard-share-button',
+                'dashboard-edit-mode-button',
+                'dashboard-edit-mode-discard',
+                'dashboard-edit-mode-save',
+            ],
         },
         {
             scenario: 'View mode, cannot edit',
@@ -123,19 +184,22 @@ describe('DashboardHeader', () => {
             visible: ['dashboard-exit-presentation-mode'],
             notVisible: ['dashboard-share-button', 'dashboard-edit-mode-save'],
         },
-    ])('$scenario shows correct action buttons', ({ dashboardMode, canEdit, visible, notVisible }) => {
-        const dashboard = makeDashboard({
-            user_access_level: canEdit ? AccessControlLevel.Editor : AccessControlLevel.Viewer,
-        })
-        const { logic } = renderHeader({ dashboard, dashboardMode })
+    ])(
+        '$scenario shows correct action buttons',
+        ({ dashboardMode, canEdit, minimalViewFlag, minimalView, visible, notVisible }) => {
+            const dashboard = makeDashboard({
+                user_access_level: canEdit ? AccessControlLevel.Editor : AccessControlLevel.Viewer,
+            })
+            const { logic } = renderHeader({ dashboard, dashboardMode, minimalViewFlag, minimalView })
 
-        for (const attr of visible) {
-            expect(document.querySelector(`[data-attr="${attr}"]`)).toBeInTheDocument()
-        }
-        for (const attr of notVisible) {
-            expect(document.querySelector(`[data-attr="${attr}"]`)).not.toBeInTheDocument()
-        }
+            for (const attr of visible) {
+                expect(document.querySelector(`[data-attr="${attr}"]`)).toBeInTheDocument()
+            }
+            for (const attr of notVisible) {
+                expect(document.querySelector(`[data-attr="${attr}"]`)).not.toBeInTheDocument()
+            }
 
-        logic.unmount()
-    })
+            logic.unmount()
+        }
+    )
 })

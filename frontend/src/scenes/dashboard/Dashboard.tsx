@@ -77,6 +77,7 @@ function DashboardScene({ backTo }: { backTo?: { url: string; name: string } }):
         accessDeniedToDashboard,
         refreshAnalysisResult,
         analysisRating,
+        shouldHideDashboardFilterBar,
     } = useValues(dashboardLogic)
     const { layoutZoom } = useValues(dashboardLogic)
     const { currentTeamId } = useValues(teamLogic)
@@ -154,18 +155,20 @@ function DashboardScene({ backTo }: { backTo?: { url: string; name: string } }):
                         </LemonBanner>
                     )}
 
-                    <SceneStickyBar showBorderBottom={false} className="flex gap-2 space-y-0">
-                        <DashboardFilterBar backTo={backTo} />
-                        {dashboardMode === DashboardMode.Edit &&
-                            canEditDashboard &&
-                            [
-                                DashboardPlacement.Dashboard,
-                                DashboardPlacement.ProjectHomepage,
-                                DashboardPlacement.Builtin,
-                            ].includes(placement) && (
-                                <DashboardZoomControl layoutZoom={layoutZoom} setLayoutZoom={setLayoutZoom} />
-                            )}
-                    </SceneStickyBar>
+                    {!shouldHideDashboardFilterBar && (
+                        <SceneStickyBar showBorderBottom={false} className="flex gap-2 space-y-0">
+                            <DashboardFilterBar backTo={backTo} />
+                            {dashboardMode === DashboardMode.Edit &&
+                                canEditDashboard &&
+                                [
+                                    DashboardPlacement.Dashboard,
+                                    DashboardPlacement.ProjectHomepage,
+                                    DashboardPlacement.Builtin,
+                                ].includes(placement) && (
+                                    <DashboardZoomControl layoutZoom={layoutZoom} setLayoutZoom={setLayoutZoom} />
+                                )}
+                        </SceneStickyBar>
+                    )}
 
                     <DashboardItems />
                 </div>
