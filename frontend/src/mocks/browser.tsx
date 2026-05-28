@@ -1,6 +1,8 @@
 import { DecoratorFunction } from '@storybook/types'
 import { rest, setupWorker } from 'msw'
 
+import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
+
 import { handlers } from '~/mocks/handlers'
 import { MockSignature, Mocks, mocksToHandlers } from '~/mocks/utils'
 
@@ -33,6 +35,30 @@ export const mswDecorator = (mocks: Mocks): DecoratorFunction<any> => {
     }
 }
 
-export const setFeatureFlags = (featureFlags: string[]): void => {
-    ;(window as any).POSTHOG_APP_CONTEXT.persisted_feature_flags = featureFlags
+/**
+ * Storybook-only feature-flag mock helper. NOT for production use.
+ *
+ * Accepts either `string[]` (boolean flags — each entry becomes `{key: true}`)
+ * or `Record<string, string | boolean>` (multivariate — set specific variants).
+ *
+ * - Writes the flag keys to `POSTHOG_APP_CONTEXT.persisted_feature_flags`
+ *   (the production-shaped `string[]` field that fresh kea logic mounts read).
+ * - Dispatches the full variants record through `featureFlagLogic.actions.setFeatureFlags`
+ *   so already-mounted consumers update before the visual-regression runner
+ *   captures the snapshot. The kea reducer overwrites state on each dispatch
+ *   so empty input from a story with no `featureFlags` parameter resets state
+ *   for the next story.
+ *
+ * `featureFlagLogic` is mounted but never unmounted — that is intentional in
+ * the storybook iframe lifecycle, where the logic should stick around for
+ * the duration of the session and receive successive dispatches.
+ */
+export const setFeatureFlags = (featureFlags: string[] | Record<string, string | boolean>): void => {
+    const variants: Record<string, string | boolean> = Array.isArray(featureFlags)
+        ? Object.fromEntries(featureFlags.map((f) => [f, true]))
+        : featureFlags
+    const keys = Object.keys(variants)
+    ;(window as any).POSTHOG_APP_CONTEXT.persisted_feature_flags = keys
+    featureFlagLogic.mount()
+    featureFlagLogic.actions.setFeatureFlags(keys, variants)
 }

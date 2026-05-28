@@ -1,19 +1,25 @@
 import clsx from 'clsx'
 import { useActions, useValues } from 'kea'
+import { router } from 'kea-router'
+import posthog from 'posthog-js'
 import React, { useLayoutEffect, useMemo, useState } from 'react'
 
-import { IconCollapse, IconExpand, IconEye, IconHide, IconWarning } from '@posthog/icons'
-import { LemonButton } from '@posthog/lemon-ui'
+import { IconCollapse, IconDashboard, IconExpand, IconEye, IconHide, IconRewindPlay, IconWarning } from '@posthog/icons'
+import { LemonButton, lemonToast } from '@posthog/lemon-ui'
 
+import { AddToDashboardModal } from 'lib/components/AddToDashboard/AddToDashboardModal'
 import {
     InsightBreakdownSummary,
     PropertiesSummary,
     SeriesSummary,
 } from 'lib/components/Cards/InsightCard/InsightDetails'
 import { TopHeading } from 'lib/components/Cards/InsightCard/TopHeading'
+import { FEATURE_FLAGS } from 'lib/constants'
 import { IconOpenInNew } from 'lib/lemon-ui/icons'
+import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 import { insightLogic } from 'scenes/insights/insightLogic'
 import { insightSceneLogic } from 'scenes/insights/insightSceneLogic'
+import { insightsApi } from 'scenes/insights/utils/api'
 import { Scene } from 'scenes/sceneTypes'
 import { urls } from 'scenes/urls'
 
@@ -26,11 +32,12 @@ import {
 import { DataVisualizationNode, InsightVizNode } from '~/queries/schema/schema-general'
 import { QueryContext } from '~/queries/types'
 import { isFunnelsQuery, isHogQLQuery, isInsightVizNode } from '~/queries/utils'
-import { InsightShortId } from '~/types'
+import { InsightShortId, ReplayTabs } from '~/types'
 
 import { MessageStatus } from '../maxLogic'
 import { visualizationTypeToQuery } from '../utils'
 import { MessageTemplate } from './MessageTemplate'
+import { buildRecordingFiltersFromQuery, deriveInsightName } from './visualizationArtifactAnswer.helpers'
 
 interface VisualizationArtifactAnswerProps {
     message: ArtifactMessage & { status?: MessageStatus }
@@ -69,6 +76,18 @@ function InsightSuggestionButton({ tabId }: { tabId: string }): JSX.Element {
 
 const QUERY_CONTEXT_POSTHOG_AI: QueryContext = { limitContext: 'posthog_ai' } as const
 
+type FollowupAction = 'open_new_tab' | 'save_as_insight' | 'add_to_dashboard' | 'see_recordings'
+
+interface FollowupCaptureContext {
+    followup_actions_enabled: boolean
+    is_saved_insight: boolean
+    post_save?: boolean
+}
+
+function captureFollowupAction(action: FollowupAction, context: FollowupCaptureContext): void {
+    posthog.capture('max artifact action clicked', { action, ...context })
+}
+
 export const VisualizationArtifactAnswer = React.memo(function VisualizationArtifactAnswer({
     message,
     content,
@@ -78,9 +97,14 @@ export const VisualizationArtifactAnswer = React.memo(function VisualizationArti
     activeSceneId,
 }: VisualizationArtifactAnswerProps): JSX.Element | null {
     const isSavedInsight = message.source === ArtifactSource.Insight
+    const { featureFlags } = useValues(featureFlagLogic)
+    const followupActionsEnabled = featureFlags[FEATURE_FLAGS.MAX_FOLLOWUP_ACTIONS] === 'test'
 
     const [isSummaryShown, setIsSummaryShown] = useState(false)
     const [isCollapsed, setIsCollapsed] = useState(isEditingInsight)
+    const [savedShortId, setSavedShortId] = useState<InsightShortId | null>(null)
+    const [isSaving, setIsSaving] = useState(false)
+    const [addToDashboardModalOpen, setAddToDashboardModalOpen] = useState(false)
 
     useLayoutEffect(() => {
         setIsCollapsed(isEditingInsight)
@@ -93,6 +117,52 @@ export const VisualizationArtifactAnswer = React.memo(function VisualizationArti
 
     // Get the raw query for height calculation
     const rawQuery = content.query
+
+    const effectiveShortId = savedShortId ?? (isSavedInsight ? (message.artifact_id as InsightShortId) : null)
+    const insightQuery = query as InsightVizNode | DataVisualizationNode | null
+    const recordingFilters = useMemo(
+        () => (insightQuery ? buildRecordingFiltersFromQuery(insightQuery) : null),
+        [insightQuery]
+    )
+
+    const captureContext: FollowupCaptureContext = {
+        followup_actions_enabled: followupActionsEnabled,
+        is_saved_insight: Boolean(effectiveShortId),
+    }
+
+    const handleSaveAsInsight = async (followWith: FollowupAction = 'save_as_insight'): Promise<void> => {
+        if (!insightQuery || isSaving || effectiveShortId) {
+            return
+        }
+        captureFollowupAction(followWith, captureContext)
+        setIsSaving(true)
+        try {
+            const insight = await insightsApi.create({
+                name: deriveInsightName(insightQuery),
+                query: insightQuery,
+                saved: true,
+            })
+            setSavedShortId(insight.short_id)
+            if (followWith === 'save_as_insight') {
+                lemonToast.success('Insight saved', {
+                    button: {
+                        label: 'View insight',
+                        action: () => router.actions.push(urls.insightView(insight.short_id)),
+                    },
+                })
+            } else if (followWith === 'add_to_dashboard') {
+                setAddToDashboardModalOpen(true)
+            }
+        } catch (error) {
+            const detail =
+                error && typeof error === 'object' && 'detail' in error && typeof error.detail === 'string'
+                    ? error.detail
+                    : null
+            lemonToast.error(detail ?? 'Could not save insight')
+        } finally {
+            setIsSaving(false)
+        }
+    }
 
     if (status !== 'completed') {
         return null
@@ -145,7 +215,54 @@ export const VisualizationArtifactAnswer = React.memo(function VisualizationArti
                     {isEditingInsight && activeTabId && activeSceneId === Scene.Insight && (
                         <InsightSuggestionButton tabId={activeTabId} />
                     )}
-                    {!isEditingInsight && (
+                    {!isEditingInsight && followupActionsEnabled && !effectiveShortId && (
+                        <>
+                            <LemonButton
+                                onClick={() => void handleSaveAsInsight('save_as_insight')}
+                                loading={isSaving}
+                                type="primary"
+                                size="xsmall"
+                                data-attr="max-artifact-save-as-insight"
+                            >
+                                Save as insight
+                            </LemonButton>
+                            <LemonButton
+                                onClick={() => void handleSaveAsInsight('add_to_dashboard')}
+                                loading={isSaving}
+                                icon={<IconDashboard />}
+                                size="xsmall"
+                                data-attr="max-artifact-add-to-dashboard"
+                                tooltip="Save and add to a dashboard"
+                            />
+                            {recordingFilters && (
+                                <LemonButton
+                                    to={urls.replay(ReplayTabs.Home, recordingFilters)}
+                                    targetBlank
+                                    icon={<IconRewindPlay />}
+                                    size="xsmall"
+                                    data-attr="max-artifact-see-recordings"
+                                    tooltip="See recordings of these events"
+                                    onClick={() => captureFollowupAction('see_recordings', captureContext)}
+                                />
+                            )}
+                        </>
+                    )}
+                    {!isEditingInsight && followupActionsEnabled && effectiveShortId && (
+                        <LemonButton
+                            to={urls.insightView(effectiveShortId)}
+                            targetBlank
+                            type="primary"
+                            size="xsmall"
+                            icon={<IconOpenInNew />}
+                            data-attr="max-artifact-open-saved-insight"
+                            onClick={() =>
+                                captureFollowupAction('open_new_tab', { ...captureContext, post_save: true })
+                            }
+                        >
+                            Open insight
+                        </LemonButton>
+                    )}
+                    {!isEditingInsight && !followupActionsEnabled && (
                         <LemonButton
                             to={
                                 isSavedInsight
@@ -158,6 +275,8 @@ export const VisualizationArtifactAnswer = React.memo(function VisualizationArti
                             icon={<IconOpenInNew />}
                             size="xsmall"
                             tooltip={isSavedInsight ? 'Open insight' : 'Open as new insight'}
+                            data-attr="max-artifact-open-as-new-insight"
+                            onClick={() => captureFollowupAction('open_new_tab', captureContext)}
                         />
                     )}
                     <LemonButton
@@ -179,6 +298,14 @@ export const VisualizationArtifactAnswer = React.memo(function VisualizationArti
                         </div>
                     )}
                 </>
+            )}
+            {followupActionsEnabled && effectiveShortId && (
+                <AddToDashboardModal
+                    isOpen={addToDashboardModalOpen}
+                    closeModal={() => setAddToDashboardModalOpen(false)}
+                    insightProps={{ dashboardItemId: effectiveShortId }}
+                    canEditInsight={true}
+                />
             )}
         </MessageTemplate>
     )
