@@ -12,6 +12,7 @@ import {
     visualReviewReposQuarantineExpireCreate,
     visualReviewReposQuarantineList,
     visualReviewReposRetrieve,
+    visualReviewRunsAgentReviewCreate,
     visualReviewRunsApproveCreate,
     visualReviewRunsRecomputeCreate,
     visualReviewRunsTolerateCreate,
@@ -64,6 +65,10 @@ export const visualReviewRunSceneLogic = kea<visualReviewRunSceneLogicType>([
         recomputeRunSuccess: true,
         recomputeRunFailure: true,
         markThumbnailFailed: (identifier: string) => ({ identifier }),
+        requestAgentReview: true,
+        requestAgentReviewSuccess: true,
+        requestAgentReviewFailure: true,
+        setAgentReviewModalOpen: (open: boolean) => ({ open }),
     }),
     reducers({
         selectedSnapshotId: [
@@ -104,6 +109,32 @@ export const visualReviewRunSceneLogic = kea<visualReviewRunSceneLogicType>([
                     next.add(identifier)
                     return next
                 },
+            },
+        ],
+        isRequestingAgentReview: [
+            false,
+            {
+                requestAgentReview: () => true,
+                requestAgentReviewSuccess: () => false,
+                requestAgentReviewFailure: () => false,
+            },
+        ],
+        isAgentReviewModalOpen: [
+            false,
+            {
+                setAgentReviewModalOpen: (_, { open }) => open,
+            },
+        ],
+        // Set when a fresh agent review just landed and we're waiting on the
+        // snapshot refetch before opening the modal — that way the modal
+        // doesn't flash the empty state on first review. Cleared by the
+        // loadSnapshotsSuccess listener once the refresh is in.
+        pendingAgentReviewModalOpen: [
+            false,
+            {
+                requestAgentReviewSuccess: () => true,
+                setAgentReviewModalOpen: () => false,
+                requestAgentReviewFailure: () => false,
             },
         ],
     }),
@@ -289,6 +320,13 @@ export const visualReviewRunSceneLogic = kea<visualReviewRunSceneLogicType>([
             actions.loadQuarantinedIdentifiers()
         },
         loadSnapshotsSuccess: () => {
+            // Open the agent-review modal once the refreshed snapshots
+            // have actually landed — the request listener can't await the
+            // loader, so we wait for its success here. Gated on the pending
+            // flag so a normal snapshot refresh doesn't pop the modal.
+            if (values.pendingAgentReviewModalOpen) {
+                actions.setAgentReviewModalOpen(true)
+            }
             const snapshot = values.selectedSnapshot
             if (snapshot) {
                 actions.loadToleratedHashes(snapshot.identifier)
@@ -425,6 +463,30 @@ export const visualReviewRunSceneLogic = kea<visualReviewRunSceneLogicType>([
             } catch (e: any) {
                 actions.recomputeRunFailure()
                 lemonToast.error(e?.detail || e?.message || 'Failed to recompute')
+            }
+        },
+        requestAgentReview: async () => {
+            // Double-submission is prevented by the `loading` prop on the
+            // LemonButton — the reducer flips isRequestingAgentReview to true
+            // *before* this listener body runs (kea fires reducers
+            // synchronously on dispatch), so any guard here would always
+            // refuse the first click.
+            try {
+                // The POST returns the freshly-updated Run DTO inline.
+                const updatedRun = await visualReviewRunsAgentReviewCreate(String(values.currentProjectId), props.runId)
+                // Patch run state without a second GET — the POST is the source of truth.
+                actions.loadRunSuccess(updatedRun)
+                // Kick off a snapshot refetch so per-snapshot chips update.
+                // `actions.loadSnapshots()` returns void (not a promise), so
+                // we can't await it here — the modal is opened in the
+                // loadSnapshotsSuccess listener below, gated on
+                // `pendingAgentReviewModalOpen`, to avoid flashing the empty
+                // state with stale snapshots on first review.
+                actions.loadSnapshots()
+                actions.requestAgentReviewSuccess()
+            } catch (e: any) {
+                actions.requestAgentReviewFailure()
+                lemonToast.error(e?.detail || e?.message || 'Failed to generate agent review')
             }
         },
         unquarantineSnapshot: async ({ snapshot }) => {
