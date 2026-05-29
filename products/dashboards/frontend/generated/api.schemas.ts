@@ -7519,9 +7519,10 @@ export interface UpdateTextTileRequestApi {
  * `remove` - remove
  * `set` - set
  */
-export type ActionEnumApi = (typeof ActionEnumApi)[keyof typeof ActionEnumApi]
+export type BulkUpdateTagsRequestActionEnumApi =
+    (typeof BulkUpdateTagsRequestActionEnumApi)[keyof typeof BulkUpdateTagsRequestActionEnumApi]
 
-export const ActionEnumApi = {
+export const BulkUpdateTagsRequestActionEnumApi = {
     Add: 'add',
     Remove: 'remove',
     Set: 'set',
@@ -7538,7 +7539,7 @@ export interface BulkUpdateTagsRequestApi {
   * `add` - add
   * `remove` - remove
   * `set` - set */
-    action: ActionEnumApi
+    action: BulkUpdateTagsRequestActionEnumApi
     /** Tag names to add, remove, or set. */
     tags: string[]
 }

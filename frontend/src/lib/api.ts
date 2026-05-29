@@ -15,6 +15,14 @@ import { SignalNode } from 'scenes/debug/signals/types'
 import { SignalReport, SignalReportArtefactResponse, SignalSourceConfig } from 'scenes/inbox/types'
 import { MaxBillingContext } from 'scenes/max/maxBillingContextLogic'
 import { NotebookListItemType, NotebookNodeResource, NotebookType } from 'scenes/notebooks/types'
+import {
+    PulseDigestDetail,
+    PulseDigestSummary,
+    PulseFindingFeedbackAction,
+    PulseFindingType,
+    PulseSubscriptionType,
+    PulseWatchedCandidate,
+} from 'scenes/pulse/pulseTypes'
 import { RecordingComment } from 'scenes/session-recordings/player/inspector/playerInspectorLogic'
 import { SessionSummaryContent } from 'scenes/session-recordings/player/player-meta/types'
 import { LINK_PAGE_SIZE, SURVEY_PAGE_SIZE } from 'scenes/surveys/constants'
@@ -679,6 +687,25 @@ export class ApiRequest {
         return this.comments(teamId).addPathComponent(id)
     }
 
+    // # Pulse
+    public pulseDigests(teamId?: TeamType['id']): ApiRequest {
+        return this.environmentsDetail(teamId).addPathComponent('pulse_digests')
+    }
+    public pulseDigest(id: string, teamId?: TeamType['id']): ApiRequest {
+        return this.pulseDigests(teamId).addPathComponent(id)
+    }
+    public pulseFindings(teamId?: TeamType['id']): ApiRequest {
+        return this.environmentsDetail(teamId).addPathComponent('pulse_findings')
+    }
+    public pulseFinding(id: string, teamId?: TeamType['id']): ApiRequest {
+        return this.pulseFindings(teamId).addPathComponent(id)
+    }
+    public pulseSubscriptions(teamId?: TeamType['id']): ApiRequest {
+        return this.environmentsDetail(teamId).addPathComponent('pulse_subscriptions')
+    }
+    public pulseSubscription(id: string, teamId?: TeamType['id']): ApiRequest {
+        return this.pulseSubscriptions(teamId).addPathComponent(id)
+    }
     // # Exports
     public exports(teamId?: TeamType['id']): ApiRequest {
         return this.environmentsDetail(teamId).addPathComponent('exports')
@@ -2745,6 +2772,41 @@ const api = {
             teamId: TeamType['id'] = ApiConfig.getCurrentTeamId()
         ): Promise<CommentType> {
             return new ApiRequest().comment(id, teamId).withAction('reopen').create()
+        },
+    },
+
+    pulse: {
+        async listDigests(): Promise<{ results: PulseDigestSummary[]; count: number }> {
+            return new ApiRequest().pulseDigests().get()
+        },
+        async getDigest(id: string): Promise<PulseDigestDetail> {
+            return new ApiRequest().pulseDigest(id).get()
+        },
+        async listFindings(digestId?: string): Promise<{ results: PulseFindingType[]; count: number }> {
+            const req = new ApiRequest().pulseFindings()
+            return digestId ? req.withQueryString({ digest: digestId }).get() : req.get()
+        },
+        async submitFeedback(
+            findingId: string,
+            action: PulseFindingFeedbackAction,
+            snoozed_until?: string
+        ): Promise<PulseFindingType> {
+            return new ApiRequest()
+                .pulseFinding(findingId)
+                .withAction('feedback')
+                .create({ data: { action, snoozed_until: snoozed_until ?? null } })
+        },
+        async currentSubscription(): Promise<PulseSubscriptionType> {
+            return new ApiRequest().pulseSubscriptions().withAction('current').get()
+        },
+        async watchedCandidates(): Promise<{ results: PulseWatchedCandidate[] }> {
+            return new ApiRequest().pulseSubscriptions().withAction('watched').get()
+        },
+        async createSubscription(data: Partial<PulseSubscriptionType>): Promise<PulseSubscriptionType> {
+            return new ApiRequest().pulseSubscriptions().create({ data })
+        },
+        async updateSubscription(id: string, data: Partial<PulseSubscriptionType>): Promise<PulseSubscriptionType> {
+            return new ApiRequest().pulseSubscription(id).update({ data })
         },
     },
 
