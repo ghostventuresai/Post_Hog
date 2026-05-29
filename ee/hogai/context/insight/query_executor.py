@@ -73,6 +73,7 @@ from ee.hogai.context.insight.format import (
     is_boxplot_query,
 )
 from ee.hogai.tool_errors import MaxToolRetryableError
+from ee.hogai.utils.helpers import assistant_query_to_dict
 from ee.hogai.utils.prompt import format_prompt_string
 from ee.hogai.utils.query import validate_assistant_query
 from ee.hogai.utils.types.base import AnyAssistantGeneratedQuery, AnyPydanticModelQuery
@@ -332,7 +333,7 @@ class AssistantQueryExecutor:
             parent_tag_kwargs = get_query_tags().model_dump(exclude_none=True)
             team = self._team
             user = self._user
-            query_dict = query.model_dump(mode="json")
+            query_dict = assistant_query_to_dict(query)
 
             def process_query_dict_with_tags() -> dict | BaseModel:
                 with tags_context(**parent_tag_kwargs):

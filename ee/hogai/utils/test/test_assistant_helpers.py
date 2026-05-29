@@ -13,6 +13,9 @@ from posthog.schema import (
     AssistantFunnelsQuery,
     AssistantMessage,
     AssistantToolCallMessage,
+    AssistantTrendsActionsNode,
+    AssistantTrendsEventsNode,
+    AssistantTrendsGroupNode,
     AssistantTrendsQuery,
     HumanMessage,
     NodeKind,
@@ -21,6 +24,7 @@ from posthog.schema import (
 )
 
 from ee.hogai.utils.helpers import (
+    assistant_query_to_dict,
     cast_assistant_query,
     convert_tool_messages_to_dict,
     find_start_message,
@@ -700,3 +704,120 @@ class TestCastAssistantQuery(unittest.TestCase):
         self.assertFalse(bool(getattr(result.series[0], "optionalInFunnel", False)))
         self.assertTrue(bool(getattr(result.series[1], "optionalInFunnel", False)))
         self.assertFalse(bool(getattr(result.series[2], "optionalInFunnel", False)))
+
+    @parameterized.expand(
+        [
+            ("$session_duration",),
+            ("$is_bounce",),
+            ("$pageview_count",),
+            ("$screen_count",),
+            ("$autocapture_count",),
+            ("$num_uniq_urls",),
+        ]
+    )
+    def test_session_math_property_type_is_filled_for_events_node(self, math_property: str) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[
+                AssistantTrendsEventsNode(event="$pageview", math="avg", math_property=math_property),
+            ],
+        )
+
+        result = cast_assistant_query(query)
+
+        assert result.kind == "TrendsQuery"
+        assert getattr(result.series[0], "math_property_type", None) == "session_properties"
+
+    def test_session_math_property_type_is_filled_for_actions_node(self) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[
+                AssistantTrendsActionsNode(id=1, name="signed up", math="avg", math_property="$session_duration"),
+            ],
+        )
+
+        result = cast_assistant_query(query)
+
+        assert result.kind == "TrendsQuery"
+        assert getattr(result.series[0], "math_property_type", None) == "session_properties"
+
+    def test_session_math_property_type_left_untouched_for_event_property(self) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[
+                AssistantTrendsEventsNode(event="$pageview", math="avg", math_property="refreshAge"),
+            ],
+        )
+
+        result = cast_assistant_query(query)
+
+        assert result.kind == "TrendsQuery"
+        assert getattr(result.series[0], "math_property_type", None) is None
+
+    def test_session_math_property_type_filled_inside_group_node(self) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[
+                AssistantTrendsGroupNode(
+                    operator="OR",
+                    math="avg",
+                    math_property="$is_bounce",
+                    nodes=[
+                        AssistantTrendsEventsNode(event="$pageview", math="avg", math_property="$is_bounce"),
+                        AssistantTrendsEventsNode(event="$pageleave", math="avg", math_property="$is_bounce"),
+                    ],
+                ),
+            ],
+        )
+
+        result = cast_assistant_query(query)
+
+        assert result.kind == "TrendsQuery"
+        group = result.series[0]
+        assert getattr(group, "math_property_type", None) == "session_properties"
+        for inner in getattr(group, "nodes", []):
+            assert getattr(inner, "math_property_type", None) == "session_properties"
+
+
+class TestAssistantQueryToDict(unittest.TestCase):
+    def test_session_math_property_filled_in_dump(self) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[AssistantTrendsEventsNode(event="$pageview", math="avg", math_property="$is_bounce")],
+        )
+
+        dumped = assistant_query_to_dict(query)
+
+        assert dumped["series"][0]["math_property_type"] == "session_properties"
+
+    def test_event_property_left_untouched_in_dump(self) -> None:
+        query = AssistantTrendsQuery(
+            kind=NodeKind.TRENDS_QUERY,
+            series=[AssistantTrendsEventsNode(event="$pageview", math="avg", math_property="refreshAge")],
+        )
+
+        dumped = assistant_query_to_dict(query)
+
+        assert "math_property_type" not in dumped["series"][0]
+
+    def test_no_op_for_non_trends_query(self) -> None:
+        query = AssistantFunnelsQuery(
+            kind=NodeKind.FUNNELS_QUERY,
+            series=[AssistantFunnelsEventsNode(event="signed up"), AssistantFunnelsEventsNode(event="purchase")],
+        )
+
+        dumped = assistant_query_to_dict(query)
+
+        assert dumped["kind"] == "FunnelsQuery"
+        assert all("math_property_type" not in node for node in dumped["series"])
+
+
+class TestSessionMathPropertiesAllowlist(unittest.TestCase):
+    def test_runner_allowlist_is_imported(self) -> None:
+        from posthog.hogql_queries.insights.trends.aggregation_operations import (
+            ALLOWED_SESSION_MATH_PROPERTIES as runner_allowlist,
+        )
+
+        from ee.hogai.utils import helpers
+
+        assert helpers.ALLOWED_SESSION_MATH_PROPERTIES is runner_allowlist

@@ -38,12 +38,15 @@ from posthog.schema import (
 
 from posthog.event_usage import EventSource
 from posthog.hogql_queries.ai.team_taxonomy_query_runner import TeamTaxonomyQueryRunner
+from posthog.hogql_queries.insights.trends.aggregation_operations import ALLOWED_SESSION_MATH_PROPERTIES
 from posthog.hogql_queries.query_runner import ExecutionMode
 from posthog.models import Team
 from posthog.taxonomy.taxonomy import CORE_FILTER_DEFINITIONS_BY_GROUP
 
 from ee.hogai.utils.anthropic import SUPPORTED_ANTHROPIC_BLOCKS
 from ee.hogai.utils.types.base import (
+    AnyAssistantGeneratedQuery,
+    AnyPydanticModelQuery,
     ArtifactRefMessage,
     AssistantDispatcherEvent,
     AssistantMessageUnion,
@@ -359,6 +362,34 @@ def normalize_ai_message(message: AIMessage | AIMessageChunk) -> list[AssistantM
     return messages
 
 
+def _fill_session_math_property_type(series: list[dict[str, Any]]) -> None:
+    """
+    Inject ``math_property_type="session_properties"`` into each series node whose ``math_property``
+    is a session-level property. ``AssistantTrendsEventsNode`` / ``AssistantTrendsActionsNode`` omit
+    this field from the LLM-facing schema so the model doesn't have to learn when to set it; the
+    runner still needs it to trigger session-level aggregation (see ``aggregating_on_session_property``).
+    Mutates ``series`` in place.
+    """
+    for node in series:
+        if node.get("kind") == "GroupNode":
+            _fill_session_math_property_type(node.get("nodes") or [])
+        if node.get("math_property") in ALLOWED_SESSION_MATH_PROPERTIES:
+            node["math_property_type"] = "session_properties"
+
+
+def assistant_query_to_dict(query: AnyPydanticModelQuery | AnyAssistantGeneratedQuery) -> dict[str, Any]:
+    """
+    Dump an assistant query to a JSON-compatible dict and reattach fields the assistant schema
+    hides from the LLM. Use this anywhere an assistant query is about to be passed to
+    ``process_query_dict`` / ``QuerySchemaRoot.model_validate`` — the assistant types omit
+    ``math_property_type`` for trends, but the runner still needs it set on session math.
+    """
+    dumped: dict[str, Any] = query.model_dump(mode="json")
+    if dumped.get("kind") == "TrendsQuery":
+        _fill_session_math_property_type(dumped.get("series") or [])
+    return dumped
+
+
 def cast_assistant_query(
     query: AssistantTrendsQuery | AssistantFunnelsQuery | AssistantRetentionQuery | AssistantHogQLQuery,
 ) -> TrendsQuery | FunnelsQuery | RetentionQuery | HogQLQuery:
@@ -366,7 +397,7 @@ def cast_assistant_query(
     Convert AssistantQuery types to regular Query types that the frontend expects.
     """
     if query.kind == "TrendsQuery":
-        return TrendsQuery(**query.model_dump())
+        return TrendsQuery(**assistant_query_to_dict(query))
     elif query.kind == "FunnelsQuery":
         return FunnelsQuery(**query.model_dump())
     elif query.kind == "RetentionQuery":
