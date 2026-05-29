@@ -3,7 +3,7 @@ import { combineUrl, router } from 'kea-router'
 import { Suspense, lazy } from 'react'
 
 import { IconWrench } from '@posthog/icons'
-import { LemonButton, LemonTag, Spinner, SpinnerOverlay, Tooltip } from '@posthog/lemon-ui'
+import { LemonBanner, LemonButton, LemonTag, Spinner, SpinnerOverlay, Tooltip } from '@posthog/lemon-ui'
 
 import { AccessControlAction } from 'lib/components/AccessControlAction'
 import { TZLabel } from 'lib/components/TZLabel'
@@ -93,10 +93,19 @@ function SessionSceneWrapper(): JSX.Element {
     const showFeedback = !!featureFlags[FEATURE_FLAGS.POSTHOG_AI_CONVERSATION_FEEDBACK_LLMA_SESSIONS]
     const showSentiment = !!featureFlags[FEATURE_FLAGS.LLM_ANALYTICS_SENTIMENT]
 
-    const { traces, responseLoading, responseError, sessionTurns, hasMoreData, nextDataLoading, summariesLoading } =
-        useValues(aiObservabilitySessionDataLogic)
+    const {
+        traces,
+        responseLoading,
+        responseError,
+        sessionTurns,
+        hasMoreData,
+        nextDataLoading,
+        summariesLoading,
+        bulkLoadError,
+        bulkLoading,
+    } = useValues(aiObservabilitySessionDataLogic)
     const { sessionId } = useValues(aiObservabilitySessionLogic)
-    const { summarizeAllTraces, loadNextData } = useActions(aiObservabilitySessionDataLogic)
+    const { summarizeAllTraces, loadNextData, loadAllSessionEvents } = useActions(aiObservabilitySessionDataLogic)
     const { dataProcessingAccepted } = useValues(maxGlobalLogic)
     // Compute the URL search-param passthrough once for the page, not per turn —
     // every `SessionTurnView` consumes the same `traceSearchParams`.
@@ -164,6 +173,22 @@ function SessionSceneWrapper(): JSX.Element {
                     />
                 )}
             </header>
+
+            {bulkLoadError && (
+                <LemonBanner
+                    type="error"
+                    action={{
+                        children: 'Retry',
+                        onClick: loadAllSessionEvents,
+                        loading: bulkLoading,
+                    }}
+                >
+                    <div className="space-y-1">
+                        <p className="font-semibold">Couldn't load session content</p>
+                        <p>{bulkLoadError}</p>
+                    </div>
+                </LemonBanner>
+            )}
 
             <div className="flex flex-col">
                 {sessionTurns.map((turn) => (
@@ -250,14 +275,12 @@ function SessionTurnView({
     showSessionSummarization: boolean
     traceSearchParams: Record<string, unknown>
 }): JSX.Element {
-    const { traceSummaries, loadingFullTraces, fullTraces, stepsExpandedTraceIds, expandedGenerationIds } = useValues(
-        aiObservabilitySessionDataLogic
-    )
-    const { toggleSteps, toggleGenerationExpanded, loadFullTrace } = useActions(aiObservabilitySessionDataLogic)
+    const { traceSummaries, fullTraces, bulkLoading, stepsExpandedTraceIds, expandedGenerationIds } =
+        useValues(aiObservabilitySessionDataLogic)
+    const { toggleSteps, toggleGenerationExpanded } = useActions(aiObservabilitySessionDataLogic)
 
     const trace = turn.trace
     const summary: TraceSummary | undefined = traceSummaries[trace.id]
-    const isLoading = loadingFullTraces.has(trace.id)
     const stepsShown = stepsExpandedTraceIds.has(trace.id)
     const fullTrace = fullTraces[trace.id]
     const baseTraceParams = {
@@ -282,7 +305,7 @@ function SessionTurnView({
                         <TurnSummaryLine summary={summary} summaryUrl={summaryUrl} />
                     )}
 
-                    <TurnBody turn={turn} isLoading={isLoading} onLoad={() => loadFullTrace(trace.id)} />
+                    <TurnBody turn={turn} isLoading={bulkLoading} />
 
                     {turn.tools.length > 0 && (
                         <div className="flex items-center gap-1.5 flex-wrap text-xs text-muted">
@@ -372,15 +395,7 @@ function TurnSummaryLine({ summary, summaryUrl }: { summary: TraceSummary; summa
     )
 }
 
-function TurnBody({
-    turn,
-    isLoading,
-    onLoad,
-}: {
-    turn: SessionTurn
-    isLoading: boolean
-    onLoad: () => void
-}): JSX.Element {
+function TurnBody({ turn, isLoading }: { turn: SessionTurn; isLoading: boolean }): JSX.Element {
     if (isLoading) {
         return (
             <div className="flex items-center gap-2 text-muted text-sm py-2">
@@ -390,13 +405,7 @@ function TurnBody({
         )
     }
     if (!turn.isLoaded) {
-        return (
-            <div className="py-2">
-                <LemonButton size="small" type="secondary" onClick={onLoad}>
-                    Show conversation
-                </LemonButton>
-            </div>
-        )
+        return <div className="text-muted text-sm py-2">Could not load this trace.</div>
     }
     if (!turn.userVisibleTurn) {
         return <div className="text-muted text-sm py-2">No conversational turn to render in this trace.</div>

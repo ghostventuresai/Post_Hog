@@ -10,7 +10,9 @@ import { insightVizDataNodeKey } from '~/queries/nodes/InsightViz/InsightViz'
 import {
     AnyResponseType,
     DataTableNode,
+    HogQLQuery,
     LLMTrace,
+    LLMTraceEvent,
     NodeKind,
     TraceQuery,
     TracesQueryResponse,
@@ -30,18 +32,118 @@ export interface TraceSummary {
     error: string | null
 }
 
-// Eager-load the first N traces on mount; later turns render a "Show conversation"
-// button. Picking first N and not first and last N, because cross-trace dedup walks
-// chronologically and accumulates `seenSignatures`; any gap in loaded turns would
-// let the later turns' running history show as "new" content.
-// Most sessions have less than 10 turns, a proper fix later is a bulk query.
-const AUTO_LOAD_LIMIT = 10
-
 export interface SessionDataLogicProps {
     sessionId: string
     query: DataTableNode
     cachedResults?: AnyResponseType | null
     tabId?: string
+}
+
+// Heavy AI props are extracted into dedicated `ai_events` columns; the
+// renderer expects them merged back into `properties` (same shape that
+// `merge_heavy_properties` produces on the backend for TraceQuery).
+const HEAVY_COLUMN_KEYS: readonly string[] = [
+    '$ai_input',
+    '$ai_output',
+    '$ai_output_choices',
+    '$ai_input_state',
+    '$ai_output_state',
+    '$ai_tools',
+]
+
+function parseEventRow(row: unknown[]): { traceId: string; event: LLMTraceEvent } {
+    // ai_events rows carry 6 trailing heavy columns; the events fallback rows
+    // have none. `heavy` is `[]` in the latter case, so the merge loop below
+    // is a no-op without needing an explicit branch.
+    const [traceId, id, event, createdAt, properties, ...heavy] = row as [
+        string,
+        string,
+        string,
+        string,
+        string,
+        ...(string | null)[],
+    ]
+    // ClickHouse hands `properties` back as a JSON-encoded String column.
+    // If parsing fails (corruption, encoding bug, schema drift) render the
+    // event with empty properties rather than failing the whole bulk load.
+    let parsedProperties: Record<string, any> = {}
+    try {
+        const parsed = JSON.parse(properties)
+        if (parsed && typeof parsed === 'object') {
+            parsedProperties = parsed
+        }
+    } catch (parseError) {
+        console.warn('Failed to parse event properties JSON', { id, parseError })
+    }
+    for (let i = 0; i < HEAVY_COLUMN_KEYS.length; i++) {
+        const raw = heavy[i]
+        if (raw == null || raw === '') {
+            continue
+        }
+        const key = HEAVY_COLUMN_KEYS[i]
+        try {
+            parsedProperties[key] = JSON.parse(raw)
+        } catch (parseError) {
+            // Heavy columns are raw JSON snippets — leave the string in
+            // place rather than dropping the field if parsing fails.
+            parsedProperties[key] = raw
+            console.warn('Failed to parse heavy AI column JSON', { id, key, parseError })
+        }
+    }
+    return {
+        traceId,
+        event: {
+            id,
+            event,
+            createdAt,
+            properties: parsedProperties,
+        },
+    }
+}
+
+// Below 5000 there are sessions being cut, although unlikely relevant for the sessions page,
+// this limit keeps them included to be safe.
+const SESSION_EVENTS_QUERY_LIMIT = 5000
+
+// Absorbs ingestion lag between an event firing and ClickHouse visibility (Mirrors `CAPTURE_RANGE_MINUTES = 10`)
+const INGESTION_LAG_BUFFER_MS = 10 * 60 * 1000
+
+// `trace.createdAt` is the trace's earliest event timestamp. Later events within the
+// same trace (final $ai_generation, summary $ai_metric, completion $ai_trace) can land
+// after that
+const LATE_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000
+
+function buildEventsFallbackQuery(sessionId: string, traces: LLMTrace[]): HogQLQuery | null {
+    const traceTimestamps = traces
+        .map((trace) => new Date(trace.createdAt).getTime())
+        .filter((ts) => Number.isFinite(ts))
+    if (traceTimestamps.length === 0) {
+        return null
+    }
+    // Capping by timestamp for performance
+    const minTs = new Date(Math.min(...traceTimestamps) - INGESTION_LAG_BUFFER_MS).toISOString()
+    const maxTs = new Date(Math.max(...traceTimestamps) + LATE_EVENTS_WINDOW_MS).toISOString()
+    const traceIds = traces.map((trace) => trace.id).filter((id) => typeof id === 'string' && id !== '')
+    return {
+        kind: NodeKind.HogQLQuery,
+        query: `
+            SELECT
+                toString(properties.$ai_trace_id) AS trace_id,
+                toString(uuid) AS id,
+                event,
+                toString(timestamp) AS created_at,
+                properties
+            FROM events
+            WHERE event IN ('$ai_generation', '$ai_span', '$ai_trace', '$ai_metric', '$ai_feedback', '$ai_embedding')
+              AND properties.$ai_session_id = {sessionId}
+              AND properties.$ai_trace_id IN {traceIds}
+              AND timestamp >= toDateTime({minTs})
+              AND timestamp <= toDateTime({maxTs})
+            ORDER BY trace_id, timestamp
+            LIMIT ${SESSION_EVENTS_QUERY_LIMIT}
+        `,
+        values: { sessionId, traceIds, minTs, maxTs },
+    }
 }
 
 function getDataNodeLogicProps({ sessionId, query, cachedResults, tabId }: SessionDataLogicProps): DataNodeLogicProps {
@@ -85,9 +187,9 @@ export const aiObservabilitySessionDataLogic = kea<aiObservabilitySessionDataLog
         // bubbles render as soon as the full trace is fetched, regardless of steps state.
         toggleSteps: (traceId: string) => ({ traceId }),
         toggleGenerationExpanded: (generationId: string) => ({ generationId }),
-        loadFullTrace: (traceId: string) => ({ traceId }),
-        loadFullTraceSuccess: (traceId: string, trace: LLMTrace) => ({ traceId, trace }),
-        loadFullTraceFailure: (traceId: string) => ({ traceId }),
+        loadAllSessionEvents: true,
+        loadAllSessionEventsSuccess: (tracesWithEvents: LLMTrace[]) => ({ tracesWithEvents }),
+        loadAllSessionEventsFailure: (error: string) => ({ error }),
         loadCachedSummaries: (traceIds: string[]) => ({ traceIds }),
         loadCachedSummariesSuccess: (summaries: Array<{ trace_id: string; title: string }>) => ({ summaries }),
         summarizeAllTraces: true,
@@ -129,26 +231,44 @@ export const aiObservabilitySessionDataLogic = kea<aiObservabilitySessionDataLog
         fullTraces: [
             {} as Record<string, LLMTrace>,
             {
-                loadFullTraceSuccess: (state, { traceId, trace }) => ({
-                    ...state,
-                    [traceId]: trace,
-                }),
+                loadAllSessionEventsSuccess: (state, { tracesWithEvents }) => {
+                    const next = { ...state }
+                    for (const trace of tracesWithEvents) {
+                        next[trace.id] = trace
+                    }
+                    return next
+                },
             },
         ],
-        loadingFullTraces: [
+        // Tracks which trace IDs were actually fetched. `fullTraces[id]` can
+        // hold an entry with `events: []` without having been loaded, so it
+        // can't double as the "loaded?" check.
+        loadedTraceIds: [
             new Set<string>() as Set<string>,
             {
-                loadFullTrace: (state, { traceId }) => new Set(state).add(traceId),
-                loadFullTraceSuccess: (state, { traceId }) => {
-                    const newSet = new Set(state)
-                    newSet.delete(traceId)
-                    return newSet
+                loadAllSessionEventsSuccess: (state, { tracesWithEvents }) => {
+                    const next = new Set(state)
+                    for (const trace of tracesWithEvents) {
+                        next.add(trace.id)
+                    }
+                    return next
                 },
-                loadFullTraceFailure: (state, { traceId }) => {
-                    const newSet = new Set(state)
-                    newSet.delete(traceId)
-                    return newSet
-                },
+            },
+        ],
+        bulkLoading: [
+            false,
+            {
+                loadAllSessionEvents: () => true,
+                loadAllSessionEventsSuccess: () => false,
+                loadAllSessionEventsFailure: () => false,
+            },
+        ],
+        bulkLoadError: [
+            null as string | null,
+            {
+                loadAllSessionEvents: () => null,
+                loadAllSessionEventsSuccess: () => null,
+                loadAllSessionEventsFailure: (_, { error }) => error,
             },
         ],
         traceSummaries: [
@@ -204,123 +324,171 @@ export const aiObservabilitySessionDataLogic = kea<aiObservabilitySessionDataLog
         ],
     }),
 
-    listeners(({ actions, values }) => {
-        // Closure-scoped in-flight lock for `loadFullTrace`. Mirrors the pattern used
-        // by sibling lazy loaders in this product (llmPersonsLazyLoaderLogic,
-        // llmSentimentLazyLoaderLogic, traceReviewsLazyLoaderLogic, etc.). We can't
-        // rely on `values.loadingFullTraces` for this guard because kea reducers run
-        // synchronously *before* listeners — so the reducer has already added this
-        // traceId by the time the listener checks. The closure-scoped Set lets the
-        // listener distinguish "this dispatch's reducer just added the id" from
-        // "a prior dispatch is still mid-flight".
-        const inFlightTraceFetches = new Set<string>()
-
-        return {
-            loadCachedSummaries: async ({ traceIds }) => {
-                if (traceIds.length === 0) {
-                    return
+    listeners(({ actions, values, props }) => ({
+        loadCachedSummaries: async ({ traceIds }) => {
+            if (traceIds.length === 0) {
+                return
+            }
+            if (!values.dataProcessingAccepted) {
+                return
+            }
+            const teamId = values.currentTeamId
+            if (!teamId) {
+                return
+            }
+            try {
+                const data = await llmAnalyticsSummarizationBatchCheckCreate(String(teamId), {
+                    trace_ids: traceIds,
+                    mode: 'minimal',
+                })
+                if (data.summaries && data.summaries.length > 0) {
+                    actions.loadCachedSummariesSuccess(data.summaries)
                 }
-
-                if (!values.dataProcessingAccepted) {
-                    return
-                }
-
-                const teamId = values.currentTeamId
-                if (!teamId) {
-                    return
-                }
-
-                try {
-                    const data = await llmAnalyticsSummarizationBatchCheckCreate(String(teamId), {
-                        trace_ids: traceIds,
-                        mode: 'minimal',
-                    })
-
-                    if (data.summaries && data.summaries.length > 0) {
-                        actions.loadCachedSummariesSuccess(data.summaries)
+            } catch {
+                // Silently fail - this is just a cache optimization
+            }
+        },
+        loadAllSessionEvents: async () => {
+            const sessionId = props.sessionId
+            if (!sessionId || values.traces.length === 0) {
+                actions.loadAllSessionEventsSuccess([])
+                return
+            }
+            // Snapshot the trace set this invocation commits to loading. Pagination
+            // can extend `values.traces` while we're awaiting; those new traces
+            // are picked up by the tail check after success — not silently mixed
+            // into this invocation's result with empty events.
+            const initialTraces = values.traces
+            // Primary path: ai_events. Sort key (team_id, trace_id, timestamp) + bloom_filter
+            // on session_id; the bulk-stripped heavy AI props live in dedicated columns here
+            // (events.properties no longer carries them on rolled-out teams).
+            // Explicit LIMIT to not truncate using a default limit.
+            // Excluding session-scoped events that have no ai_trace_id —
+            // mostly ai_metric and ai_embedding events.
+            const aiEventsQuery: HogQLQuery = {
+                kind: NodeKind.HogQLQuery,
+                query: `
+                    SELECT
+                        toString(trace_id) AS trace_id,
+                        toString(uuid) AS id,
+                        event,
+                        toString(timestamp) AS created_at,
+                        properties,
+                        input,
+                        output,
+                        output_choices,
+                        input_state,
+                        output_state,
+                        tools
+                    FROM posthog.ai_events
+                    WHERE event IN ('$ai_generation', '$ai_span', '$ai_trace', '$ai_metric', '$ai_feedback', '$ai_embedding')
+                      AND session_id = {sessionId}
+                      AND trace_id != ''
+                    ORDER BY trace_id, timestamp
+                    LIMIT ${SESSION_EVENTS_QUERY_LIMIT}
+                `,
+                values: { sessionId },
+            }
+            try {
+                const aiEventsResponse = await api.query(aiEventsQuery)
+                const grouped: Record<string, LLMTraceEvent[]> = {}
+                for (const row of aiEventsResponse.results ?? []) {
+                    const { traceId, event } = parseEventRow(row as unknown[])
+                    if (!grouped[traceId]) {
+                        grouped[traceId] = []
                     }
-                } catch {
-                    // Silently fail - this is just a cache optimization
+                    grouped[traceId].push(event)
                 }
-            },
-            loadFullTrace: async ({ traceId }) => {
-                if (values.fullTraces[traceId] || inFlightTraceFetches.has(traceId)) {
-                    return
+
+                // ai_events has a 30-day TTL so we might not have full coverage.
+                // Two cases:
+                // 1. Entirely older session
+                // 2. Long-lived session with some recent and some old traces
+                const missingTraces = initialTraces.filter((trace) => !(trace.id in grouped))
+                if (missingTraces.length > 0) {
+                    const fallbackQuery = buildEventsFallbackQuery(sessionId, missingTraces)
+                    if (fallbackQuery) {
+                        const fallbackResponse = await api.query(fallbackQuery)
+                        for (const row of fallbackResponse.results ?? []) {
+                            const { traceId, event } = parseEventRow(row as unknown[])
+                            if (!grouped[traceId]) {
+                                grouped[traceId] = []
+                            }
+                            grouped[traceId].push(event)
+                        }
+                    }
                 }
-                inFlightTraceFetches.add(traceId)
-                const traceQuery: TraceQuery = {
-                    kind: NodeKind.TraceQuery,
-                    traceId,
+                // Fallback to `[]` covers the rare case where a trace's
+                // events were truncated by the LIMIT.
+                const tracesWithEvents = initialTraces.map((trace) => ({
+                    ...trace,
+                    events: grouped[trace.id] ?? [],
+                }))
+                actions.loadAllSessionEventsSuccess(tracesWithEvents)
+                // Pagination during the awaits above grew `values.traces` beyond
+                // our snapshot. The `traces` subscription won't refire (reference
+                // unchanged since pagination), so re-trigger here.
+                if (values.traces.some((t: LLMTrace) => !values.loadedTraceIds.has(t.id))) {
+                    actions.loadAllSessionEvents()
                 }
-                try {
-                    const response = await api.query(traceQuery)
-                    if (response.results && response.results[0]) {
-                        actions.loadFullTraceSuccess(traceId, response.results[0])
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error'
+                console.error('Error loading bulk session events:', error)
+                actions.loadAllSessionEventsFailure(message)
+            }
+        },
+        summarizeAllTraces: async () => {
+            if (!values.dataProcessingAccepted) {
+                return
+            }
+            const hasSummaries = Object.keys(values.traceSummaries).length > 0
+            for (const trace of values.traces) {
+                actions.summarizeTrace(trace.id, hasSummaries)
+            }
+        },
+        summarizeTrace: async ({ traceId, forceRefresh }) => {
+            const teamId = values.currentTeamId
+            if (!teamId) {
+                actions.summarizeTraceFailure(traceId, 'Team ID not available')
+                return
+            }
+            try {
+                // `loadAllSessionEvents` normally pre-populates `fullTraces`,
+                // and bulk-loaded events work identically as input to
+                // `restoreTree` (which walks parent links via
+                // `properties.$ai_parent_id`). The per-trace `TraceQuery`
+                // below only runs as a fallback when the bulk load failed
+                // or didn't include this trace.
+                let fullTrace: LLMTrace | undefined = values.fullTraces[traceId]
+                if (!fullTrace) {
+                    const traceQuery: TraceQuery = {
+                        kind: NodeKind.TraceQuery,
+                        traceId,
+                    }
+                    const traceResponse = await api.query(traceQuery)
+                    if (traceResponse.results && traceResponse.results[0]) {
+                        fullTrace = traceResponse.results[0]
                     } else {
-                        actions.loadFullTraceFailure(traceId)
+                        throw new Error('Failed to load full trace')
                     }
-                } catch (error) {
-                    console.error('Error loading full trace:', error)
-                    actions.loadFullTraceFailure(traceId)
-                } finally {
-                    inFlightTraceFetches.delete(traceId)
                 }
-            },
-            summarizeAllTraces: async () => {
-                if (!values.dataProcessingAccepted) {
-                    return
-                }
-
-                const hasSummaries = Object.keys(values.traceSummaries).length > 0
-                const traces = values.traces
-                for (const trace of traces) {
-                    actions.summarizeTrace(trace.id, hasSummaries)
-                }
-            },
-            summarizeTrace: async ({ traceId, forceRefresh }) => {
-                const teamId = values.currentTeamId
-                if (!teamId) {
-                    actions.summarizeTraceFailure(traceId, 'Team ID not available')
-                    return
-                }
-
-                try {
-                    // First fetch the full trace with all events (session query only has direct children)
-                    let fullTrace: LLMTrace | undefined = values.fullTraces[traceId]
-                    if (!fullTrace) {
-                        const traceQuery: TraceQuery = {
-                            kind: NodeKind.TraceQuery,
-                            traceId,
-                        }
-                        const traceResponse = await api.query(traceQuery)
-                        if (traceResponse.results && traceResponse.results[0]) {
-                            fullTrace = traceResponse.results[0]
-                        } else {
-                            throw new Error('Failed to load full trace')
-                        }
-                    }
-
-                    // Build the hierarchy tree from full trace events
-                    const hierarchy = restoreTree(fullTrace.events || [], traceId)
-
-                    // nosemgrep: prefer-codegen-api
-                    const data = await api.create(`api/environments/${teamId}/llm_analytics/summarization/`, {
-                        summarize_type: 'trace',
-                        mode: 'minimal',
-                        force_refresh: forceRefresh,
-                        data: {
-                            trace: fullTrace,
-                            hierarchy,
-                        },
-                    })
-
-                    actions.summarizeTraceSuccess(traceId, data.summary?.title || 'Untitled trace')
-                } catch (error) {
-                    actions.summarizeTraceFailure(traceId, error instanceof Error ? error.message : 'Unknown error')
-                }
-            },
-        }
-    }),
+                const hierarchy = restoreTree(fullTrace.events || [], traceId)
+                // nosemgrep: prefer-codegen-api
+                const data = await api.create(`api/environments/${teamId}/llm_analytics/summarization/`, {
+                    summarize_type: 'trace',
+                    mode: 'minimal',
+                    force_refresh: forceRefresh,
+                    data: {
+                        trace: fullTrace,
+                        hierarchy,
+                    },
+                })
+                actions.summarizeTraceSuccess(traceId, data.summary?.title || 'Untitled trace')
+            } catch (error) {
+                actions.summarizeTraceFailure(traceId, error instanceof Error ? error.message : 'Unknown error')
+            }
+        },
+    })),
 
     subscriptions(({ actions, values }) => ({
         traces: (traces: LLMTrace[]) => {
@@ -331,10 +499,10 @@ export const aiObservabilitySessionDataLogic = kea<aiObservabilitySessionDataLog
             if (Object.keys(values.traceSummaries).length === 0) {
                 actions.loadCachedSummaries(traces.map((t) => t.id))
             }
-            for (const trace of traces.slice(0, AUTO_LOAD_LIMIT)) {
-                if (!values.fullTraces[trace.id] && !values.loadingFullTraces.has(trace.id)) {
-                    actions.loadFullTrace(trace.id)
-                }
+            // Fire bulk fetch on initial mount and on pagination
+            const hasUnloadedTrace = traces.some((t) => !values.loadedTraceIds.has(t.id))
+            if (!values.bulkLoading && hasUnloadedTrace) {
+                actions.loadAllSessionEvents()
             }
         },
     })),
