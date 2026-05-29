@@ -26,6 +26,7 @@ from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.api.shared import UserBasicSerializer
 from posthog.api.utils import log_activity_from_viewset
 from posthog.auth import InternalAPIAuthentication
+from posthog.cdp.hog_flow_inputs import mask_secret_inputs_for_read, resolve_secret_inputs
 from posthog.cdp.validation import (
     HogFunctionFiltersSerializer,
     InputsSchemaItemSerializer,
@@ -140,22 +141,46 @@ class HogFlowActionSerializer(serializers.Serializer):
                     raise serializers.ValidationError({"template_id": "Template not found"})
             else:
                 input_schema = template.inputs_schema
-                inputs = data.get("config", {}).get("inputs", {})
+                inputs = data.get("config", {}).get("inputs", {}) or {}
+
+                existing_actions = self.context.get("existing_actions_by_id") or {}
+                existing_inputs = (existing_actions.get(data.get("id")) or {}).get("config", {}).get("inputs", {})
+
+                # Resolve secrets and validate non-secrets as two independent computations,
+                # then merge. Keeps the standard inputs validator unaware of secret-only shapes
+                # (placeholders, already-encrypted wrappers) it would otherwise reject.
+                resolved_secrets = resolve_secret_inputs(inputs, input_schema, existing_inputs)
+
+                secret_key_set = {
+                    str(s["key"])
+                    for s in (input_schema or [])
+                    if isinstance(s, dict) and s.get("secret") and "key" in s
+                }
+                non_secret_inputs = {k: v for k, v in inputs.items() if k not in secret_key_set}
+                non_secret_schema = [s for s in (input_schema or []) if not (isinstance(s, dict) and s.get("secret"))]
 
                 function_config_serializer = HogFlowConfigFunctionInputsSerializer(
                     data={
-                        "inputs_schema": input_schema,
-                        "inputs": inputs,
+                        "inputs_schema": non_secret_schema,
+                        "inputs": non_secret_inputs,
                     },
                     context={"function_type": template.type},
                 )
 
+                # In non-draft mode an invalid non-secret input is a hard error. In draft mode
+                # we tolerate it and persist the raw incoming non-secrets, but secrets are
+                # still resolved/encrypted so a draft never stores plaintext secrets.
                 if is_draft:
-                    if function_config_serializer.is_valid():
-                        data["config"]["inputs"] = function_config_serializer.validated_data["inputs"]
+                    validated_non_secrets = (
+                        function_config_serializer.validated_data["inputs"]
+                        if function_config_serializer.is_valid()
+                        else non_secret_inputs
+                    )
                 else:
                     function_config_serializer.is_valid(raise_exception=True)
-                    data["config"]["inputs"] = function_config_serializer.validated_data["inputs"]
+                    validated_non_secrets = function_config_serializer.validated_data["inputs"]
+
+                data["config"]["inputs"] = {**validated_non_secrets, **resolved_secrets}
 
         conditions = data.get("config", {}).get("conditions", [])
 
@@ -321,12 +346,48 @@ class HogFlowSerializer(HogFlowMinimalSerializer):
     variables = HogFlowVariableSerializer(required=False)
 
     def to_internal_value(self, data):
+        # When this serializer is nested (e.g. inside HogFlowInvocationSerializer), DRF does not
+        # bind `self.instance` automatically. Fall back to the outer view's context, matching the
+        # pattern used by HogFunctionSerializer.
+        instance = self.instance or self.context.get("instance")
+
         status = data.get("status")
-        if status is None and self.instance:
-            status = self.instance.status
+        if status is None and instance:
+            status = instance.status
         if status != "active":
             self.context["is_draft"] = True
+
+        # Provide existing actions (keyed by id) to child action serializers so encrypted secret
+        # inputs can be preserved when the payload omits or placeholders them.
+        if instance is not None and isinstance(instance.actions, list):
+            self.context["existing_actions_by_id"] = {
+                action.get("id"): action for action in instance.actions if isinstance(action, dict) and action.get("id")
+            }
+
         return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Mask any inline-encrypted secret inputs on outgoing payloads.
+        actions = data.get("actions") or []
+        if isinstance(actions, list):
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                config = action.get("config") or {}
+                template_id = config.get("template_id")
+                if not template_id:
+                    continue
+                template = HogFunctionTemplate.get_template(template_id)
+                if not template:
+                    continue
+                inputs = config.get("inputs") or {}
+                masked = mask_secret_inputs_for_read(inputs, template.inputs_schema)
+                if masked is not inputs:
+                    config["inputs"] = masked
+                    action["config"] = config
+            data["actions"] = actions
+        return data
 
     class Meta:
         model = HogFlow
