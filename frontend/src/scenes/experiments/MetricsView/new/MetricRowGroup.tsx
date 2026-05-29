@@ -792,7 +792,7 @@ export function MetricRowGroup({
                                 : undefined
                         }
                     >
-                        {renderTooltipContent(tooltipState.variantResult, metric)}
+                        {renderTooltipContent(tooltipState.variantResult, metric, baselineResult.key)}
                     </div>,
                     document.body
                 )}
