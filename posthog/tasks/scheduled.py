@@ -70,6 +70,9 @@ from posthog.tasks.team_metadata import cleanup_stale_expiry_tracking_task, refr
 from posthog.utils import get_crontab, get_instance_region
 
 from products.conversations.backend.tasks import wake_snoozed_tickets
+from products.data_modeling.backend.tasks.cleanup_orphaned_schedules import (  # noqa: F401 — imported so Celery workers register the task
+    cleanup_orphaned_saved_query_schedule,
+)
 from products.data_modeling.backend.tasks.cleanup_test_saved_queries import cleanup_expired_test_saved_queries
 from products.endpoints.backend.tasks import deactivate_stale_materializations
 from products.feature_flags.backend.tasks import (
