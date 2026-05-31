@@ -1,10 +1,19 @@
 import { Placement } from '@floating-ui/react'
 import clsx from 'clsx'
 import { useActions, useValues } from 'kea'
-import { forwardRef, useRef, useState } from 'react'
+import { forwardRef, useEffect, useRef, useState } from 'react'
 
 import { IconCalendar, IconInfo } from '@posthog/icons'
 import { LemonButton, LemonButtonProps, LemonDivider, LemonSwitch, Popover } from '@posthog/lemon-ui'
+import {
+    Button as QuillButton,
+    CUSTOM_RANGE,
+    DateTimePicker,
+    type DateTimeValue,
+    Popover as QuillPopover,
+    PopoverContent as QuillPopoverContent,
+    PopoverTrigger as QuillPopoverTrigger,
+} from '@posthog/quill'
 
 import {
     CUSTOM_OPTION_DESCRIPTION,
@@ -14,6 +23,7 @@ import {
     NO_OVERRIDE_RANGE_PLACEHOLDER,
 } from 'lib/components/DateFilter/types'
 import { dayjs } from 'lib/dayjs'
+import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { LemonCalendarSelect, LemonCalendarSelectProps } from 'lib/lemon-ui/LemonCalendar/LemonCalendarSelect'
 import { LemonCalendarRange } from 'lib/lemon-ui/LemonCalendarRange/LemonCalendarRange'
 import { Tooltip } from 'lib/lemon-ui/Tooltip'
@@ -26,11 +36,33 @@ import { DateMappingOption, PropertyOperator } from '~/types'
 
 import { PropertyFilterDatePicker } from '../PropertyFilters/components/PropertyFilterDatePicker'
 import { dateFilterLogic } from './dateFilterLogic'
+import { dateTimePickerPreferenceLogic } from './dateTimePickerPreferenceLogic'
+import { DateTimePickerToggle } from './DateTimePickerToggle'
 import { FixedRangeWithTimePicker } from './FixedRangeWithTimePicker'
 import { JumpToTimestampPicker } from './JumpToTimestampPicker'
 import { RelativeDateRangeSelector } from './RelativeDateRangeSelector'
 import { RollingDateRangeFilter } from './RollingDateRangeFilter'
 import { DateOption } from './rollingDateRangeFilterLogic'
+
+// Quill quick-range id → PostHog relative-preset string. Preserves the rolling
+// nature of presets across page loads (a stored "-7d" rolls forward; absolute
+// dates do not). IDs come from quill/date-time-ranges.ts; ranges with no
+// PostHog equivalent (5/15/30 minutes) intentionally omitted and fall back to
+// absolute dates.
+const QUILL_RANGE_ID_TO_POSTHOG_PRESET: Record<number, string> = {
+    4: '-1h',
+    5: '-3h',
+    6: '-6h',
+    7: '-12h',
+    8: '-24h',
+    9: '-48h',
+    10: '-7d',
+    11: '-30d',
+    12: '-90d',
+    13: '-6m',
+    14: '-1y',
+    15: '-2y',
+}
 
 export interface DateFilterProps {
     showCustom?: boolean
@@ -166,9 +198,65 @@ export const DateFilter = forwardRef<HTMLButtonElement, RawDateFilterProps>(func
         forceGranularity ?? (dateFromHasTimePrecision ? 'minute' : 'day')
     )
 
+    const rebuildEnabled = useFeatureFlag('DATETIME_PICKER_REBUILD')
+    const { useNewPicker } = useValues(dateTimePickerPreferenceLogic)
+    const useQuillPicker = rebuildEnabled && useNewPicker
+
     const showFixedRangeTimeToggle = allowTimePrecision || allowFixedRangeWithTime
 
-    const popoverOverlay =
+    const [quillValue, setQuillValue] = useState<DateTimeValue>(() => ({
+        start: (rangeDateFrom ?? dayjs()).toDate(),
+        end: (rangeDateTo ?? dayjs()).toDate(),
+        range: CUSTOM_RANGE,
+    }))
+
+    // Set to true right before we self-apply, so the rangeDateFrom/rangeDateTo
+    // sync effect below skips one tick — otherwise our own apply would
+    // immediately overwrite quillValue.range back to CUSTOM_RANGE.
+    const skipNextQuillSyncRef = useRef(false)
+
+    // Re-sync the picker's working value when rangeDateFrom/rangeDateTo change
+    // from outside (e.g. legacy picker selection, URL/prop change, reset).
+    useEffect(() => {
+        if (skipNextQuillSyncRef.current) {
+            skipNextQuillSyncRef.current = false
+            return
+        }
+        const externalStart = (rangeDateFrom ?? dayjs()).toDate()
+        const externalEnd = (rangeDateTo ?? dayjs()).toDate()
+        if (
+            externalStart.getTime() !== quillValue.start.getTime() ||
+            externalEnd.getTime() !== quillValue.end.getTime()
+        ) {
+            setQuillValue({ start: externalStart, end: externalEnd, range: CUSTOM_RANGE })
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [rangeDateFrom, rangeDateTo])
+
+    const handleQuillApply = (val: DateTimeValue): void => {
+        setQuillValue(val)
+        const preset = QUILL_RANGE_ID_TO_POSTHOG_PRESET[val.range.id]
+        skipNextQuillSyncRef.current = true
+        if (preset) {
+            // Preserve the rolling nature of the preset: store the relative
+            // string ("-7d", "-1h", …) instead of absolute dates, so the
+            // window rolls forward on every page load.
+            setDate(preset, null, false, false)
+        } else {
+            setRangeDateFrom(dayjs(val.start))
+            setRangeDateTo(dayjs(val.end))
+            setExplicitDate(false)
+            applyRange()
+        }
+        close()
+    }
+
+    // When a Quill quick range is applied we know its name directly. Otherwise
+    // fall back to the legacy `label` which formats dateFrom/dateTo (and
+    // resolves preset strings like "-7d" → "Last 7 days").
+    const quillTriggerLabel = quillValue.range.id !== CUSTOM_RANGE.id ? quillValue.range.name : label
+
+    const legacyPopoverOverlay =
         view === DateFilterView.FixedRange ? (
             showFixedRangeTimeToggle && fixedRangeGranularity === 'minute' ? (
                 <FixedRangeWithTimePicker
@@ -382,30 +470,63 @@ export const DateFilter = forwardRef<HTMLButtonElement, RawDateFilterProps>(func
             </div>
         )
 
+    if (useQuillPicker) {
+        return (
+            <div className={clsx('relative inline-flex', fullWidth && 'w-full')}>
+                <QuillPopover open={isVisible} onOpenChange={(o) => (o ? open() : close())}>
+                    <QuillPopoverTrigger
+                        render={
+                            <QuillButton
+                                ref={ref}
+                                variant="outline"
+                                size="lg"
+                                id="daterange_selector"
+                                data-attr="date-filter"
+                                disabled={!!disabledReason}
+                                title={disabledReason ?? formatResolvedDateRange(resolvedDateRange) ?? undefined}
+                                className={clsx('gap-1.5', fullWidth && 'w-full justify-start', className)}
+                            >
+                                <IconCalendar />
+                                <span className="text-nowrap">{quillTriggerLabel}</span>
+                            </QuillButton>
+                        }
+                    />
+                    <QuillPopoverContent align="start" sideOffset={4} className="p-0 w-auto">
+                        <DateTimePicker value={quillValue} onApply={handleQuillApply} onCancel={close} />
+                    </QuillPopoverContent>
+                </QuillPopover>
+                <DateTimePickerToggle />
+            </div>
+        )
+    }
+
     return (
         <Popover
             visible={isVisible}
-            overlay={popoverOverlay}
+            overlay={legacyPopoverOverlay}
             placement={dropdownPlacement}
             actionable
             additionalRefs={[rollingDateRangeRef]}
             onClickOutside={close}
             closeParentPopoverOnClickInside={false}
         >
-            <LemonButton
-                ref={ref}
-                id="daterange_selector"
-                size={size ?? 'small'}
-                type={type ?? 'secondary'}
-                disabledReason={disabledReason}
-                data-attr="date-filter"
-                icon={<IconCalendar />}
-                onClick={isVisible ? close : open}
-                fullWidth={fullWidth}
-                tooltip={formatResolvedDateRange(resolvedDateRange)}
-            >
-                <span className={clsx('text-nowrap', className)}>{label}</span>
-            </LemonButton>
+            <div className={clsx('relative', fullWidth && 'w-full')}>
+                <LemonButton
+                    ref={ref}
+                    id="daterange_selector"
+                    size={size ?? 'small'}
+                    type={type ?? 'secondary'}
+                    disabledReason={disabledReason}
+                    data-attr="date-filter"
+                    icon={<IconCalendar />}
+                    onClick={isVisible ? close : open}
+                    fullWidth={fullWidth}
+                    tooltip={formatResolvedDateRange(resolvedDateRange)}
+                >
+                    <span className={clsx('text-nowrap', className)}>{label}</span>
+                </LemonButton>
+                {rebuildEnabled && <DateTimePickerToggle />}
+            </div>
         </Popover>
     )
 })
