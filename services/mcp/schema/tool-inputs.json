@@ -3143,8 +3143,38 @@
         },
         "ReadDataWarehouseSchemaSchema": {
             "type": "object",
-            "properties": {},
-            "description": "No input required. Returns core data warehouse schemas."
+            "properties": {
+                "query": {
+                    "description": "The data warehouse schema query to execute.",
+                    "discriminator": { "propertyName": "kind" },
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string", "const": "data_warehouse_catalog" }
+                            },
+                            "required": ["kind"],
+                            "description": "Returns core PostHog table schemas (events, groups, persons, sessions) plus a catalog listing of every available warehouse table, system table, and view by name. Call this first if you don't yet know which tables exist."
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string", "const": "data_warehouse_tables" },
+                                "table_names": {
+                                    "description": "Specific warehouse, system, view, or core table names to fetch schemas for.",
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": { "type": "string", "minLength": 1 }
+                                }
+                            },
+                            "required": ["kind", "table_names"],
+                            "description": "Returns full column schemas for the named warehouse, system, view, or core tables. Use this after `data_warehouse_catalog` once you know which tables you need."
+                        }
+                    ]
+                }
+            },
+            "required": ["query"],
+            "description": "Returns PostHog data warehouse schemas. Use kind=`data_warehouse_catalog` to list available tables, or kind=`data_warehouse_tables` with `table_names` to fetch full column schemas for specific tables."
         },
         "ScoreDefinitionConfigSchema": {
             "anyOf": [

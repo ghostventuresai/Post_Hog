@@ -615,9 +615,35 @@ export const ExecuteSQLSchema = z.object({
         ),
 })
 
+const ListDataWarehouseCatalogQuerySchema = z
+    .object({
+        kind: z.literal('data_warehouse_catalog'),
+    })
+    .describe(
+        "Returns core PostHog table schemas (events, groups, persons, sessions) plus a catalog listing of every available warehouse table, system table, and view by name. Call this first if you don't yet know which tables exist."
+    )
+
+const GetDataWarehouseTablesQuerySchema = z
+    .object({
+        kind: z.literal('data_warehouse_tables'),
+        table_names: z
+            .array(z.string().min(1))
+            .min(1)
+            .describe('Specific warehouse, system, view, or core table names to fetch schemas for.'),
+    })
+    .describe(
+        'Returns full column schemas for the named warehouse, system, view, or core tables. Use this after `data_warehouse_catalog` once you know which tables you need.'
+    )
+
 export const ReadDataWarehouseSchemaSchema = z
-    .object({})
-    .describe('No input required. Returns core data warehouse schemas.')
+    .object({
+        query: z
+            .discriminatedUnion('kind', [ListDataWarehouseCatalogQuerySchema, GetDataWarehouseTablesQuerySchema])
+            .describe('The data warehouse schema query to execute.'),
+    })
+    .describe(
+        'Returns PostHog data warehouse schemas. Use kind=`data_warehouse_catalog` to list available tables, or kind=`data_warehouse_tables` with `table_names` to fetch full column schemas for specific tables.'
+    )
 
 const ReadEventsQuerySchema = z.object({
     kind: z.literal('events'),
