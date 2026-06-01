@@ -13,32 +13,15 @@ import {
     HealthCheckCategory,
     HealthCheckId,
     HealthCheckStatus,
+    HealthIssue,
+    HealthIssuesResponse,
     OverallHealthStatus,
 } from './healthCheckTypes'
 import type { webAnalyticsHealthLogicType } from './webAnalyticsHealthLogicType'
 
-export interface HealthIssue {
-    id: string
-    kind: string
-    severity: 'critical' | 'warning' | 'info'
-    status: 'active' | 'resolved'
-    dismissed: boolean
-}
-
-export interface HealthIssuesResponse {
-    results: HealthIssue[]
-    count: number
-}
-
 const REFRESH_POLL_INTERVAL_MS = 5000
 const REFRESH_POLL_COUNT = 6
 
-/**
- * Static presentational config for the web analytics checks. The pass/fail decision and the
- * underlying detection now live entirely in the backend Temporal health checks (one `kind` per
- * row in posthog_healthissue); this page only renders the result. Copy, actions, and docs links
- * are pure presentation and stay here.
- */
 interface WebHealthCheckConfig {
     id: HealthCheckId
     kind: string
@@ -322,12 +305,16 @@ export const webAnalyticsHealthLogic = kea<webAnalyticsHealthLogicType>([
                     actions.loadHealthIssues()
                 }
             } catch (error: unknown) {
-                if (error instanceof ApiError && error.status === 429) {
-                    // A refresh ran recently; just reload the latest persisted results.
+                if (error instanceof ApiError) {
+                    // On any API error (including a 429 from a recent refresh), just reload the
+                    // latest persisted results.
                     actions.loadHealthIssues()
                     return
                 }
-                actions.loadHealthIssues()
+                // Re-throw BreakPointError (and any other non-API error) so kea can cancel this
+                // listener properly. Swallowing it lets a superseded poll keep running alongside
+                // the new one, doubling the request rate.
+                throw error
             }
         },
         loadHealthIssuesSuccess: () => {

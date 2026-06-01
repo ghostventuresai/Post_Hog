@@ -38,3 +38,16 @@ export enum HealthCheckId {
 
     WEB_VITALS = 'web_vitals',
 }
+
+export interface HealthIssue {
+    id: string
+    kind: string
+    severity: 'critical' | 'warning' | 'info'
+    status: 'active' | 'resolved'
+    dismissed: boolean
+}
+
+export interface HealthIssuesResponse {
+    results: HealthIssue[]
+    count: number
+}
