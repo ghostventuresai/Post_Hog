@@ -18227,6 +18227,11 @@ export namespace Schemas {
       has_more: boolean;
     }
 
+    export interface GitHubPrepareCallbackRequest {
+      /** Relative URL to redirect to after GitHub setup completes (e.g. account-connected for PostHog Code). */
+      next?: string;
+    }
+
     export interface GitHubRepo {
       id: number;
       name: string;
@@ -39041,6 +39046,11 @@ export namespace Schemas {
       install_url: string;
       /** OAuth or install flow used for this GitHub connection. */
       connect_flow: string;
+    }
+
+    export interface UserGitHubPrepareCallbackRequest {
+      /** GitHub App installation id being managed on github.com. */
+      installation_id: string;
     }
 
     /**

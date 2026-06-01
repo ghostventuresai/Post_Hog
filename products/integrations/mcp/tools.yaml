@@ -109,6 +109,9 @@ tools:
     integrations-github-oauth-authorize-create:
         operation: integrations_github_oauth_authorize_create
         enabled: false
+    integrations-github-prepare-callback-create:
+        operation: integrations_github_prepare_callback_create
+        enabled: false
     integrations-github-repos-refresh-create:
         operation: integrations_github_repos_refresh_create
         enabled: false
@@ -179,6 +182,9 @@ tools:
         enabled: false
     users-integrations-github-destroy:
         operation: users_integrations_github_destroy
+        enabled: false
+    users-integrations-github-prepare-callback-create:
+        operation: users_integrations_github_prepare_callback_create
         enabled: false
     users-integrations-github-repos-refresh-create:
         operation: users_integrations_github_repos_refresh_create
