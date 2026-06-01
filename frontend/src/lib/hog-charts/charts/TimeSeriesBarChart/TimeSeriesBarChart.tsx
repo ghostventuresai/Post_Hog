@@ -132,7 +132,11 @@ export function TimeSeriesBarChart<Meta = unknown>({
         >
             {orientedReferenceLines.length > 0 && <ReferenceLines lines={orientedReferenceLines} />}
             {valueLabelsConfig && (
-                <ValueLabels valueFormatter={valueLabelFormatter} showPercentages={valueLabelsConfig.showPercentages} />
+                <ValueLabels
+                    valueFormatter={valueLabelFormatter}
+                    showPercentages={valueLabelsConfig.showPercentages}
+                    showValues={valueLabelsConfig.showValues}
+                />
             )}
             {children}
         </BarChart>
