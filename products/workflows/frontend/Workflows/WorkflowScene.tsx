@@ -9,6 +9,7 @@ import { ActivityLog } from 'lib/components/ActivityLog/ActivityLog'
 import { LastSavedIndicator } from 'lib/components/LastSavedIndicator'
 import { NotFound } from 'lib/components/NotFound'
 import { useDebouncedValue } from 'lib/hooks/useDebouncedValue'
+import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { LemonTab, LemonTabs } from 'lib/lemon-ui/LemonTabs'
 import { Tooltip } from 'lib/lemon-ui/Tooltip'
 import { useAttachedLogic } from 'lib/logic/scenes/useAttachedLogic'
@@ -21,6 +22,7 @@ import { ActivityScope } from '~/types'
 
 import { batchWorkflowJobsLogic } from './batchWorkflowJobsLogic'
 import { Workflow } from './Workflow'
+import { WorkflowInvocations } from './WorkflowInvocations'
 import { workflowLogic } from './workflowLogic'
 import { WorkflowLogs } from './WorkflowLogs'
 import { WorkflowMetrics } from './WorkflowMetrics'
@@ -57,6 +59,8 @@ export function WorkflowScene(props: WorkflowSceneLogicProps): JSX.Element {
     const showSaving = useDebouncedValue(isAutoSavePending || workflowLoading, 1000)
     const isDraft = originalWorkflow?.status === 'draft'
 
+    const runsV2Enabled = useFeatureFlag('HOG_INVOCATION_RESULTS_RUNS_TAB')
+
     // Attach child logics to the scene logic so they persist across tab switches
     useAttachedLogic(batchJobsLogic, sceneLogic)
     useAttachedLogic(logic, sceneLogic)
@@ -81,6 +85,13 @@ export function WorkflowScene(props: WorkflowSceneLogicProps): JSX.Element {
             key: 'logs',
             content: <WorkflowLogs id={workflowSceneProps.id!} />,
         },
+        runsV2Enabled
+            ? {
+                  label: 'Invocations (preview)',
+                  key: 'invocations',
+                  content: <WorkflowInvocations id={workflowSceneProps.id!} />,
+              }
+            : null,
         {
             label: 'Metrics',
             key: 'metrics',
