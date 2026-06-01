@@ -792,6 +792,9 @@ class SquareSourceConfig(config.Config):
 class StripeSourceConfig(config.Config):
     auth_method: StripeAuthMethodConfig
     stripe_account_id: str | None = None
+    stripe_api_version: Literal["2025-02-24.acacia", "2025-08-27.basil", "2026-02-25.clover"] | None = config.value(
+        default="2026-02-25.clover"
+    )
 
 
 @config.config
