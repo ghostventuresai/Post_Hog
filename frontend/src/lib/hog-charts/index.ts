@@ -91,7 +91,7 @@ export type {
     ReferenceLineVariant,
 } from './overlays/ReferenceLine'
 export { ValueLabels } from './overlays/ValueLabels'
-export type { ValueLabelsProps } from './overlays/ValueLabels'
+export type { ValueLabelContext, ValueLabelFormatter, ValueLabelsProps } from './overlays/ValueLabels'
 export { AxisTitles } from './overlays/AxisTitles'
 export type { AxisTitlesProps } from './overlays/AxisTitles'
 
