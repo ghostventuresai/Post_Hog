@@ -32,6 +32,7 @@ import { convertToHogFunctionFilterGlobal, filterFunctionInstrumented } from '..
 import { createInvocation, createInvocationResult } from '../utils/invocation-utils'
 import { HogInputsService } from './hog-inputs.service'
 import { EmailService } from './messaging/email.service'
+import { PushNotificationService } from './messaging/push-notification.service'
 import { RecipientTokensService } from './messaging/recipient-tokens.service'
 
 /** Narrowed config type for CDP fetch retry settings, used by native/segment destination executors */
@@ -154,6 +155,7 @@ export const getNextRetryTime = (backoffBaseMs: number, backoffMaxMs: number, tr
 export const MAX_ASYNC_STEPS = 5
 export const MAX_HOG_LOGS = 25
 export const EXTEND_OBJECT_KEY = '$$_extend_object'
+export const MAX_FETCH_TIMEOUT_MS = 10000
 
 const hogExecutionDuration = new Histogram({
     name: 'cdp_hog_function_execution_duration_ms',
@@ -184,7 +186,8 @@ export class HogExecutorService {
         private asyncContext: HogExecutorAsyncContext,
         private hogInputsService: HogInputsService,
         private emailService: EmailService,
-        private recipientTokensService: RecipientTokensService
+        private recipientTokensService: RecipientTokensService,
+        private pushNotificationService: PushNotificationService
     ) {}
 
     async buildInputsWithGlobals(
@@ -329,7 +332,7 @@ export class HogExecutorService {
             const nextInvocation: CyclotronJobInvocationHogFunction = result?.invocation ?? invocation
 
             const queueParamsType = nextInvocation.queueParameters?.type
-            if (['fetch', 'email'].includes(queueParamsType ?? '')) {
+            if (['fetch', 'sendPushNotification', 'email'].includes(queueParamsType ?? '')) {
                 asyncFunctionCount++
 
                 if (result && asyncFunctionCount > maxAsyncFunctions) {
@@ -340,6 +343,8 @@ export class HogExecutorService {
 
                 if (queueParamsType === 'fetch') {
                     result = await this.executeFetch(nextInvocation, options)
+                } else if (queueParamsType === 'sendPushNotification') {
+                    result = await this.pushNotificationService.executeSendPushNotification(nextInvocation)
                 } else if (queueParamsType === 'email') {
                     result = await this.emailService.executeSendEmail(nextInvocation)
                 } else {
@@ -764,12 +769,14 @@ export class HogExecutorService {
         const values: string[] = []
 
         hogFunction.inputs_schema?.forEach((schema) => {
-            if (schema.secret || schema.type === 'integration') {
+            if (schema.secret || schema.type === 'integration' || schema.type === 'push_subscription') {
                 const value = inputs[schema.key]
                 if (typeof value === 'string') {
                     values.push(value)
                 } else if (
-                    (schema.type === 'dictionary' || schema.type === 'integration') &&
+                    (schema.type === 'dictionary' ||
+                        schema.type === 'integration' ||
+                        schema.type === 'push_subscription') &&
                     typeof value === 'object'
                 ) {
                     // Assume the values are the sensitive parts

@@ -3,24 +3,23 @@ import { convertHogToJS } from '@posthog/hogvm'
 import { ACCESS_TOKEN_PLACEHOLDER } from '~/config/constants'
 import { CyclotronInputType } from '~/schema/cyclotron'
 
+import { logger } from '../../utils/logger'
 import { HogFunctionInvocationGlobals, HogFunctionInvocationGlobalsWithInputs, HogFunctionType } from '../types'
+import { EncryptedFields } from '../utils/encryption-utils'
 import { execHog } from '../utils/hog-exec'
 import { LiquidRenderer } from '../utils/liquid'
+import { getDevicePushSubscriptionToken } from '../utils/push-subscription-utils'
 import { IntegrationManagerService } from './managers/integration-manager.service'
 import { RecipientTokensService } from './messaging/recipient-tokens.service'
 
 export const EXTEND_OBJECT_KEY = '$$_extend_object'
 
 export class HogInputsService {
-    private recipientTokensService: RecipientTokensService
-
     constructor(
         private integrationManager: IntegrationManagerService,
-        encryptionSaltKeys: string,
-        siteUrl: string
-    ) {
-        this.recipientTokensService = new RecipientTokensService(encryptionSaltKeys, siteUrl)
-    }
+        private recipientTokensService: RecipientTokensService,
+        private encryptedFields: EncryptedFields
+    ) {}
 
     public async buildInputs(
         hogFunction: HogFunctionType,
@@ -28,20 +27,18 @@ export class HogInputsService {
         additionalInputs?: Record<string, any>
     ): Promise<Record<string, any>> {
         // TODO: Load the values from the integrationManager
-
+        const newGlobals: HogFunctionInvocationGlobalsWithInputs = {
+            ...globals,
+            inputs: {},
+        }
         const inputs: HogFunctionType['inputs'] = {
             // Include the inputs from the hog function
             ...hogFunction.inputs,
             ...hogFunction.encrypted_inputs,
             // Plus any additional inputs
             ...additionalInputs,
-            // and decode any integration inputs
-            ...(await this.loadIntegrationInputs(hogFunction)),
-        }
-
-        const newGlobals: HogFunctionInvocationGlobalsWithInputs = {
-            ...globals,
-            inputs: {},
+            // and decode any integration inputs (and push subscription inputs when newGlobals provided)
+            ...(await this.loadIntegrationInputs(hogFunction, newGlobals)),
         }
 
         const _formatInput = async (input: CyclotronInputType, key: string): Promise<any> => {
@@ -119,15 +116,60 @@ export class HogInputsService {
         }
     }
 
+    private resolvePushSubscriptionInputs(
+        hogFunction: HogFunctionType,
+        integrationInputs: Record<string, { value: Record<string, any> | null }>,
+        newGlobals: HogFunctionInvocationGlobalsWithInputs
+    ): Record<string, { value: string | null }> {
+        const result: Record<string, { value: string | null }> = {}
+        const personProperties = newGlobals.person?.properties
+
+        const appIdentifier = getAppIdentifierForPush(integrationInputs)
+
+        hogFunction.inputs_schema?.forEach((schema) => {
+            if (schema.type !== 'push_subscription') {
+                return
+            }
+
+            if (!appIdentifier) {
+                logger.warn('🦔', '[HogInputsService] No push integration found for push subscription input', {
+                    hogFunctionId: hogFunction.id,
+                    hogFunctionName: hogFunction.name,
+                    teamId: hogFunction.team_id,
+                    inputKey: schema.key,
+                })
+                result[schema.key] = { value: null }
+                return
+            }
+
+            const token = getDevicePushSubscriptionToken(personProperties, appIdentifier, this.encryptedFields)
+            result[schema.key] = { value: token }
+        })
+
+        return result
+    }
+
     public async loadIntegrationInputs(
-        hogFunction: HogFunctionType
+        hogFunction: HogFunctionType,
+        newGlobals?: HogFunctionInvocationGlobalsWithInputs
     ): Promise<Record<string, { value: Record<string, any> | null }>> {
         const inputsToLoad: Record<string, number> = {}
 
-        hogFunction.inputs_schema?.forEach((schema) => {
+        const allSchemas = [
+            ...(hogFunction.inputs_schema ?? []),
+            ...(hogFunction.mappings?.flatMap((m) => m.inputs_schema ?? []) ?? []),
+        ]
+        const allInputs: Record<string, CyclotronInputType | null | undefined> = {
+            ...hogFunction.inputs,
+        }
+        for (const mapping of hogFunction.mappings ?? []) {
+            Object.assign(allInputs, mapping.inputs)
+        }
+
+        allSchemas.forEach((schema) => {
             if (schema.type === 'integration') {
-                const input = hogFunction.inputs?.[schema.key]
-                const value = input?.value?.integrationId ?? input?.value
+                const input = allInputs[schema.key]
+                const value = input?.value
                 if (value && typeof value === 'number') {
                     inputsToLoad[schema.key] = value
                 }
@@ -142,15 +184,13 @@ export class HogInputsService {
         const returnInputs: Record<string, { value: Record<string, any> | null }> = {}
 
         Object.entries(inputsToLoad).forEach(([key, value]) => {
-            returnInputs[key] = {
-                value: null,
-            }
-
+            returnInputs[key] = { value: null }
             const integration = integrations[value]
             // IMPORTANT: Check the team ID is correct
             if (integration && integration.team_id === hogFunction.team_id) {
                 returnInputs[key] = {
                     value: {
+                        $integration_id: integration.id,
                         ...integration.config,
                         ...integration.sensitive_config,
                         ...(integration.sensitive_config.access_token || integration.config.access_token
@@ -164,6 +204,11 @@ export class HogInputsService {
                 }
             }
         })
+
+        if (newGlobals) {
+            const pushSubscriptionInputs = this.resolvePushSubscriptionInputs(hogFunction, returnInputs, newGlobals)
+            Object.assign(returnInputs, pushSubscriptionInputs)
+        }
 
         return returnInputs
     }
@@ -250,4 +295,24 @@ export const formatLiquidInput = (
     }
 
     return value
+}
+
+/**
+ * Finds the app identifier (project_id for Firebase, bundle_id for APNS) from resolved
+ * integration inputs. Used to key the $device_push_subscription_<appIdentifier> person property.
+ */
+export function getAppIdentifierForPush(
+    integrationInputs: Record<string, { value: Record<string, any> | null }>
+): string | null {
+    for (const input of Object.values(integrationInputs)) {
+        const value = input?.value
+        if (!value) {
+            continue
+        }
+        const appId = value.project_id ?? value.bundle_id
+        if (typeof appId === 'string' && appId) {
+            return appId
+        }
+    }
+    return null
 }

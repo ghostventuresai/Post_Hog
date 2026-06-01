@@ -50,7 +50,12 @@ describe('Hog Executor', () => {
         jest.spyOn(Date, 'now').mockReturnValue(fixedTime.toMillis())
 
         hub = await createHub()
-        const hogInputsService = new HogInputsService(hub.integrationManager, hub.ENCRYPTION_SALT_KEYS, hub.SITE_URL)
+        const recipientTokensService = new RecipientTokensService(hub.ENCRYPTION_SALT_KEYS, hub.SITE_URL)
+        const hogInputsService = new HogInputsService(
+            hub.integrationManager,
+            recipientTokensService,
+            hub.encryptedFields
+        )
         const emailService = new EmailService(
             {
                 sesAccessKeyId: hub.SES_ACCESS_KEY_ID,
@@ -62,7 +67,6 @@ describe('Hog Executor', () => {
             hub.ENCRYPTION_SALT_KEYS,
             hub.SITE_URL
         )
-        const recipientTokensService = new RecipientTokensService(hub.ENCRYPTION_SALT_KEYS, hub.SITE_URL)
         executor = new HogExecutorService(
             {
                 hogCostTimingUpperMs: hub.CDP_WATCHER_HOG_COST_TIMING_UPPER_MS,
@@ -74,7 +78,8 @@ describe('Hog Executor', () => {
             { teamManager: hub.teamManager, siteUrl: hub.SITE_URL },
             hogInputsService,
             emailService,
-            recipientTokensService
+            recipientTokensService,
+            undefined as any
         )
     })
 
@@ -270,6 +275,37 @@ describe('Hog Executor', () => {
                     properties: { email: 'test@posthog.com', first_name: 'Pumpkin' },
                 },
                 event_url: 'http://localhost:8000/events/1-test',
+            })
+        })
+
+        it('queues up sendPushNotification async function call', async () => {
+            const pushHogFunction = createHogFunction({
+                name: 'Test push function',
+                ...HOG_EXAMPLES.simple_send_push_notification,
+                ...HOG_INPUTS_EXAMPLES.simple_send_push_notification,
+                ...HOG_FILTERS_EXAMPLES.no_filters,
+            })
+            const invocation = createExampleInvocation(pushHogFunction, {
+                inputs: {
+                    integrationId: 1,
+                    distinctId: 'test-distinct-id',
+                    title: 'Test notification',
+                    body: 'Hello from PostHog',
+                },
+            })
+            const result = await executor.execute(invocation)
+
+            expect(result.invocation).toMatchObject({
+                queue: 'hog',
+                queueParameters: {
+                    type: 'sendPushNotification',
+                    integrationId: 1,
+                    distinctId: 'test-distinct-id',
+                    payload: {
+                        title: 'Test notification',
+                        body: 'Hello from PostHog',
+                    },
+                },
             })
         })
 
@@ -599,20 +635,17 @@ describe('Hog Executor', () => {
             })
 
             const result = await executor.buildHogFunctionInvocations([fn], pageviewGlobals)
-            // First mapping has input overrides that should be applied
-            expect(result.invocations[0].state.globals.inputs.headers).toEqual({
+            expect(result.invocations).toHaveLength(2)
+
+            const byUrl = Object.fromEntries(
+                result.invocations.map((inv) => [inv.state.globals.inputs.url as string, inv])
+            )
+            expect(byUrl['https://example.com?q=$pageview'].state.globals.inputs.headers).toEqual({
                 version: 'v=',
             })
-            expect(result.invocations[0].state.globals.inputs.url).toMatchInlineSnapshot(
-                `"https://example.com?q=$pageview"`
-            )
-            // Second mapping has no input overrides
-            expect(result.invocations[1].state.globals.inputs.headers).toEqual({
+            expect(byUrl['https://example.com/posthog-webhook'].state.globals.inputs.headers).toEqual({
                 version: 'v=',
             })
-            expect(result.invocations[1].state.globals.inputs.url).toMatchInlineSnapshot(
-                `"https://example.com/posthog-webhook"`
-            )
         })
     })
 

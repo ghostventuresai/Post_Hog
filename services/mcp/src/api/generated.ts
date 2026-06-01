@@ -9898,6 +9898,7 @@ export namespace Schemas {
       CustomerioApp: 'customerio-app',
       CustomerioWebhook: 'customerio-webhook',
       CustomerioTrack: 'customerio-track',
+      Apns: 'apns',
     } as const;
 
     export interface ErrorTrackingExternalReferenceIntegration {

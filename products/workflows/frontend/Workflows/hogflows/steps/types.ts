@@ -259,6 +259,17 @@ export const HogFlowActionSchema = z.discriminatedUnion('type', [
             inputs: z.record(z.string(), CyclotronInputSchema),
         }),
     }),
+    z.object({
+        ..._commonActionFields,
+        type: z.literal('function_push'),
+        config: z.object({
+            message_category_id: z.string().uuid().optional(),
+            message_category_type: z.enum(['marketing', 'transactional']).optional(),
+            template_uuid: z.string().uuid().optional(),
+            template_id: z.literal('template-native-push'),
+            inputs: z.record(z.string(), CyclotronInputSchema),
+        }),
+    }),
 
     // Exit
     z.object({
@@ -272,8 +283,8 @@ export const HogFlowActionSchema = z.discriminatedUnion('type', [
 
 export const isOptOutEligibleAction = (
     action: HogFlowAction
-): action is Extract<HogFlowAction, { type: 'function_email' | 'function_sms' }> => {
-    return ['function_email', 'function_sms'].includes(action.type)
+): action is Extract<HogFlowAction, { type: 'function_email' | 'function_sms' | 'function_push' }> => {
+    return ['function_email', 'function_sms', 'function_push'].includes(action.type)
 }
 
 export const isEmailAction = (action: HogFlowAction): action is Extract<HogFlowAction, { type: 'function_email' }> => {
@@ -282,8 +293,8 @@ export const isEmailAction = (action: HogFlowAction): action is Extract<HogFlowA
 
 export const isFunctionAction = (
     action: HogFlowAction
-): action is Extract<HogFlowAction, { type: 'function' | 'function_sms' | 'function_email' }> => {
-    return ['function', 'function_sms', 'function_email'].includes(action.type)
+): action is Extract<HogFlowAction, { type: 'function' | 'function_sms' | 'function_email' | 'function_push' }> => {
+    return ['function', 'function_sms', 'function_email', 'function_push'].includes(action.type)
 }
 
 export const isTriggerFunction = (

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { PushNotificationPayloadSchema } from './pushNotification'
+
 export const CyclotronInputSchema = z.object({
     value: z.any(),
     templating: z.enum(['hog', 'liquid']).optional(),
@@ -23,6 +25,7 @@ export const CyclotronJobInputSchemaTypeSchema = z.object({
         'posthog_assignee',
         'posthog_ticket_tags',
         'posthog_business_hours',
+        'push_subscription',
     ]),
     key: z.string(),
     label: z.string(),
@@ -88,9 +91,24 @@ export const CyclotronInvocationQueueParametersEmailSchema = z.object({
     html: z.string(),
 })
 
+export const CyclotronInvocationQueueParametersSendPushNotificationSchema = z.object({
+    type: z.literal('sendPushNotification'),
+    integrationId: z.number(),
+    distinctId: z.string(),
+    payload: PushNotificationPayloadSchema,
+    max_tries: z.number().optional(),
+    timeoutMs: z.number().optional(),
+})
+
+export type PushNotificationPayloadType = z.infer<typeof PushNotificationPayloadSchema>
+
 export type CyclotronInvocationQueueParametersFetchType = z.infer<typeof CyclotronInvocationQueueParametersFetchSchema>
 export type CyclotronInvocationQueueParametersEmailType = z.infer<typeof CyclotronInvocationQueueParametersEmailSchema>
+export type CyclotronInvocationQueueParametersSendPushNotificationType = z.infer<
+    typeof CyclotronInvocationQueueParametersSendPushNotificationSchema
+>
 
 export type CyclotronInvocationQueueParametersType =
     | CyclotronInvocationQueueParametersFetchType
     | CyclotronInvocationQueueParametersEmailType
+    | CyclotronInvocationQueueParametersSendPushNotificationType

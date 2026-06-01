@@ -20,7 +20,7 @@ import {
 import { CdpProducerName } from './outputs/producers'
 import { createCdpOutputsRegistry } from './outputs/registry'
 import { CapturedEventsService } from './services/captured-events/captured-events.service'
-import { HogExecutorService } from './services/hog-executor.service'
+import { HogExecutorService, MAX_FETCH_TIMEOUT_MS, cdpTrackedFetch } from './services/hog-executor.service'
 import { HogInputsService } from './services/hog-inputs.service'
 import { HogFlowDuplicateObserverService } from './services/hogflows/hogflow-duplicate-observer.service'
 import { HogFlowExecutorService } from './services/hogflows/hogflow-executor.service'
@@ -32,6 +32,7 @@ import { HogFunctionTemplateManagerService } from './services/managers/hog-funct
 import { IntegrationManagerService } from './services/managers/integration-manager.service'
 import { RecipientsManagerService } from './services/managers/recipients-manager.service'
 import { EmailService } from './services/messaging/email.service'
+import { PushNotificationService } from './services/messaging/push-notification.service'
 import { RecipientPreferencesService } from './services/messaging/recipient-preferences.service'
 import { RecipientTokensService } from './services/messaging/recipient-tokens.service'
 import { HogFunctionMonitoringService } from './services/monitoring/hog-function-monitoring.service'
@@ -372,7 +373,6 @@ export function createCdpCoreServices(
           )
         : null
 
-    const hogInputsService = new HogInputsService(deps.integrationManager, config.ENCRYPTION_SALT_KEYS, config.SITE_URL)
     const emailService = new EmailService(
         {
             sesAccessKeyId: config.SES_ACCESS_KEY_ID,
@@ -385,6 +385,11 @@ export function createCdpCoreServices(
         config.SITE_URL
     )
     const recipientTokensService = new RecipientTokensService(config.ENCRYPTION_SALT_KEYS, config.SITE_URL)
+    const hogInputsService = new HogInputsService(deps.integrationManager, recipientTokensService, deps.encryptedFields)
+    const pushNotificationService = new PushNotificationService(deps.integrationManager, deps.encryptedFields, {
+        trackedFetch: cdpTrackedFetch,
+        maxFetchTimeoutMs: MAX_FETCH_TIMEOUT_MS,
+    })
 
     const hogExecutor = new HogExecutorService(
         {
@@ -397,7 +402,8 @@ export function createCdpCoreServices(
         { teamManager: deps.teamManager, siteUrl: config.SITE_URL },
         hogInputsService,
         emailService,
-        recipientTokensService
+        recipientTokensService,
+        pushNotificationService
     )
 
     const hogFunctionTemplateManager = new HogFunctionTemplateManagerService(deps.postgres)
