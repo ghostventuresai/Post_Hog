@@ -2689,6 +2689,173 @@ class TestOAuthAPI(APIBaseTest):
         self.assertIsNone(db_refresh_token.revoked)
 
     @freeze_time("2025-01-01 00:00:00")
+    def test_dcr_refresh_does_not_invalidate_previously_issued_access_tokens(self):
+        # Each refresh on a non-rotating client must issue a NEW OAuthAccessToken row, not
+        # overwrite the existing one. Overwriting causes a body/DB token mismatch under
+        # concurrent refreshes: the upstream post-grant lookup at oauth2_provider/views/base.py:309
+        # does objects.get(token_checksum=sha256(body_access_token)) and any concurrent writer's
+        # body now contains a value that the row no longer has — DoesNotExist propagates as a 500.
+        self.public_application.is_dcr_client = True
+        self.public_application.save()
+
+        response = self.client.post(
+            "/oauth/authorize/",
+            {
+                "client_id": self.public_application.client_id,
+                "redirect_uri": "https://example.com/callback",
+                "response_type": "code",
+                "code_challenge": self.code_challenge,
+                "code_challenge_method": "S256",
+                "allow": True,
+                "access_level": OAuthApplicationAccessLevel.ALL.value,
+                "scoped_organizations": [],
+                "scoped_teams": [],
+                "scope": "openid",
+            },
+        )
+        code = response.json()["redirect_to"].split("code=")[1].split("&")[0]
+
+        token_response = self.post(
+            "/oauth/token/",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": self.public_application.client_id,
+                "redirect_uri": "https://example.com/callback",
+                "code_verifier": self.code_verifier,
+            },
+        )
+        refresh_token = token_response.json()["refresh_token"]
+        access_token_after_grant = token_response.json()["access_token"]
+
+        first_refresh = self.post(
+            "/oauth/token/",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.public_application.client_id,
+            },
+        )
+        self.assertEqual(first_refresh.status_code, status.HTTP_200_OK)
+        access_token_after_first_refresh = first_refresh.json()["access_token"]
+        self.assertNotEqual(access_token_after_first_refresh, access_token_after_grant)
+
+        second_refresh = self.post(
+            "/oauth/token/",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.public_application.client_id,
+            },
+        )
+        self.assertEqual(second_refresh.status_code, status.HTTP_200_OK)
+        access_token_after_second_refresh = second_refresh.json()["access_token"]
+
+        # Each refresh must return a distinct access_token; otherwise both existence
+        # checks below would still pass against a single shared row.
+        self.assertNotEqual(access_token_after_first_refresh, access_token_after_second_refresh)
+
+        # Each access_token returned in a /oauth/token response must remain resolvable
+        # in the database afterwards. Upstream's non-rotating UPDATE branch overwrites the
+        # one row, so the first refresh's token disappears as soon as the second refresh runs.
+        self.assertTrue(
+            OAuthAccessToken.objects.filter(token=access_token_after_first_refresh).exists(),
+            "access_token returned by the first refresh must still exist in the database "
+            "after a subsequent refresh on the same non-rotating refresh_token",
+        )
+        self.assertTrue(
+            OAuthAccessToken.objects.filter(token=access_token_after_second_refresh).exists(),
+        )
+
+        # The token_checksum lookup at oauth2_provider/views/base.py:309 must succeed for
+        # every previously-issued token. Replicate that lookup to assert the bug is gone.
+        first_checksum = hashlib.sha256(access_token_after_first_refresh.encode("utf-8")).hexdigest()
+        self.assertTrue(
+            OAuthAccessToken.objects.filter(token_checksum=first_checksum).exists(),
+            "token_checksum for a previously-issued access_token must still resolve — "
+            "the post-grant lookup at oauth2_provider/views/base.py:309 depends on it",
+        )
+
+    @parameterized.expand(
+        [
+            # RFC 7009 §4.1.2 makes token_type_hint optional; the sweep must fire in all three cases.
+            ("with_refresh_token_hint", "refresh_token"),
+            ("with_no_hint", None),
+            ("with_wrong_access_token_hint", "access_token"),
+        ]
+    )
+    @freeze_time("2025-01-01 00:00:00")
+    def test_dcr_refresh_token_revoke_sweeps_all_refresh_issued_access_tokens(self, _name, hint):
+        # Revoking a non-rotating refresh token via /oauth/revoke/ must invalidate every
+        # access_token issued from it, not just the original authorization_code-issued
+        # row. Refresh-issued rows carry source_refresh_token=None, so the upstream
+        # RefreshToken.revoke() path (which follows the OneToOne back-reference) would
+        # leave them valid until expiry — up to 7 days for DCR/CIMD clients.
+        self.public_application.is_dcr_client = True
+        self.public_application.save()
+
+        response = self.client.post(
+            "/oauth/authorize/",
+            {
+                "client_id": self.public_application.client_id,
+                "redirect_uri": "https://example.com/callback",
+                "response_type": "code",
+                "code_challenge": self.code_challenge,
+                "code_challenge_method": "S256",
+                "allow": True,
+                "access_level": OAuthApplicationAccessLevel.ALL.value,
+                "scoped_organizations": [],
+                "scoped_teams": [],
+                "scope": "openid",
+            },
+        )
+        code = response.json()["redirect_to"].split("code=")[1].split("&")[0]
+
+        token_response = self.post(
+            "/oauth/token/",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": self.public_application.client_id,
+                "redirect_uri": "https://example.com/callback",
+                "code_verifier": self.code_verifier,
+            },
+        )
+        refresh_token = token_response.json()["refresh_token"]
+        original_access_token = token_response.json()["access_token"]
+
+        refresh_response = self.post(
+            "/oauth/token/",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.public_application.client_id,
+            },
+        )
+        refresh_issued_access_token = refresh_response.json()["access_token"]
+
+        # Sanity check: both tokens exist before revoke, and they are distinct rows.
+        self.assertTrue(OAuthAccessToken.objects.filter(token=original_access_token).exists())
+        self.assertTrue(OAuthAccessToken.objects.filter(token=refresh_issued_access_token).exists())
+        self.assertNotEqual(original_access_token, refresh_issued_access_token)
+
+        revoke_body = {
+            "token": refresh_token,
+            "client_id": self.public_application.client_id,
+        }
+        if hint is not None:
+            revoke_body["token_type_hint"] = hint
+        revoke_response = self.post("/oauth/revoke/", revoke_body)
+        self.assertEqual(revoke_response.status_code, status.HTTP_200_OK)
+
+        self.assertFalse(OAuthAccessToken.objects.filter(token=original_access_token).exists())
+        self.assertFalse(
+            OAuthAccessToken.objects.filter(token=refresh_issued_access_token).exists(),
+            "refresh-issued access tokens with source_refresh_token=None must also be "
+            "swept when their refresh token is revoked",
+        )
+
+    @freeze_time("2025-01-01 00:00:00")
     def test_non_dcr_client_refresh_token_is_rotated(self):
         self.public_application.is_dcr_client = False
         self.public_application.save()
