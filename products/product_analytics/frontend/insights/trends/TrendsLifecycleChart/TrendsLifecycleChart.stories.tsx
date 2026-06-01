@@ -120,6 +120,7 @@ interface LifecycleInsightOpts {
     name?: string
     showValuesOnSeries?: boolean
     showPercentagesOnSeries?: boolean
+    showLegend?: boolean
 }
 
 function lifecycleInsight({
@@ -129,6 +130,7 @@ function lifecycleInsight({
     name,
     showValuesOnSeries,
     showPercentagesOnSeries,
+    showLegend,
 }: LifecycleInsightOpts): object {
     return {
         id,
@@ -165,7 +167,7 @@ function lifecycleInsight({
                 interval: 'day',
                 kind: 'LifecycleQuery',
                 series: [{ event: '$pageview', kind: 'EventsNode', math: 'total', name: '$pageview' }],
-                lifecycleFilter: { stacked, showValuesOnSeries, showPercentagesOnSeries },
+                lifecycleFilter: { stacked, showValuesOnSeries, showPercentagesOnSeries, showLegend },
                 version: 2,
             },
             full: true,
@@ -253,6 +255,34 @@ export const StackedWithPercentagesOnlyOnSeries: Story = {
                 name: 'Lifecycle stacked (percentages only on series)',
                 showValuesOnSeries: false,
                 showPercentagesOnSeries: true,
+            })}
+        />
+    ),
+}
+
+export const StackedWithLegend: Story = {
+    render: () => (
+        <LifecycleStory
+            insightFixture={lifecycleInsight({
+                stacked: true,
+                id: 307,
+                shortId: 'lifecycleStackedLegend',
+                name: 'Lifecycle stacked (with legend)',
+                showLegend: true,
+            })}
+        />
+    ),
+}
+
+export const UnstackedWithLegend: Story = {
+    render: () => (
+        <LifecycleStory
+            insightFixture={lifecycleInsight({
+                stacked: false,
+                id: 308,
+                shortId: 'lifecycleUnstackedLegend',
+                name: 'Lifecycle unstacked (with legend)',
+                showLegend: true,
             })}
         />
     ),
