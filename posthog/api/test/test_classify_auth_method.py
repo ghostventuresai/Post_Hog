@@ -8,6 +8,7 @@ from posthog.auth import (
     PersonalAPIKeyAuthentication,
     ProjectSecretAPIKeyAuthentication,
     SessionAuthentication,
+    TeamSecretTokenAuthentication,
 )
 
 from products.feature_flags.backend.api.feature_flag import _classify_auth_method
@@ -16,7 +17,8 @@ from products.feature_flags.backend.api.feature_flag import _classify_auth_metho
 class TestClassifyAuthMethod(TestCase):
     @parameterized.expand(
         [
-            (ProjectSecretAPIKeyAuthentication(), "secret_api_key"),
+            (TeamSecretTokenAuthentication(), "secret_api_key"),
+            (ProjectSecretAPIKeyAuthentication(), "project_secret_api_key"),
             (PersonalAPIKeyAuthentication(), "personal_api_key"),
             (OAuthAccessTokenAuthentication(), "oauth"),
             (JwtAuthentication(), "jwt"),

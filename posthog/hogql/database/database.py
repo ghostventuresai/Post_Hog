@@ -152,6 +152,7 @@ from posthog.hogql.timings import HogQLTimings
 from posthog.exceptions_capture import capture_exception
 from posthog.models.group_type_mapping import get_group_types_for_project
 from posthog.models.team.team import WeekStartDay
+from posthog.synthetic_user import SyntheticUser
 
 from products.data_warehouse.backend.sync_status import get_warehouse_sync_warnings
 from products.revenue_analytics.backend.views import RevenueAnalyticsBaseView
@@ -877,7 +878,7 @@ class Database(BaseModel):
         team_id: int | None = None,
         *,
         team: Optional["Team"] = None,
-        user: Optional["User"] = None,
+        user: Optional["User | SyntheticUser"] = None,
         modifiers: HogQLQueryModifiers | None = None,
         timings: HogQLTimings | None = None,
         connection_id: str | None = None,
@@ -962,10 +963,10 @@ class Database(BaseModel):
                     send_feature_flag_events=False,
                 )
                 if is_hogql_access_control_enabled:
-                    if user is not None:
-                        database._filter_system_tables_for_user(user, team)
-                    else:
+                    if user is None or isinstance(user, SyntheticUser):
                         database._filter_all_scoped_system_tables()
+                    else:
+                        database._filter_system_tables_for_user(user, team)
 
         with timings.measure("modifiers", emit_span=True):
             modifiers = create_default_modifiers_for_team(team, modifiers)

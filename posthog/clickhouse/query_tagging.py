@@ -27,6 +27,22 @@ class AccessMethod(StrEnum):
     PERSONAL_API_KEY = "personal_api_key"
     OAUTH = "oauth"
     SHARING_TOKEN = "sharing_token"
+    PROJECT_SECRET_API_KEY = "project_secret_api_key"
+    TEAM_SECRET_TOKEN = "team_secret_token"
+
+
+# OAuth and sharing-token deliberately excluded: OAuth is user-consented, sharing-token is public read-only.
+_API_KEY_ACCESS_METHODS: frozenset[AccessMethod] = frozenset(
+    {
+        AccessMethod.PERSONAL_API_KEY,
+        AccessMethod.PROJECT_SECRET_API_KEY,
+        AccessMethod.TEAM_SECRET_TOKEN,
+    }
+)
+
+
+def is_api_key_access_method(access_method: AccessMethod | str | None) -> bool:
+    return access_method in _API_KEY_ACCESS_METHODS
 
 
 class Product(StrEnum):
