@@ -246,7 +246,7 @@ import type {
 } from 'products/workflows/frontend/Workflows/hogflows/types'
 
 import { AgentMode } from '../queries/schema'
-import type { MaxUIContext } from '../scenes/max/maxTypes'
+import type { AttachedContext, MaxUIContext } from '../scenes/max/maxTypes'
 import { AlertSimulationResult, AlertType, AlertTypeWrite } from './components/Alerts/types'
 import {
     ErrorTrackingFingerprint,
@@ -5046,6 +5046,29 @@ const api = {
                 }
                 return ''
             },
+            /**
+             * Fetch the assembled resume-chain ACP log for a run (the products/tasks `logs/`
+             * endpoint returns JSONL — one `StoredLogEntry` per line, concatenated server-side
+             * across the entire resume chain). Used to bootstrap the sandbox stream before
+             * opening SSE. See docs/internal/posthog-ai-migration/02_CORE.md § 4.2/4.6.
+             */
+            async getLogEntries(taskId: Task['id'], runId: TaskRun['id']): Promise<Record<string, any>[]> {
+                const response = await new ApiRequest().taskRun(taskId, runId).withAction('logs').getResponse()
+                const text = await response.text()
+                const entries: Record<string, any>[] = []
+                for (const line of text.split('\n')) {
+                    const trimmed = line.trim()
+                    if (!trimmed) {
+                        continue
+                    }
+                    try {
+                        entries.push(JSON.parse(trimmed))
+                    } catch {
+                        // Skip unparseable lines — the stream is best-effort historical replay.
+                    }
+                }
+                return entries
+            },
         },
     },
 
@@ -6494,8 +6517,47 @@ const api = {
             return api.createResponse(new ApiRequest().conversations().assembleFullUrl(), data, options)
         },
 
+        /**
+         * Sandbox-runtime message routing endpoint (`agent_runtime === 'sandbox'`). Non-streaming:
+         * wraps + dedupes context, creates/continues the backing products/tasks Run, and returns the
+         * IDs the frontend needs to open SSE directly against the products/tasks stream endpoint.
+         * See docs/internal/posthog-ai-migration/02_CORE.md § 4.
+         */
+        sandbox(
+            conversationId: string,
+            data: {
+                content: string
+                trace_id: string
+                attached_context?: AttachedContext[]
+            }
+        ): Promise<{
+            task_id: string
+            run_id: string
+            trace_id: string
+            run_status: 'queued' | 'in_progress'
+            just_created_run: boolean
+        }> {
+            return new ApiRequest().conversation(conversationId).withAction('sandbox').create({ data })
+        },
+
         cancel(conversationId: string): Promise<void> {
             return new ApiRequest().conversation(conversationId).withAction('cancel').update()
+        },
+
+        /**
+         * Sandbox-runtime approval reply. Routes in-process to the products/tasks
+         * `command/ permission_response` path (02_CORE.md § 5.5). `customInput` carries
+         * the optional `reject_with_feedback` text.
+         */
+        permission(
+            conversationId: string,
+            data: {
+                requestId: string
+                optionId: string
+                customInput?: string
+            }
+        ): Promise<{ status: string }> {
+            return new ApiRequest().conversation(conversationId).withAction('permission').create({ data })
         },
 
         list(): Promise<PaginatedResponse<Conversation>> {

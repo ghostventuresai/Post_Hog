@@ -11,9 +11,10 @@ from django.utils import timezone
 
 import pydantic
 import structlog
+import posthoganalytics
 from asgiref.sync import async_to_sync as asgi_async_to_sync
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from loginas.utils import is_impersonated_session
 from prometheus_client import Histogram
 from rest_framework import exceptions, serializers, status
@@ -50,14 +51,18 @@ from posthog.temporal.ai.research_agent import (
     ResearchAgentWorkflowInputs,
 )
 
+from products.posthog_ai.backend.context_wrapper import ALLOWED_TYPES as ALLOWED_ATTACHED_CONTEXT_TYPES
+from products.posthog_ai.backend.message_routing import handle_sandbox_cancel, handle_sandbox_message
+from products.tasks.backend.services.agent_command import send_permission_response
+
 from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
 from ee.hogai.api.serializers import ConversationMinimalSerializer, ConversationSerializer
 from ee.hogai.chat_agent import AssistantGraph
 from ee.hogai.core.executor import AgentExecutor
 from ee.hogai.queue import ConversationQueueMessage, ConversationQueueStore, QueueFullError, build_queue_message
-from ee.hogai.sandbox.executor import handle_sandbox_message
 from ee.hogai.stream.redis_stream import get_conversation_stream_key
 from ee.hogai.utils.aio import async_to_sync
+from ee.hogai.utils.feature_flags import has_sandbox_mode_feature_flag
 from ee.hogai.utils.sse import AssistantSSESerializer
 from ee.hogai.utils.types import PartialAssistantState
 from ee.models.assistant import Conversation
@@ -81,6 +86,33 @@ class MessageMinimalSerializer(serializers.Serializer):
     """Serializer for appending a message to an existing conversation without triggering AI processing."""
 
     content = serializers.CharField(required=True, max_length=10000)
+
+
+class PermissionResponseSerializer(serializers.Serializer):
+    """Approval reply for a sandbox-runtime `permission_request` (02_CORE.md § 5.5)."""
+
+    requestId = serializers.CharField(
+        required=True,
+        max_length=200,
+        help_text="The ACP permission request id the user is responding to.",
+    )
+    optionId = serializers.CharField(
+        required=True,
+        max_length=100,
+        help_text="The selected option id (e.g. 'allow_once', 'reject', 'reject_with_feedback').",
+    )
+    customInput = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=10000,
+        help_text="Optional feedback text sent with a 'reject_with_feedback' decision.",
+    )
+
+
+class PermissionResponseResultSerializer(serializers.Serializer):
+    """Result of forwarding a permission response to the sandbox agent."""
+
+    status = serializers.CharField(help_text="'ok' once the response was forwarded to the sandbox.")
 
 
 def _strip_large_spend_history(billing_context: MaxBillingContext, threshold: int = 20) -> MaxBillingContext:
@@ -184,6 +216,51 @@ class QueueMessageSerializer(serializers.Serializer):
 
 class QueueMessageUpdateSerializer(serializers.Serializer):
     content = serializers.CharField(required=True, allow_blank=False, max_length=40000)
+
+
+class SandboxAttachedContextItemSerializer(serializers.Serializer):
+    """One typed attachment carried by a sandbox message (01_CONTEXT § 1)."""
+
+    type = serializers.ChoiceField(
+        choices=sorted(ALLOWED_ATTACHED_CONTEXT_TYPES),
+        help_text="Attachment kind. Entity types carry `id` (+ optional `name`); `text` carries `value`.",
+    )
+    id = serializers.JSONField(
+        required=False,
+        help_text="Entity identifier — integer for `dashboard`/`action`, string short_id/UUID otherwise. Absent for `text`.",
+    )
+    name = serializers.CharField(
+        required=False, help_text="Optional human-readable label rendered in the context block."
+    )
+    value = serializers.CharField(required=False, help_text="Free-text content. Only for `text` attachments.")
+
+
+class SandboxMessageSerializer(serializers.Serializer):
+    """Request body for the non-streaming `POST /conversations/{id}/sandbox/` route (02_CORE § 4)."""
+
+    content = serializers.CharField(
+        required=True, allow_blank=False, max_length=40000, help_text="The user's message text."
+    )
+    trace_id = serializers.UUIDField(
+        required=False, help_text="Client-generated trace id correlated with the resulting Run's SSE stream."
+    )
+    attached_context = serializers.ListField(
+        required=False,
+        child=SandboxAttachedContextItemSerializer(),
+        help_text="Typed PostHog entities (and free text) attached to this message.",
+    )
+
+
+class SandboxMessageResponseSerializer(serializers.Serializer):
+    """Response for `POST /conversations/{id}/sandbox/` — the IDs the frontend opens SSE against."""
+
+    task_id = serializers.CharField(help_text="The products/tasks Task backing the conversation.")
+    run_id = serializers.CharField(help_text="The Run the frontend opens SSE against.")
+    trace_id = serializers.CharField(allow_null=True, help_text="Echo of the request trace id, if provided.")
+    run_status = serializers.CharField(help_text="Current status of the targeted Run (e.g. `queued`, `in_progress`).")
+    just_created_run = serializers.BooleanField(
+        help_text="True when a new Run was created (first message or terminal resume); false for an in-progress follow-up."
+    )
 
 
 @extend_schema(tags=["max"])
@@ -362,12 +439,19 @@ class ConversationViewSet(
             # Mark conversation as internal if created during an impersonated session (support agents)
             is_impersonated = is_impersonated_session(request)
             conversation_type = Conversation.Type.DEEP_RESEARCH if is_research else Conversation.Type.ASSISTANT
+            # Stamp the runtime once at create time from the flag; it's never re-evaluated.
+            agent_runtime = (
+                Conversation.AgentRuntime.SANDBOX
+                if has_sandbox_mode_feature_flag(self.team, cast(User, request.user))
+                else Conversation.AgentRuntime.LANGGRAPH
+            )
             conversation = Conversation.objects.create(
                 user=cast(User, request.user),
                 team=self.team,
                 id=conversation_id,
                 type=conversation_type,
                 is_internal=is_impersonated,
+                agent_runtime=agent_runtime,
             )
             is_new_conversation = True
 
@@ -396,14 +480,13 @@ class ConversationViewSet(
         is_impersonated = is_impersonated_session(request)
 
         if is_sandbox and has_message:
-            return handle_sandbox_message(
-                conversation=conversation,
-                conversation_id=str(conversation_id),
-                content=serializer.validated_data["content"],
-                user=cast(User, request.user),
-                team=self.team,
-                is_new_conversation=is_new_conversation,
-            )
+            # Sandbox runtime delegates in-process to the posthog_ai product. The handler
+            # is non-streaming and returns the IDs the frontend needs to open SSE directly
+            # against the products/tasks stream endpoint (02_CORE.md §§ 3, 4).
+            if is_new_conversation:
+                conversation.title = serializer.validated_data["content"][:80]
+                conversation.save(update_fields=["title"])
+            return handle_sandbox_message(request, conversation)
 
         workflow_inputs: ChatAgentWorkflowInputs | ResearchAgentWorkflowInputs
         workflow_class: type[ChatAgentWorkflow] | type[ResearchAgentWorkflow]
@@ -566,9 +649,31 @@ class ConversationViewSet(
         queue_store = ConversationQueueStore(conversation_id)
         return self._queue_response(queue_store, queue_store.clear())
 
+    @extend_schema(
+        request=SandboxMessageSerializer,
+        responses={200: SandboxMessageResponseSerializer},
+        description=(
+            "Non-streaming routing endpoint for sandbox-runtime conversations (02_CORE § 3). Wraps + dedupes the "
+            "message, then starts a Run / signals a follow-up / resumes via in-process products/tasks calls and "
+            "returns the IDs the frontend opens SSE against. Sandbox runtime only — LangGraph conversations stream "
+            "via the unchanged `/stream/` path."
+        ),
+    )
+    @action(detail=True, methods=["POST"], url_path="sandbox")
+    def sandbox(self, request: Request, *args, **kwargs):
+        conversation = self.get_object()
+        if conversation.agent_runtime != Conversation.AgentRuntime.SANDBOX:
+            raise exceptions.ValidationError("This conversation is not on the sandbox runtime.")
+        return handle_sandbox_message(request, conversation)
+
     @action(detail=True, methods=["PATCH"])
     def cancel(self, request: Request, *args, **kwargs):
         conversation = self.get_object()
+
+        if conversation.agent_runtime == Conversation.AgentRuntime.SANDBOX:
+            # Sandbox runs are cancelled in-process via the products/tasks command
+            # path; no LangGraph workflow is involved (02_CORE § 5.4).
+            return handle_sandbox_cancel(conversation)
 
         # IDLE is intentionally not short-circuited: during the handoff between the main
         # workflow completing and a queued workflow starting, the status is briefly IDLE
@@ -587,6 +692,66 @@ class ConversationViewSet(
             return Response({"error": "Failed to cancel conversation"}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        request=PermissionResponseSerializer,
+        responses={
+            200: PermissionResponseResultSerializer,
+            400: OpenApiResponse(description="No sandbox run for this conversation, or invalid request"),
+            502: OpenApiResponse(description="Sandbox agent unreachable or rejected the response"),
+        },
+        description="Forward a sandbox-runtime approval reply to the backing products/tasks run.",
+    )
+    @action(detail=True, methods=["POST"], url_path="permission")
+    def permission(self, request: Request, *args, **kwargs):
+        """Sandbox-runtime approval reply (02_CORE.md § 5.5).
+
+        Resolves the conversation's backing TaskRun and delegates in-process to the products/tasks
+        `permission_response` command path. Thin routing wrapper — not a relay.
+        """
+        conversation: Conversation = self.get_object()
+
+        serializer = PermissionResponseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Resolve the backing Run via the real task FK / derived current_run (02_CORE § 2.2),
+        # not the deprecated sandbox_run_id UUID column.
+        task_run = conversation.current_run
+        if task_run is None:
+            return Response({"error": "Conversation has no active sandbox run"}, status=status.HTTP_400_BAD_REQUEST)
+
+        request_id = serializer.validated_data["requestId"]
+        option_id = serializer.validated_data["optionId"]
+        custom_input = serializer.validated_data.get("customInput")
+
+        result = send_permission_response(
+            task_run,
+            request_id=request_id,
+            option_id=option_id,
+            custom_input=custom_input,
+        )
+
+        # PERMISSION_RESPONDED telemetry (02_CORE.md § 10).
+        user = cast(User, request.user)
+        if user.distinct_id:
+            posthoganalytics.capture(
+                distinct_id=user.distinct_id,
+                event="permission_responded",
+                properties={
+                    "conversation_id": str(conversation.id),
+                    "request_id": request_id,
+                    "option_id": option_id,
+                    "execution_type": "sandbox",
+                },
+            )
+
+        if not result.success:
+            return Response(
+                {"error": result.error or "Failed to forward permission response"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(PermissionResponseResultSerializer({"status": "ok"}).data)
 
     @extend_schema(
         description="Delete a conversation.",

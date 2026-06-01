@@ -187,6 +187,17 @@ export type ConversationApiMessagesItem = { [key: string]: unknown }
 
 export type ConversationApiPendingApprovalsItem = { [key: string]: unknown }
 
+/**
+ * * `langgraph` - LangGraph
+ * `sandbox` - Sandbox
+ */
+export type AgentRuntimeEnumApi = (typeof AgentRuntimeEnumApi)[keyof typeof AgentRuntimeEnumApi]
+
+export const AgentRuntimeEnumApi = {
+    Langgraph: 'langgraph',
+    Sandbox: 'sandbox',
+} as const
+
 export interface ConversationApi {
     readonly id: string
     readonly status: ConversationStatusApi
@@ -220,6 +231,11 @@ export interface ConversationApi {
     readonly has_unsupported_content: boolean
     /** @nullable */
     readonly agent_mode: string | null
+    /** Runtime that owns this conversation. 'langgraph' conversations return their messages in the `messages` field; 'sandbox' conversations return an empty `messages` array and load history from the products/tasks logs endpoint instead.
+
+  * `langgraph` - LangGraph
+  * `sandbox` - Sandbox */
+    readonly agent_runtime: AgentRuntimeEnumApi
     readonly is_sandbox: boolean
     /** Return pending approval cards as structured data.
 
@@ -273,12 +289,127 @@ export interface PatchedConversationApi {
     readonly has_unsupported_content?: boolean
     /** @nullable */
     readonly agent_mode?: string | null
+    /** Runtime that owns this conversation. 'langgraph' conversations return their messages in the `messages` field; 'sandbox' conversations return an empty `messages` array and load history from the products/tasks logs endpoint instead.
+
+  * `langgraph` - LangGraph
+  * `sandbox` - Sandbox */
+    readonly agent_runtime?: AgentRuntimeEnumApi
     readonly is_sandbox?: boolean
     /** Return pending approval cards as structured data.
 
   Combines metadata from conversation.approval_decisions with payload from checkpoint
   interrupts (single source of truth for payload data). */
     readonly pending_approvals?: readonly PatchedConversationApiPendingApprovalsItem[]
+}
+
+/**
+ * Approval reply for a sandbox-runtime `permission_request` (02_CORE.md § 5.5).
+ */
+export interface PermissionResponseApi {
+    /**
+     * The ACP permission request id the user is responding to.
+     * @maxLength 200
+     */
+    requestId: string
+    /**
+     * The selected option id (e.g. 'allow_once', 'reject', 'reject_with_feedback').
+     * @maxLength 100
+     */
+    optionId: string
+    /**
+     * Optional feedback text sent with a 'reject_with_feedback' decision.
+     * @maxLength 10000
+     */
+    customInput?: string
+}
+
+/**
+ * Result of forwarding a permission response to the sandbox agent.
+ */
+export interface PermissionResponseResultApi {
+    /** 'ok' once the response was forwarded to the sandbox. */
+    status: string
+}
+
+/**
+ * * `action` - action
+ * `dashboard` - dashboard
+ * `error_tracking_issue` - error_tracking_issue
+ * `evaluation` - evaluation
+ * `event` - event
+ * `insight` - insight
+ * `notebook` - notebook
+ * `text` - text
+ */
+export type SandboxAttachedContextItemTypeEnumApi =
+    (typeof SandboxAttachedContextItemTypeEnumApi)[keyof typeof SandboxAttachedContextItemTypeEnumApi]
+
+export const SandboxAttachedContextItemTypeEnumApi = {
+    Action: 'action',
+    Dashboard: 'dashboard',
+    ErrorTrackingIssue: 'error_tracking_issue',
+    Evaluation: 'evaluation',
+    Event: 'event',
+    Insight: 'insight',
+    Notebook: 'notebook',
+    Text: 'text',
+} as const
+
+/**
+ * One typed attachment carried by a sandbox message (01_CONTEXT § 1).
+ */
+export interface SandboxAttachedContextItemApi {
+    /** Attachment kind. Entity types carry `id` (+ optional `name`); `text` carries `value`.
+
+  * `action` - action
+  * `dashboard` - dashboard
+  * `error_tracking_issue` - error_tracking_issue
+  * `evaluation` - evaluation
+  * `event` - event
+  * `insight` - insight
+  * `notebook` - notebook
+  * `text` - text */
+    type: SandboxAttachedContextItemTypeEnumApi
+    /** Entity identifier — integer for `dashboard`/`action`, string short_id/UUID otherwise. Absent for `text`. */
+    id?: unknown
+    /** Optional human-readable label rendered in the context block. */
+    name?: string
+    /** Free-text content. Only for `text` attachments. */
+    value?: string
+}
+
+/**
+ * Request body for the non-streaming `POST /conversations/{id}/sandbox/` route (02_CORE § 4).
+ */
+export interface SandboxMessageApi {
+    /**
+     * The user's message text.
+     * @maxLength 40000
+     */
+    content: string
+    /** Client-generated trace id correlated with the resulting Run's SSE stream. */
+    trace_id?: string
+    /** Typed PostHog entities (and free text) attached to this message. */
+    attached_context?: SandboxAttachedContextItemApi[]
+}
+
+/**
+ * Response for `POST /conversations/{id}/sandbox/` — the IDs the frontend opens SSE against.
+ */
+export interface SandboxMessageResponseApi {
+    /** The products/tasks Task backing the conversation. */
+    task_id: string
+    /** The Run the frontend opens SSE against. */
+    run_id: string
+    /**
+     * Echo of the request trace id, if provided.
+     * @nullable
+     */
+    trace_id: string | null
+    /** Current status of the targeted Run (e.g. `queued`, `in_progress`). */
+    run_status: string
+    /** True when a new Run was created (first message or terminal resume); false for an in-progress follow-up. */
+    just_created_run: boolean
 }
 
 /**
