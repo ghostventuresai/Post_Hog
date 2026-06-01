@@ -64,7 +64,15 @@ from dagster import (
     sensor,
 )
 from psycopg import sql as psql
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+    wait_fixed,
+    wait_random_exponential,
+)
 
 from posthog.clickhouse.client.connection import NodeRole, Workload
 from posthog.clickhouse.cluster import ClickhouseCluster, get_cluster
@@ -109,6 +117,17 @@ def iceberg_enabled_for_team(team_id: int) -> bool:
 DUCKGRES_CONNECT_TIMEOUT = 10  # seconds
 DUCKGRES_STATEMENT_TIMEOUT_MS = 300_000  # 5 minutes
 
+# Duckgres connect retry: a per-org duckgres can be unreachable for a long time
+# during a cold start, restart, or scale-up, so back off generously rather than
+# fail the partition early. Exponential with jitter (avoids partitions
+# reconnecting in lockstep), each sleep capped at MAX_WAIT. With these defaults
+# the per-sleep ceiling climbs ~2s → 10min, giving a worst-case total wait of
+# ~37 min across all attempts (~18 min on average) — long enough to ride out a
+# duckgres that is coming back, while still bounded so a truly-dead instance
+# eventually reraises. Tune these to trade patience against worker-slot holding.
+DUCKGRES_CONNECT_RETRY_ATTEMPTS = 12
+DUCKGRES_CONNECT_RETRY_MAX_WAIT = 600  # seconds (per-attempt backoff ceiling)
+
 
 @retry(
     stop=stop_after_attempt(3),
@@ -126,6 +145,27 @@ def _get_cluster() -> ClickhouseCluster:
     return get_cluster()
 
 
+def _log_duckgres_connect_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.warning(
+        "duckling_duckgres_connect_retry",
+        attempt=retry_state.attempt_number,
+        error=str(exc) if exc else None,
+        error_type=type(exc).__name__ if exc else None,
+    )
+
+
+@retry(
+    stop=stop_after_attempt(DUCKGRES_CONNECT_RETRY_ATTEMPTS),
+    wait=wait_random_exponential(multiplier=2, max=DUCKGRES_CONNECT_RETRY_MAX_WAIT),
+    # ConnectionTimeout and other transient connection failures (server still
+    # starting up, reset peer) all surface as OperationalError. A long, jittered
+    # backoff keeps a cold or restarting duckgres from failing the whole
+    # backfill; a genuinely-down duckgres still reraises once attempts run out.
+    retry=retry_if_exception_type(psycopg.OperationalError),
+    before_sleep=_log_duckgres_connect_retry,
+    reraise=True,
+)
 def _connect_duckgres(catalog: DuckLakeCatalog) -> psycopg.Connection[Any]:
     """Open a psycopg connection to the org's duckgres server.
 
@@ -135,6 +175,11 @@ def _connect_duckgres(catalog: DuckLakeCatalog) -> psycopg.Connection[Any]:
 
     Cross-account S3 credentials are configured server-side via IRSA on the
     duckling, so the DAG no longer calls `configure_cross_account_connection`.
+
+    Transient connection failures are retried with a long, jittered backoff (see
+    decorator) — a per-org duckgres can be unreachable for minutes during a cold
+    start or restart, and a single `connect_timeout` expiry should not abort the
+    backfill.
     """
     if catalog.team_id is None:
         raise ValueError(
