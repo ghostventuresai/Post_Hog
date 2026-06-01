@@ -8,10 +8,15 @@ import { CyclotronInvocationQueueParametersEmailType } from '~/schema/cyclotron'
 
 import { IntegrationManagerService } from '../managers/integration-manager.service'
 import { RecipientManagerRecipient } from '../managers/recipients-manager.service'
-import { addTrackingToEmail } from './email-tracking.service'
+import { TeamWorkflowsConfigService } from '../managers/team-workflows-config.service'
+import { addTrackingToEmail, resolveEmailEngagementDistinctId } from './email-tracking.service'
 import { mailDevTransport, mailDevWebUrl } from './helpers/maildev'
 import { maybeAddPreheaderToEmail } from './helpers/preheader'
-import { generateEmailTrackingCode } from './helpers/tracking-code'
+import {
+    TRACKING_CODE_HEADER_NAME,
+    generateEmailTrackingCode,
+    generateShortEmailTrackingCode,
+} from './helpers/tracking-code'
 import { RecipientTokensService } from './recipient-tokens.service'
 
 export interface EmailServiceConfig {
@@ -51,6 +56,7 @@ export class EmailService {
     constructor(
         private sesConfig: EmailServiceConfig,
         private integrationManager: IntegrationManagerService,
+        private teamWorkflowsConfigService: TeamWorkflowsConfigService,
         encryptionSaltKeys: string,
         siteUrl: string
     ) {
@@ -126,6 +132,21 @@ export class EmailService {
             count: 1,
         })
 
+        const distinctId = resolveEmailEngagementDistinctId(invocation)
+        if (distinctId && (await this.teamWorkflowsConfigService.shouldCaptureEngagementEvents(invocation.teamId))) {
+            result.capturedPostHogEvents.push({
+                team_id: invocation.teamId,
+                timestamp: new Date().toISOString(),
+                distinct_id: distinctId,
+                event: success ? '$messaging_email_sent' : '$messaging_email_failed',
+                properties: {
+                    $workflow_id: invocation.functionId,
+                    $email_to: params.to.email,
+                    $email_subject: params.subject,
+                },
+            })
+        }
+
         return result
     }
 
@@ -187,7 +208,11 @@ export class EmailService {
         if (!this.sesV2Client) {
             throw new Error('SES is not configured - set SES_REGION and AWS credentials')
         }
-        const trackingCode = generateEmailTrackingCode(result.invocation)
+        const distinctId = resolveEmailEngagementDistinctId(result.invocation)
+        const trackingCode = generateEmailTrackingCode({ ...result.invocation, distinctId })
+        // Short carrier (no distinct_id) for the SES EmailTag — guaranteed to stay
+        // under the 256-char tag-value limit. The full code rides in the header.
+        const shortTrackingCode = generateShortEmailTrackingCode(result.invocation)
 
         const htmlBody = params.html
             ? {
@@ -222,17 +247,27 @@ export class EmailService {
                 },
             },
             ConfigurationSetName: 'posthog-messaging',
-            EmailTags: [{ Name: 'ph_id', Value: trackingCode }],
+            // Short tag kept as a backwards-compat carrier so in-flight messages
+            // still parse if the configuration set isn't yet emitting headers.
+            EmailTags: [{ Name: 'ph_id', Value: shortTrackingCode }],
             FeedbackForwardingEmailAddress: params.from.email,
         }
 
+        // Authoritative tracking-code carrier: a custom MIME header. Header values
+        // aren't 256-char-bounded the way SES tag values are, so this can safely
+        // carry a long distinct_id. The configuration set's event destination needs
+        // `IncludeOriginalHeaders: true` for the webhook to surface this header.
+        const trackingHeader = { Name: TRACKING_CODE_HEADER_NAME, Value: trackingCode }
+
         const isTransactionalEmail = result.invocation.hogFunction.metadata?.message_category_type === 'transactional'
-        // Automatically add unsubscribe headers for non-transactional emails
-        if (sendEmailParams.Content?.Simple && !isTransactionalEmail) {
-            sendEmailParams.Content.Simple.Headers = this.generateUnsubscribeHeaders({
-                team_id: result.invocation.teamId,
-                identifier: params.to.email,
-            })
+        if (sendEmailParams.Content?.Simple) {
+            const unsubscribeHeaders = !isTransactionalEmail
+                ? this.generateUnsubscribeHeaders({
+                      team_id: result.invocation.teamId,
+                      identifier: params.to.email,
+                  })
+                : []
+            sendEmailParams.Content.Simple.Headers = [...unsubscribeHeaders, trackingHeader]
         }
 
         const replyToAddresses = parseAddressList(params.replyTo)

@@ -1,5 +1,5 @@
 import { SesWebhookHandler } from './ses'
-import { generateEmailTrackingCode } from './tracking-code'
+import { TRACKING_CODE_HEADER_NAME, generateEmailTrackingCode, generateShortEmailTrackingCode } from './tracking-code'
 
 describe('SesWebhookHandler', () => {
     let handler: SesWebhookHandler
@@ -7,22 +7,26 @@ describe('SesWebhookHandler', () => {
         handler = new SesWebhookHandler()
     })
 
+    // Mirrors what the sender writes for every outbound message: the SES tag
+    // carries the short (no-distinct_id) code as a backwards-compat carrier,
+    // and the custom header carries the full code (including distinct_id) as
+    // the authoritative source. The parser prefers the header.
+    const baseInvocation = {
+        functionId: 'abc123',
+        id: 'inv456',
+        teamId: 1,
+        state: { actionId: 'act789' },
+        distinctId: 'user-123',
+    } as const
+
     const baseMail = {
         timestamp: '2025-10-03T12:00:00Z',
         source: 'sender@example.com',
         messageId: 'msg-123',
         destination: ['to@example.com'],
+        headers: [{ name: TRACKING_CODE_HEADER_NAME, value: generateEmailTrackingCode(baseInvocation) }],
         tags: {
-            ph_id: [
-                generateEmailTrackingCode({
-                    functionId: 'abc123',
-                    id: 'inv456',
-                    teamId: 1,
-                    state: {
-                        actionId: 'act789',
-                    },
-                }),
-            ],
+            ph_id: [generateShortEmailTrackingCode(baseInvocation)],
         },
     }
 
@@ -46,12 +50,15 @@ describe('SesWebhookHandler', () => {
                 functionId: 'abc123',
                 invocationId: 'inv456',
                 actionId: 'act789',
+                distinctId: 'user-123',
                 metricName: 'email_opened',
+                properties: { $email_to: 'to@example.com' },
+                timestamp: '2025-10-03T12:01:00Z',
             },
         ])
     })
 
-    it('parses a raw Click event', async () => {
+    it('parses a raw Click event with link URL', async () => {
         const body = [
             {
                 eventType: 'Click',
@@ -67,6 +74,72 @@ describe('SesWebhookHandler', () => {
         const result = await handler.handleWebhook({ body, headers: {} })
         expect(result.status).toBe(200)
         expect(result.metrics?.[0].metricName).toBe('email_link_clicked')
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
+        expect(result.metrics?.[0].properties).toEqual({
+            $email_to: 'to@example.com',
+            $link_url: 'https://example.com',
+        })
+        expect(result.metrics?.[0].timestamp).toBe('2025-10-03T12:02:00Z')
+    })
+
+    it('parses tracking code from header only when SES tag is absent', async () => {
+        // Simulates a future state where the EmailTag backwards-compat carrier has been removed.
+        const headerOnlyMail = {
+            ...baseMail,
+            tags: undefined,
+        }
+        const body = [
+            {
+                eventType: 'Open',
+                mail: headerOnlyMail,
+                open: { ipAddress: '1.2.3.4', userAgent: 'UA', timestamp: '2025-10-03T12:01:00Z' },
+            },
+        ]
+        const result = await handler.handleWebhook({ body, headers: {} })
+        expect(result.status).toBe(200)
+        expect(result.metrics?.[0].functionId).toBe('abc123')
+        expect(result.metrics?.[0].invocationId).toBe('inv456')
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
+    })
+
+    it('falls back to SES tag when the custom header is absent (in-flight backwards compat)', async () => {
+        // Simulates a webhook for a message sent before the header carrier was rolled out,
+        // or arriving from an environment where IncludeOriginalHeaders is not yet enabled
+        // on the SES configuration set. The tag still carries the (pre-distinct_id) shape.
+        const tagOnlyMail = {
+            ...baseMail,
+            headers: undefined,
+        }
+        const body = [
+            {
+                eventType: 'Open',
+                mail: tagOnlyMail,
+                open: { ipAddress: '1.2.3.4', userAgent: 'UA', timestamp: '2025-10-03T12:01:00Z' },
+            },
+        ]
+        const result = await handler.handleWebhook({ body, headers: {} })
+        expect(result.status).toBe(200)
+        expect(result.metrics?.[0].functionId).toBe('abc123')
+        expect(result.metrics?.[0].invocationId).toBe('inv456')
+        // distinct_id is omitted because the short tag carrier doesn't include it.
+        expect(result.metrics?.[0].distinctId).toBeUndefined()
+    })
+
+    it('prefers the custom header over the SES tag when both are present', async () => {
+        // Header carries the canonical (full) code; tag carries the short code as a fallback.
+        // The parser must read from the header so distinct_id is recovered.
+        const result = await handler.handleWebhook({
+            body: [
+                {
+                    eventType: 'Open',
+                    mail: baseMail,
+                    open: { ipAddress: '1.2.3.4', userAgent: 'UA', timestamp: '2025-10-03T12:01:00Z' },
+                },
+            ],
+            headers: {},
+        })
+        expect(result.status).toBe(200)
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
     })
 
     it('skips Send events (email_sent is recorded synchronously, not from webhooks)', async () => {
@@ -91,7 +164,10 @@ describe('SesWebhookHandler', () => {
                 functionId: 'abc123',
                 invocationId: 'inv456',
                 actionId: 'act789',
+                distinctId: 'user-123',
                 metricName: 'email_delivered',
+                properties: { $email_to: 'to@example.com' },
+                timestamp: '2025-10-03T12:03:00Z',
             },
         ])
     })
@@ -114,6 +190,7 @@ describe('SesWebhookHandler', () => {
         const result = await handler.handleWebhook({ body, headers: {} })
         expect(result.status).toBe(200)
         expect(result.metrics?.[0].metricName).toBe('email_bounced')
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
         expect(result.optOutRecipients).toEqual([{ teamId: '1', emailAddresses: ['to@example.com'] }])
     })
 
@@ -135,6 +212,7 @@ describe('SesWebhookHandler', () => {
         const result = await handler.handleWebhook({ body, headers: {} })
         expect(result.status).toBe(200)
         expect(result.metrics?.[0].metricName).toBe('email_bounced')
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
         expect(result.optOutRecipients).toEqual([])
     })
 
@@ -152,13 +230,14 @@ describe('SesWebhookHandler', () => {
         const result = await handler.handleWebhook({ body, headers: {} })
         expect(result.status).toBe(200)
         expect(result.metrics?.[0].metricName).toBe('email_blocked')
+        expect(result.metrics?.[0].distinctId).toBe('user-123')
     })
 
-    it('returns 200 and no metrics if tracking code is missing', async () => {
+    it('returns 200 and no metrics if tracking code is missing from both carriers', async () => {
         const body = [
             {
                 eventType: 'Open',
-                mail: { ...baseMail, tags: {} },
+                mail: { ...baseMail, tags: {}, headers: [] },
                 open: {
                     ipAddress: '1.2.3.4',
                     userAgent: 'UA',
@@ -230,18 +309,18 @@ describe('SesWebhookHandler', () => {
     })
 
     it('propagates parentRunId from the tracking code so batch runs get correct attribution', async () => {
+        const batchInvocation = {
+            functionId: 'workflow-id',
+            id: 'child-invocation-id',
+            teamId: 1,
+            parentRunId: 'batch-run-id',
+            state: { actionId: 'email-action' },
+        }
         const mailWithParentRun = {
             ...baseMail,
+            headers: [{ name: TRACKING_CODE_HEADER_NAME, value: generateEmailTrackingCode(batchInvocation) }],
             tags: {
-                ph_id: [
-                    generateEmailTrackingCode({
-                        functionId: 'workflow-id',
-                        id: 'child-invocation-id',
-                        teamId: 1,
-                        parentRunId: 'batch-run-id',
-                        state: { actionId: 'email-action' },
-                    }),
-                ],
+                ph_id: [generateShortEmailTrackingCode(batchInvocation)],
             },
         }
         const body = [
@@ -260,6 +339,8 @@ describe('SesWebhookHandler', () => {
                 actionId: 'email-action',
                 parentRunId: 'batch-run-id',
                 metricName: 'email_opened',
+                properties: { $email_to: 'to@example.com' },
+                timestamp: '2025-10-03T12:01:00Z',
             },
         ])
     })

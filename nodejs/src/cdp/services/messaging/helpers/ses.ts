@@ -6,7 +6,7 @@ import { parseJSON } from '~/utils/json-parse'
 import { logger } from '~/utils/logger'
 import { fetch } from '~/utils/request'
 
-import { parseEmailTrackingCode } from './tracking-code'
+import { TRACKING_CODE_HEADER_NAME, parseEmailTrackingCode } from './tracking-code'
 
 /**
  * ---------- SNS envelope types ----------
@@ -314,7 +314,10 @@ export class SesWebhookHandler {
             invocationId?: string
             actionId?: string
             parentRunId?: string
+            distinctId?: string
             metricName: MinimalAppMetric['metric_name']
+            properties?: Record<string, any>
+            timestamp?: string
         }[]
         optOutRecipients?: {
             teamId?: string
@@ -368,7 +371,10 @@ export class SesWebhookHandler {
             invocationId?: string
             actionId?: string
             parentRunId?: string
+            distinctId?: string
             metricName: MinimalAppMetric['metric_name']
+            properties?: Record<string, any>
+            timestamp?: string
         }[] = []
         const optOutRecipients: {
             teamId?: string
@@ -377,9 +383,16 @@ export class SesWebhookHandler {
 
         for (const rec of records) {
             logger.info('[SesWebhookHandler] processing record', { rec })
-            const tags = rec.mail.tags
-            const { functionId, invocationId, teamId, actionId, parentRunId } =
-                parseEmailTrackingCode(tags?.ph_id?.[0] || '') || {}
+            // Prefer the custom MIME header (carries the full code including distinct_id, unbounded).
+            // Fall back to the SES EmailTag for messages sent before the header carrier was added,
+            // or where the configuration set hasn't yet enabled `IncludeOriginalHeaders`.
+            const headerValue = rec.mail.headers?.find(
+                (h) => h.name.toLowerCase() === TRACKING_CODE_HEADER_NAME.toLowerCase()
+            )?.value
+            const tagValue = rec.mail.tags?.ph_id?.[0]
+            const trackingCodeRaw = headerValue ?? tagValue ?? ''
+            const { functionId, invocationId, teamId, actionId, parentRunId, distinctId } =
+                parseEmailTrackingCode(trackingCodeRaw) || {}
 
             if (!functionId && !invocationId) {
                 logger.error('[SesWebhookHandler] handleWebhook: No functionId or invocationId found', { rec })
@@ -388,7 +401,38 @@ export class SesWebhookHandler {
 
             const metricName = EVENT_TYPE_TO_METRIC_NAME[rec.eventType]
             if (metricName) {
-                metrics.push({ functionId, invocationId, actionId, parentRunId, metricName })
+                const properties: Record<string, any> = {
+                    $email_to: rec.mail.destination?.[0],
+                }
+
+                // Each SES event detail carries its own timestamp (open.timestamp, click.timestamp, etc.)
+                // — prefer those over the webhook receipt time so the event reflects when the action
+                // actually happened, not when AWS got around to delivering the notification.
+                let timestamp: string | undefined
+                if ('open' in rec && rec.open) {
+                    timestamp = rec.open.timestamp
+                } else if ('click' in rec && rec.click) {
+                    timestamp = rec.click.timestamp
+                    properties.$link_url = rec.click.link
+                } else if ('delivery' in rec && rec.delivery) {
+                    timestamp = rec.delivery.timestamp
+                } else if ('bounce' in rec && rec.bounce) {
+                    timestamp = rec.bounce.timestamp
+                } else if ('complaint' in rec && rec.complaint) {
+                    timestamp = rec.complaint.timestamp
+                }
+                timestamp = timestamp ?? rec.mail.timestamp
+
+                metrics.push({
+                    functionId,
+                    invocationId,
+                    actionId,
+                    parentRunId,
+                    distinctId,
+                    metricName,
+                    properties,
+                    timestamp,
+                })
             }
 
             // Opt out recipients on permanent bounces
