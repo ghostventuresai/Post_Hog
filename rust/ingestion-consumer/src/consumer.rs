@@ -11,18 +11,16 @@ use rdkafka::TopicPartitionList;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
-use crate::router::MessageRouter;
+use crate::dispatcher::Dispatcher;
 use crate::transport::HttpTransport;
 use crate::types::SerializedKafkaMessage;
 
-/// The main consumer loop: reads from Kafka, routes messages by distinct_id,
-/// dispatches sub-batches to workers via HTTP, and commits offsets on ACK.
-///
-/// This is the single-in-flight-batch version (Stage 2). It processes one
-/// batch at a time — no concurrent batch tracking or in-flight stickiness.
+/// The main consumer loop: reads from Kafka, routes messages by distinct_id
+/// via the health-aware Dispatcher, dispatches sub-batches to workers over
+/// HTTP, and commits offsets only after all workers ACK.
 pub struct IngestionConsumer {
     consumer: StreamConsumer,
-    router: MessageRouter,
+    dispatcher: Arc<Dispatcher>,
     transport: Arc<HttpTransport>,
     worker_urls: Vec<String>,
     batch_size: usize,
@@ -31,8 +29,31 @@ pub struct IngestionConsumer {
 }
 
 impl IngestionConsumer {
+    /// Constructs a consumer from pre-built parts. Useful in integration tests
+    /// where the Kafka consumer is created and subscribed externally.
+    pub fn from_parts(
+        consumer: StreamConsumer,
+        dispatcher: Arc<Dispatcher>,
+        transport: Arc<HttpTransport>,
+        worker_urls: Vec<String>,
+        batch_size: usize,
+        batch_timeout: Duration,
+        handle: Handle,
+    ) -> Self {
+        Self {
+            consumer,
+            dispatcher,
+            transport,
+            worker_urls,
+            batch_size,
+            batch_timeout,
+            handle,
+        }
+    }
+
     pub fn new(
         config: &Config,
+        dispatcher: Arc<Dispatcher>,
         transport: Arc<HttpTransport>,
         handle: Handle,
     ) -> anyhow::Result<Self> {
@@ -40,8 +61,6 @@ impl IngestionConsumer {
         if worker_urls.is_empty() {
             anyhow::bail!("No worker addresses configured");
         }
-
-        let router = MessageRouter::new(worker_urls.len());
 
         let client_config = config.build_consumer_config();
         let consumer: StreamConsumer = client_config.create()?;
@@ -57,7 +76,7 @@ impl IngestionConsumer {
 
         Ok(Self {
             consumer,
-            router,
+            dispatcher,
             transport,
             worker_urls,
             batch_size: config.consumer_batch_size,
@@ -112,7 +131,8 @@ impl IngestionConsumer {
         info!("Consumer loop stopped");
     }
 
-    /// Collect a batch, route it, scatter to workers, gather ACKs, commit offsets.
+    /// Collect a batch, assign it via the Dispatcher, scatter to workers,
+    /// gather results, feed passive health signals, and commit offsets.
     async fn process_batch(&self) -> anyhow::Result<usize> {
         let (messages, offsets) = self.collect_batch().await?;
         if messages.is_empty() {
@@ -126,21 +146,37 @@ impl IngestionConsumer {
         counter!("ingestion_consumer_messages_received_total").increment(batch_size as u64);
         gauge!("ingestion_consumer_batch_size").set(batch_size as f64);
 
-        // Route messages to workers
-        let groups = self.router.route_batch(messages);
+        // Health-aware assignment: groups by routing key, honors stickiness,
+        // skips unhealthy/dead workers.
+        let sub_batches = self.dispatcher.assign(messages);
 
-        // Scatter: send sub-batches to workers in parallel
-        let mut handles = Vec::with_capacity(groups.len());
-        for (worker_idx, sub_batch) in groups {
-            let transport = self.transport.clone();
-            let url = self.worker_urls[worker_idx].clone();
+        if sub_batches.is_empty() {
+            counter!("ingestion_consumer_no_healthy_workers_total").increment(1);
+            anyhow::bail!("No healthy workers available to route batch");
+        }
+
+        // Scatter: send sub-batches to workers in parallel.
+        let mut handles = Vec::with_capacity(sub_batches.len());
+        for sub_batch in sub_batches {
+            let transport = Arc::clone(&self.transport);
+            let dispatcher = Arc::clone(&self.dispatcher);
+            let url = self.worker_urls[sub_batch.worker_idx].clone();
             let bid = batch_id.clone();
+            let worker_idx = sub_batch.worker_idx;
+            let routing_keys = sub_batch.routing_keys.clone();
+
             handles.push(tokio::spawn(async move {
-                transport.send_batch(&url, &bid, sub_batch).await
+                let result = transport.send_batch(&url, &bid, sub_batch.messages).await;
+                let is_error = result.is_err();
+
+                dispatcher.on_sub_batch_resolved(worker_idx, &routing_keys);
+                dispatcher.record_send_outcome(worker_idx, is_error);
+
+                result
             }));
         }
 
-        // Gather: wait for all workers to ACK
+        // Gather: wait for all workers to ACK.
         let mut total_accepted = 0u32;
         for handle in handles {
             let result = handle.await??;
@@ -153,7 +189,7 @@ impl IngestionConsumer {
             );
         }
 
-        // All workers ACK'd all messages — commit offsets
+        // All workers ACK'd — commit offsets.
         self.commit_offsets(&offsets)?;
 
         let elapsed = start.elapsed();
