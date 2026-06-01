@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import useResizeObserver from 'use-resize-observer'
 
 import { IconCheck, IconWarning, IconX } from '@posthog/icons'
-import { LemonButton, LemonDivider, LemonTabs, Spinner } from '@posthog/lemon-ui'
+import { LemonButton, LemonDivider, LemonTabs, LemonTag, Spinner } from '@posthog/lemon-ui'
 
 import {
     DangerousOperationResponse,
@@ -13,6 +13,8 @@ import {
 
 import { MarkdownMessage } from '../MarkdownMessage'
 import { maxThreadLogic } from '../maxThreadLogic'
+import { sandboxStreamLogic } from '../sandboxStreamLogic'
+import type { PermissionOption, PermissionRequestRecord } from '../types/sandboxStreamTypes'
 import { Option, OptionSelector } from './OptionSelector'
 import { MultiFieldQuestion, QuestionField, isFieldValid } from './QuestionField'
 
@@ -402,10 +404,136 @@ function DangerousOperationInput({ operation }: DangerousOperationInputProps): J
     )
 }
 
+/** Maps an ACP permission-option kind to the human-readable button copy (03_RICH_UI.md § 5.2). */
+function permissionOptionLabel(option: PermissionOption): string {
+    if (option.name) {
+        return option.name
+    }
+    switch (option.kind) {
+        case 'allow_once':
+            return 'Approve'
+        case 'allow_always':
+            return 'Approve always'
+        case 'reject':
+            return 'Decline'
+        case 'reject_with_feedback':
+            return 'Decline with feedback'
+    }
+}
+
+/** Per-kind icon for the option list — primary approvals get a check, rejections an X. */
+function permissionOptionIcon(kind: PermissionOption['kind']): JSX.Element {
+    return kind === 'allow_once' || kind === 'allow_always' ? <IconCheck /> : <IconX />
+}
+
+interface SandboxPermissionInputProps {
+    conversationId: string
+    request: PermissionRequestRecord
+}
+
+/**
+ * Input-area renderer for an ACP `permission_request` on a sandbox conversation (03_RICH_UI.md § 5).
+ * Renders one button per ACP option; `reject_with_feedback` opens the OptionSelector custom input.
+ * Submitting POSTs through `sandboxStreamLogic.respondToPermission` and guards against double-submit
+ * via a local loading state; on success the logic clears `pendingPermissionRequest`.
+ */
+export function SandboxPermissionInput({ conversationId, request }: SandboxPermissionInputProps): JSX.Element {
+    const { respondToPermission } = useActions(sandboxStreamLogic)
+    const [status, setStatus] = useState<'pending' | 'submitting'>('pending')
+
+    // `reject_with_feedback` rides the OptionSelector's built-in custom input; the other kinds are buttons.
+    const feedbackOption = request.options.find((o) => o.kind === 'reject_with_feedback')
+    const buttonOptions = request.options.filter((o) => o.kind !== 'reject_with_feedback')
+
+    const options: Option[] = buttonOptions.map((o) => ({
+        label: permissionOptionLabel(o),
+        value: o.optionId,
+        icon: permissionOptionIcon(o.kind),
+    }))
+
+    const isPlan = request.rawToolCall.kind === 'plan' || request.title?.toLowerCase().includes('plan')
+
+    const handleSelect = (value: string | null): void => {
+        if (!value || status !== 'pending') {
+            return
+        }
+        setStatus('submitting')
+        respondToPermission({ conversationId, requestId: request.requestId, optionId: value })
+    }
+
+    const handleCustomSubmit = (customInput: string): void => {
+        if (!feedbackOption || status !== 'pending') {
+            return
+        }
+        setStatus('submitting')
+        respondToPermission({
+            conversationId,
+            requestId: request.requestId,
+            optionId: feedbackOption.optionId,
+            customInput,
+        })
+    }
+
+    return (
+        <div className="flex flex-col gap-2 p-3">
+            <div className="flex items-center gap-2 text-sm">
+                <IconWarning className="text-warning size-4" />
+                <span className="font-medium">{isPlan ? 'Approve this plan?' : 'Approval required'}</span>
+            </div>
+            {(request.title || request.description) && (
+                <div className="max-h-60 overflow-y-auto">
+                    <MarkdownMessage
+                        content={request.description ?? request.title ?? ''}
+                        id={`permission-${request.requestId}`}
+                    />
+                </div>
+            )}
+            <LemonDivider className="my-0 -mx-3 w-[calc(100%+var(--spacing)*6)]" />
+            <OptionSelector
+                options={options}
+                onSelect={handleSelect}
+                allowCustom={!!feedbackOption}
+                customPlaceholder="Explain what you'd like instead..."
+                onCustomSubmit={handleCustomSubmit}
+                loading={status === 'submitting'}
+                loadingMessage="Sending response..."
+                submitLabel="Send"
+            />
+        </div>
+    )
+}
+
+/**
+ * Compact badge showing the active ACP permission mode (e.g. plan vs default) for sandbox
+ * conversations (03_RICH_UI.md § 6). Hidden when no mode has been reported.
+ */
+export function SandboxModeBadge(): JSX.Element | null {
+    const { conversation } = useValues(maxThreadLogic)
+    const { currentMode } = useValues(sandboxStreamLogic)
+
+    if (conversation?.agent_runtime !== 'sandbox' || !currentMode) {
+        return null
+    }
+
+    const isPlan = currentMode === 'plan'
+    return (
+        <LemonTag size="small" type={isPlan ? 'highlight' : 'muted'}>
+            {isPlan ? 'Plan mode' : 'Default mode'}
+        </LemonTag>
+    )
+}
+
 export function InputFormArea(): JSX.Element | null {
     // Use raw state values instead of selector to ensure re-renders on state changes
-    const { activeMultiQuestionForm, pendingApprovalProposalId, pendingApprovalsData, resolvedApprovalStatuses } =
-        useValues(maxThreadLogic)
+    const {
+        activeMultiQuestionForm,
+        pendingApprovalProposalId,
+        pendingApprovalsData,
+        resolvedApprovalStatuses,
+        conversation,
+        conversationId,
+    } = useValues(maxThreadLogic)
+    const { pendingPermissionRequest } = useValues(sandboxStreamLogic)
 
     // Build the approval object to display - only show if not yet resolved
     // Resolved approvals are shown as summaries in the chat thread, not in the input area
@@ -429,6 +557,18 @@ export function InputFormArea(): JSX.Element | null {
             payload: approval.payload as Record<string, unknown>,
         }
     }, [pendingApprovalProposalId, pendingApprovalsData, resolvedApprovalStatuses])
+
+    // Sandbox permission requests take precedence in the input area, mirroring the LangGraph
+    // dangerous-operation flow but driven by sandboxStreamLogic (03_RICH_UI.md § 5).
+    if (conversation?.agent_runtime === 'sandbox' && pendingPermissionRequest) {
+        return (
+            <SandboxPermissionInput
+                key={pendingPermissionRequest.requestId}
+                conversationId={conversationId}
+                request={pendingPermissionRequest}
+            />
+        )
+    }
 
     if (activeDangerousOperationApproval) {
         return (

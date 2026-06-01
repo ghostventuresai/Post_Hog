@@ -183,6 +183,20 @@ describe('sandboxStreamLogic', () => {
             expect(logic.values.currentMode).toEqual('plan')
         })
 
+        it('sets currentProgress on a _posthog/progress frame and clears it on turn complete', async () => {
+            await expectLogic(logic, () => {
+                logic.actions.ingestAcpFrame(notification('_posthog/progress', { message: 'Querying events' }))
+            }).toFinishAllListeners()
+
+            expect(logic.values.currentProgress).toEqual('Querying events')
+
+            await expectLogic(logic, () => {
+                logic.actions.ingestAcpFrame(notification('_posthog/turn_complete', {}))
+            }).toFinishAllListeners()
+
+            expect(logic.values.currentProgress).toBeNull()
+        })
+
         it('drives terminal status off handleTerminalStatus', async () => {
             await expectLogic(logic, () => {
                 logic.actions.handleTerminalStatus({ status: 'completed' })

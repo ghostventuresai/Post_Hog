@@ -29,6 +29,7 @@ import {
     LemonDialog,
     LemonInput,
     LemonSkeleton,
+    Spinner,
     Tooltip,
 } from '@posthog/lemon-ui'
 
@@ -110,7 +111,7 @@ import {
     isVisualizationArtifactContent,
     visualizationTypeToQuery,
 } from './utils'
-import { getThinkingMessageFromResponse } from './utils/thinkingMessages'
+import { getRandomThinkingMessage, getThinkingMessageFromResponse } from './utils/thinkingMessages'
 
 // Helper function to check if a message is an error or failure
 function isErrorMessage(message: ThreadMessage): boolean {
@@ -148,7 +149,11 @@ function toolInvocationToMessage(
  * § 7.3 and 03_RICH_UI.md § 2.3.
  */
 function SandboxThread(): JSX.Element {
-    const { threadItems, toolInvocations } = useValues(sandboxStreamLogic)
+    const { threadItems, toolInvocations, currentProgress, runStarted, turnComplete } = useValues(sandboxStreamLogic)
+
+    // Drive the thinking indicator from real agent progress (03_RICH_UI.md § 6.1): show the latest
+    // `_posthog/progress` message while the run is active, falling back to the canned rotation.
+    const isThinking = runStarted && !turnComplete
 
     return (
         <>
@@ -177,7 +182,24 @@ function SandboxThread(): JSX.Element {
                 }
                 return null
             })}
+            {isThinking && <SandboxThinkingIndicator progress={currentProgress} />}
         </>
+    )
+}
+
+/**
+ * Bottom-of-thread "what's it doing right now" line for sandbox conversations. Reflects the latest
+ * `_posthog/progress` message when present, otherwise the canned thinking rotation (03_RICH_UI.md § 6.1).
+ */
+function SandboxThinkingIndicator({ progress }: { progress: string | null }): JSX.Element {
+    const message = useMemo(() => (progress?.trim() ? progress : getRandomThinkingMessage()), [progress])
+    return (
+        <MessageTemplate type="ai">
+            <div className="flex items-center gap-2 text-muted">
+                <Spinner className="size-4" />
+                <span>{message}</span>
+            </div>
+        </MessageTemplate>
     )
 }
 
