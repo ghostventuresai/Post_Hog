@@ -56,6 +56,7 @@ function TracingSceneContents(): JSX.Element {
         spansLoading,
         isTraceModalOpen,
         selectedTraceId,
+        linkedSpanId,
         sparklineData,
         sparklineLoading,
         totalSpansMatchingFilters,
@@ -209,7 +210,7 @@ function TracingSceneContents(): JSX.Element {
             >
                 <div className="relative min-h-32">
                     {isLoadingFullTrace && <SpinnerOverlay />}
-                    <TraceFlameChart spans={modalSpans} />
+                    <TraceFlameChart spans={modalSpans} highlightSpanId={linkedSpanId} />
                 </div>
             </LemonModal>
             <LemonModal
