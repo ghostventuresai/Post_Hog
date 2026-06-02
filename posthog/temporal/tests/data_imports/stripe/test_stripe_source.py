@@ -226,19 +226,19 @@ async def test_stripe_source_incremental(team, mock_stripe_api, external_data_so
 
 
 def _mock_all_stripe_endpoints(mock_client):
-    mock_client.accounts.list = mock.MagicMock()
-    mock_client.balance_transactions.list = mock.MagicMock()
-    mock_client.charges.list = mock.MagicMock()
-    mock_client.customers.list = mock.MagicMock()
-    mock_client.disputes.list = mock.MagicMock()
-    mock_client.invoice_items.list = mock.MagicMock()
-    mock_client.invoices.list = mock.MagicMock()
-    mock_client.payouts.list = mock.MagicMock()
-    mock_client.prices.list = mock.MagicMock()
-    mock_client.products.list = mock.MagicMock()
-    mock_client.subscriptions.list = mock.MagicMock()
-    mock_client.refunds.list = mock.MagicMock()
-    mock_client.credit_notes.list = mock.MagicMock()
+    mock_client.v1.accounts.list = mock.MagicMock()
+    mock_client.v1.balance_transactions.list = mock.MagicMock()
+    mock_client.v1.charges.list = mock.MagicMock()
+    mock_client.v1.customers.list = mock.MagicMock()
+    mock_client.v1.disputes.list = mock.MagicMock()
+    mock_client.v1.invoice_items.list = mock.MagicMock()
+    mock_client.v1.invoices.list = mock.MagicMock()
+    mock_client.v1.payouts.list = mock.MagicMock()
+    mock_client.v1.prices.list = mock.MagicMock()
+    mock_client.v1.products.list = mock.MagicMock()
+    mock_client.v1.subscriptions.list = mock.MagicMock()
+    mock_client.v1.refunds.list = mock.MagicMock()
+    mock_client.v1.credit_notes.list = mock.MagicMock()
 
 
 def test_validate_credentials_basic_only_probes_one_endpoint():
@@ -253,21 +253,21 @@ def test_validate_credentials_basic_only_probes_one_endpoint():
         assert result is True
 
         # Only the basic-probe endpoint (Customer) is hit.
-        mock_client.customers.list.assert_called_once_with(params={"limit": 1})
+        mock_client.v1.customers.list.assert_called_once_with(params={"limit": 1})
 
         # Every other endpoint stays untouched.
-        mock_client.accounts.list.assert_not_called()
-        mock_client.balance_transactions.list.assert_not_called()
-        mock_client.charges.list.assert_not_called()
-        mock_client.disputes.list.assert_not_called()
-        mock_client.invoice_items.list.assert_not_called()
-        mock_client.invoices.list.assert_not_called()
-        mock_client.payouts.list.assert_not_called()
-        mock_client.prices.list.assert_not_called()
-        mock_client.products.list.assert_not_called()
-        mock_client.subscriptions.list.assert_not_called()
-        mock_client.refunds.list.assert_not_called()
-        mock_client.credit_notes.list.assert_not_called()
+        mock_client.v1.accounts.list.assert_not_called()
+        mock_client.v1.balance_transactions.list.assert_not_called()
+        mock_client.v1.charges.list.assert_not_called()
+        mock_client.v1.disputes.list.assert_not_called()
+        mock_client.v1.invoice_items.list.assert_not_called()
+        mock_client.v1.invoices.list.assert_not_called()
+        mock_client.v1.payouts.list.assert_not_called()
+        mock_client.v1.prices.list.assert_not_called()
+        mock_client.v1.products.list.assert_not_called()
+        mock_client.v1.subscriptions.list.assert_not_called()
+        mock_client.v1.refunds.list.assert_not_called()
+        mock_client.v1.credit_notes.list.assert_not_called()
 
 
 def test_validate_credentials_basic_treats_403_as_success():
@@ -276,7 +276,7 @@ def test_validate_credentials_basic_treats_403_as_success():
     the wizard's connect step must not block on a missing scope here."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.customers.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
+    mock_client.v1.customers.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
 
     with mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client):
         result = validate_credentials("api_key")
@@ -289,7 +289,7 @@ def test_validate_credentials_basic_unknown_error_raises_validation_error():
     StripeValidationError so the underlying message is shown, not silently swallowed."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.customers.list = mock.MagicMock(side_effect=RuntimeError("connection reset by peer"))
+    mock_client.v1.customers.list = mock.MagicMock(side_effect=RuntimeError("connection reset by peer"))
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -310,10 +310,10 @@ def test_validate_credentials_with_explicit_endpoint():
 
         assert result is True
 
-        mock_client.accounts.list.assert_called_once_with(params={"limit": 1})
-        mock_client.balance_transactions.list.assert_not_called()
-        mock_client.charges.list.assert_not_called()
-        mock_client.customers.list.assert_not_called()
+        mock_client.v1.accounts.list.assert_called_once_with(params={"limit": 1})
+        mock_client.v1.balance_transactions.list.assert_not_called()
+        mock_client.v1.charges.list.assert_not_called()
+        mock_client.v1.customers.list.assert_not_called()
 
 
 def test_validate_credentials_basic_authentication_error_short_circuits():
@@ -321,7 +321,7 @@ def test_validate_credentials_basic_authentication_error_short_circuits():
     so the user sees the right reason rather than a misleading permissions error."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.customers.list = mock.MagicMock(
+    mock_client.v1.customers.list = mock.MagicMock(
         side_effect=stripe_lib.AuthenticationError(message="Invalid API Key provided: rk_live_***")
     )
 
@@ -339,9 +339,9 @@ def test_validate_credentials_endpoint_list_authentication_error_short_circuits(
     every other call will 401 the same way and we should not keep banging the API."""
     mock_client = mock.MagicMock()
     auth_error = stripe_lib.AuthenticationError(message="Invalid API Key provided: rk_live_***")
-    mock_client.accounts.list = mock.MagicMock(side_effect=auth_error)
-    mock_client.balance_transactions.list = mock.MagicMock()
-    mock_client.charges.list = mock.MagicMock()
+    mock_client.v1.accounts.list = mock.MagicMock(side_effect=auth_error)
+    mock_client.v1.balance_transactions.list = mock.MagicMock()
+    mock_client.v1.charges.list = mock.MagicMock()
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -353,8 +353,8 @@ def test_validate_credentials_endpoint_list_authentication_error_short_circuits(
         )
 
     assert "Invalid API Key" in str(e.value)
-    mock_client.balance_transactions.list.assert_not_called()
-    mock_client.charges.list.assert_not_called()
+    mock_client.v1.balance_transactions.list.assert_not_called()
+    mock_client.v1.charges.list.assert_not_called()
 
 
 def test_validate_credentials_endpoint_list_permission_error_lists_only_403_resources():
@@ -362,7 +362,7 @@ def test_validate_credentials_endpoint_list_permission_error_lists_only_403_reso
     not poisoned by other unrelated successes."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.charges.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
+    mock_client.v1.charges.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -377,7 +377,7 @@ def test_validate_credentials_endpoint_list_unknown_error_raises_validation_erro
     """Non-403 failures on a requested endpoint surface verbatim via StripeValidationError."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.charges.list = mock.MagicMock(side_effect=RuntimeError("connection reset by peer"))
+    mock_client.v1.charges.list = mock.MagicMock(side_effect=RuntimeError("connection reset by peer"))
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -394,8 +394,8 @@ def test_validate_credentials_endpoint_list_mixed_403_and_unknown_raises_validat
     """Validation errors win (higher-severity) but carry collected 403s along."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.charges.list = mock.MagicMock(side_effect=RuntimeError("connection reset"))
-    mock_client.subscriptions.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
+    mock_client.v1.charges.list = mock.MagicMock(side_effect=RuntimeError("connection reset"))
+    mock_client.v1.subscriptions.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -417,14 +417,14 @@ def test_validate_credentials_nested_resource_validates_via_parent(nested_table_
     error — which used to surface as "Stripe credentials lack permissions for CustomerPaymentMethod"
     every time the user toggled the sync method on a nested table."""
     mock_client = mock.MagicMock()
-    mock_client.customers.list = mock.MagicMock()
+    mock_client.v1.customers.list = mock.MagicMock()
 
     with mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client):
         result = validate_credentials("api_key", endpoints=[nested_table_name])
 
     assert result is True
     # The parent's list endpoint is the one we actually call.
-    mock_client.customers.list.assert_called_once_with(params={"limit": 1})
+    mock_client.v1.customers.list.assert_called_once_with(params={"limit": 1})
 
 
 @pytest.mark.parametrize(
@@ -436,7 +436,7 @@ def test_validate_credentials_nested_resource_surfaces_parent_permission_error(n
     the user toggled and the parent that actually gates the permission — `Nested (Parent)` —
     so the message is unambiguous about which Stripe scope to grant."""
     mock_client = mock.MagicMock()
-    mock_client.customers.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
+    mock_client.v1.customers.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
 
     with (
         mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client),
@@ -512,19 +512,19 @@ def test_validate_credentials_with_missing_table_name():
         validate_credentials("api_key", endpoints=["bad_table"])
 
     # No endpoint should be called
-    mock_client.accounts.list.assert_not_called()
-    mock_client.balance_transactions.list.assert_not_called()
-    mock_client.charges.list.assert_not_called()
-    mock_client.customers.list.assert_not_called()
-    mock_client.disputes.list.assert_not_called()
-    mock_client.invoice_items.list.assert_not_called()
-    mock_client.invoices.list.assert_not_called()
-    mock_client.payouts.list.assert_not_called()
-    mock_client.prices.list.assert_not_called()
-    mock_client.products.list.assert_not_called()
-    mock_client.subscriptions.list.assert_not_called()
-    mock_client.refunds.list.assert_not_called()
-    mock_client.credit_notes.list.assert_not_called()
+    mock_client.v1.accounts.list.assert_not_called()
+    mock_client.v1.balance_transactions.list.assert_not_called()
+    mock_client.v1.charges.list.assert_not_called()
+    mock_client.v1.customers.list.assert_not_called()
+    mock_client.v1.disputes.list.assert_not_called()
+    mock_client.v1.invoice_items.list.assert_not_called()
+    mock_client.v1.invoices.list.assert_not_called()
+    mock_client.v1.payouts.list.assert_not_called()
+    mock_client.v1.prices.list.assert_not_called()
+    mock_client.v1.products.list.assert_not_called()
+    mock_client.v1.subscriptions.list.assert_not_called()
+    mock_client.v1.refunds.list.assert_not_called()
+    mock_client.v1.credit_notes.list.assert_not_called()
 
     assert "bad_table" in str(e)
 
@@ -546,10 +546,10 @@ def test_validate_credentials_endpoint_list_oauth_skips_account():
         assert result is True
 
         # accounts.list must NOT be called for OAuth tokens
-        mock_client.accounts.list.assert_not_called()
+        mock_client.v1.accounts.list.assert_not_called()
         # Other listed endpoints still get probed
-        mock_client.customers.list.assert_called_once_with(params={"limit": 1})
-        mock_client.charges.list.assert_called_once_with(params={"limit": 1})
+        mock_client.v1.customers.list.assert_called_once_with(params={"limit": 1})
+        mock_client.v1.charges.list.assert_called_once_with(params={"limit": 1})
 
 
 def test_check_endpoint_permissions_returns_per_endpoint_status():
@@ -557,8 +557,8 @@ def test_check_endpoint_permissions_returns_per_endpoint_status():
     endpoint's status individually instead of short-circuiting on the first denial."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.charges.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
-    mock_client.subscriptions.list = mock.MagicMock(side_effect=RuntimeError("connection reset"))
+    mock_client.v1.charges.list = mock.MagicMock(side_effect=stripe_lib.PermissionError(message="Forbidden"))
+    mock_client.v1.subscriptions.list = mock.MagicMock(side_effect=RuntimeError("connection reset"))
 
     with mock.patch("posthog.temporal.data_imports.sources.stripe.stripe.StripeClient", return_value=mock_client):
         results = check_endpoint_permissions("api_key", endpoints=["Customer", "Charge", "Subscription"])
@@ -573,7 +573,7 @@ def test_check_endpoint_permissions_raises_on_401():
     UI needs to surface a credential failure rather than render thirteen denial rows."""
     mock_client = mock.MagicMock()
     _mock_all_stripe_endpoints(mock_client)
-    mock_client.customers.list = mock.MagicMock(
+    mock_client.v1.customers.list = mock.MagicMock(
         side_effect=stripe_lib.AuthenticationError(message="Invalid API Key provided: rk_live_***")
     )
 
@@ -599,7 +599,7 @@ def test_check_endpoint_permissions_oauth_marks_account_as_unavailable():
     assert account_reason is not None
     assert "OAuth" in account_reason
     assert results["Customer"] is None
-    mock_client.accounts.list.assert_not_called()
+    mock_client.v1.accounts.list.assert_not_called()
 
 
 def test_validate_credentials_oauth_account_endpoint_returns_true():
@@ -611,8 +611,8 @@ def test_validate_credentials_oauth_account_endpoint_returns_true():
         assert result is True
 
         # No Stripe API calls should be made — Account is skipped for OAuth before any checks run
-        mock_client.accounts.list.assert_not_called()
-        mock_client.balance_transactions.list.assert_not_called()
+        mock_client.v1.accounts.list.assert_not_called()
+        mock_client.v1.balance_transactions.list.assert_not_called()
 
 
 class TestGetApiKey:
