@@ -196,18 +196,51 @@ def _priority_rank(priority: Priority) -> int:
     }[priority]
 
 
-def _build_autostart_task_description(result: ReportResearchOutput, repository: str) -> str:
+def _build_autostart_task_description(
+    result: ReportResearchOutput,
+    signals: list[SignalData],
+    repository: str,
+) -> str:
     priority_line = (
         f"Priority: {result.priority.priority.value}\nReason: {result.priority.explanation}\n\n"
         if result.priority
         else ""
     )
+
+    # The observed symptoms, verbatim from the signals — what users/sessions actually exhibited.
+    # This is the bar the fix must clear, kept distinct from the inferred root cause in the summary
+    # so the coding agent fixes what was observed rather than the most code-tractable nearby issue.
+    observed = "\n".join(f"- {signal.content}" for signal in signals if signal.content)
+    observed_block = f"## Observed symptom (this is the bar your fix must clear)\n{observed}\n\n" if observed else ""
+
+    # Surface any linked session recordings so the agent can watch the real behaviour.
+    # The task runs with read_only PostHog MCP scope, which can fetch recordings.
+    session_ids = sorted(
+        {str(signal.extra["session_id"]) for signal in signals if signal.extra and signal.extra.get("session_id")}
+    )
+    recordings_line = (
+        f"Session recordings showing this — watch them to confirm the symptom: {', '.join(session_ids)}\n\n"
+        if session_ids
+        else ""
+    )
+
+    # The single highest-impact code path per finding, as a research-backed starting point.
+    code_paths = sorted({f.relevant_code_paths[0] for f in result.findings if f.relevant_code_paths})
+    code_paths_line = f"Key code paths from research: {', '.join(code_paths)}\n\n" if code_paths else ""
+
     return (
         f"{result.summary}\n\n"
+        f"{observed_block}"
+        f"{recordings_line}"
+        f"{code_paths_line}"
         f"{priority_line}"
         f"Repository: {repository}\n\n"
-        "Act on this signal report. Investigate the root cause, implement the fix, "
-        "and open a PR if appropriate."
+        "Address the observed symptom above — not merely an adjacent issue you notice nearby. "
+        "Investigate the root cause, implement the fix, and open a PR if appropriate. "
+        "If your change fixes something related but does not change what the user actually observed, "
+        "say so explicitly and stop rather than opening a PR for the wrong problem. "
+        "For visual or UX symptoms (loading states, layout, flashes), reproduce the state or review the "
+        "linked session recording to confirm your fix changes it — unit tests alone do not verify a visual symptom."
     )
 
 
@@ -274,6 +307,7 @@ async def _maybe_autostart_task_for_report(
     repository: str,
     result: ReportResearchOutput,
     reviewers_content: list[ReviewerContent],
+    signals: list[SignalData],
 ) -> None:
     task_exists = await SignalReportTask.objects.filter(
         report_id=report_id, relationship=SignalReportTask.Relationship.IMPLEMENTATION
@@ -299,7 +333,7 @@ async def _maybe_autostart_task_for_report(
     task = await database_sync_to_async(Task.create_and_run, thread_sensitive=False)(
         team=team,
         title=result.title,
-        description=_build_autostart_task_description(result, repository),
+        description=_build_autostart_task_description(result, signals, repository),
         origin_product=Task.OriginProduct.SIGNAL_REPORT,
         user_id=task_user.id,
         repository=repository,
@@ -335,7 +369,11 @@ def _replace_agentic_report_artefacts(
 
 
 async def _persist_agentic_report_artefacts(
-    team_id: int, report_id: str, result: ReportResearchOutput, repo_selection: RepoSelectionResult
+    team_id: int,
+    report_id: str,
+    result: ReportResearchOutput,
+    repo_selection: RepoSelectionResult,
+    signals: list[SignalData],
 ) -> None:
     artefacts: list[SignalReportArtefact] = [
         SignalReportArtefact(
@@ -401,6 +439,7 @@ async def _persist_agentic_report_artefacts(
             repository=repo_selection.repository or "",
             result=result,
             reviewers_content=reviewers_content,
+            signals=signals,
         )
     except Exception as error:
         posthoganalytics.capture_exception(error)
@@ -451,6 +490,7 @@ async def run_agentic_report_activity(input: RunAgenticReportInput) -> RunAgenti
                 input.report_id,
                 result,
                 input.repo_selection,
+                input.signals,
             )
         logger.info(
             "signals agentic report completed",

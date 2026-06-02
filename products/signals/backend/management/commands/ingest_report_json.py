@@ -110,7 +110,9 @@ class Command(BaseCommand):
             reason="ingest_report_json: repository provided by fixture",
         )
 
-        asyncio.run(_persist_agentic_report_artefacts(team.id, str(report.id), result, repo_selection))
+        # The fixture only carries signal IDs, not full SignalData — pass an empty list. The autostart
+        # task description simply omits the observed-symptom block in this local-seeding path.
+        asyncio.run(_persist_agentic_report_artefacts(team.id, str(report.id), result, repo_selection, []))
 
         self._finalize_report(report, result)
 
