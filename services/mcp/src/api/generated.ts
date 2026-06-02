@@ -24118,7 +24118,7 @@ export namespace Schemas {
          * @nullable
          */
       readonly scheduled_at: string | null;
-      /** Channel snapshot at send time (email, slack, webhook). */
+      /** Channel snapshot at send time (email or slack). */
       readonly target_type: string;
       /** Destination snapshot at send time (emails, channel id, URL). */
       readonly target_value: string;
@@ -24178,7 +24178,6 @@ export namespace Schemas {
     /**
      * * `email` - Email
     * `slack` - Slack
-    * `webhook` - Webhook
      */
     export type TargetTypeEnum = typeof TargetTypeEnum[keyof typeof TargetTypeEnum];
 
@@ -24186,7 +24185,6 @@ export namespace Schemas {
     export const TargetTypeEnum = {
       Email: 'email',
       Slack: 'slack',
-      Webhook: 'webhook',
     } as const;
 
     /**
@@ -24259,13 +24257,12 @@ export namespace Schemas {
          * @nullable
          */
       prompt?: string | null;
-      /** Delivery channel: email, slack, or webhook.
+      /** Delivery channel: email or slack.
 
       * `email` - Email
-      * `slack` - Slack
-      * `webhook` - Webhook */
+      * `slack` - Slack */
       target_type: TargetTypeEnum;
-      /** Recipient(s): comma-separated email addresses for email, Slack channel name/ID for slack, or full URL for webhook. */
+      /** Recipient(s): comma-separated email addresses for email, or Slack channel name/ID for slack. */
       target_value: string;
       /** How often to deliver: daily, weekly, monthly, or yearly.
 
@@ -30003,13 +30000,12 @@ export namespace Schemas {
          * @nullable
          */
       prompt?: string | null;
-      /** Delivery channel: email, slack, or webhook.
+      /** Delivery channel: email or slack.
 
       * `email` - Email
-      * `slack` - Slack
-      * `webhook` - Webhook */
+      * `slack` - Slack */
       target_type?: TargetTypeEnum;
-      /** Recipient(s): comma-separated email addresses for email, Slack channel name/ID for slack, or full URL for webhook. */
+      /** Recipient(s): comma-separated email addresses for email, or Slack channel name/ID for slack. */
       target_value?: string;
       /** How often to deliver: daily, weekly, monthly, or yearly.
 
@@ -40136,7 +40132,7 @@ export namespace Schemas {
      */
     search?: string;
     /**
-     * Filter by delivery channel (email, Slack, or webhook).
+     * Filter by delivery channel (email or Slack).
      */
     target_type?: EnvironmentsSubscriptionsListTargetType;
     };
@@ -40156,7 +40152,6 @@ export namespace Schemas {
     export const EnvironmentsSubscriptionsListTargetType = {
       Email: 'email',
       Slack: 'slack',
-      Webhook: 'webhook',
     } as const;
 
     export type EnvironmentsSubscriptionsSummaryQuotaRetrieve200 = {
@@ -45761,7 +45756,7 @@ export namespace Schemas {
      */
     search?: string;
     /**
-     * Filter by delivery channel (email, Slack, or webhook).
+     * Filter by delivery channel (email or Slack).
      */
     target_type?: SubscriptionsListTargetType;
     };
@@ -45781,7 +45776,6 @@ export namespace Schemas {
     export const SubscriptionsListTargetType = {
       Email: 'email',
       Slack: 'slack',
-      Webhook: 'webhook',
     } as const;
 
     export type SubscriptionsSummaryQuotaRetrieve200 = {
