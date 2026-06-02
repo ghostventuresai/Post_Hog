@@ -4,6 +4,7 @@ import typing
 import datetime as dt
 from datetime import datetime
 
+from django.db.models import Q
 from django.utils import timezone as tz
 
 import temporalio.activity
@@ -106,6 +107,10 @@ async def fetch_due_subscriptions_activity(inputs: FetchDueSubscriptionsActivity
             for sub in Subscription.objects.filter(next_delivery_date__lte=now_with_buffer, deleted=False, enabled=True)
             .exclude(dashboard__deleted=True)
             .exclude(insight__deleted=True)
+            # Skip relationless subs — derive_resource_type raises on them, and one bad row would fail the whole batch.
+            .exclude(
+                Q(insight_id__isnull=True) & Q(dashboard_id__isnull=True) & (Q(prompt__isnull=True) | Q(prompt=""))
+            )
             .values(
                 "id", "team_id", "created_by__distinct_id", "next_delivery_date", "insight_id", "dashboard_id", "prompt"
             )

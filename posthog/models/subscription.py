@@ -185,7 +185,7 @@ class Subscription(ModelActivityMixin, models.Model):
             return cls.ResourceType.DASHBOARD
         if prompt:
             return cls.ResourceType.AI_PROMPT
-        return cls.ResourceType.INSIGHT
+        raise ValueError("Subscription has no insight, dashboard, or prompt to derive a resource type from")
 
     @property
     def resource_type(self) -> str:
