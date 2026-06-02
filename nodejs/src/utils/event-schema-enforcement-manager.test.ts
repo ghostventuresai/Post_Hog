@@ -36,14 +36,14 @@ describe('EventSchemaEnforcementManager', () => {
     const createEventDefinition = async (
         teamId: number,
         eventName: string,
-        enforcementMode: 'allow' | 'reject' = 'allow'
+        enforcementMode: 'allow' | 'reject' | 'enforce' = 'allow'
     ): Promise<string> => {
         const result = await postgres.query<{ id: string }>(
             PostgresUse.COMMON_WRITE,
             `INSERT INTO posthog_eventdefinition
-                (id, team_id, name, enforcement_mode, created_at, last_seen_at)
+                (id, team_id, name, enforcement_mode, schema_version, created_at, last_seen_at)
              VALUES
-                (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
+                (gen_random_uuid(), $1, $2, $3, 1, NOW(), NOW())
              RETURNING id`,
             [teamId, eventName, enforcementMode],
             'create-test-event-definition'
@@ -257,6 +257,37 @@ describe('EventSchemaEnforcementManager', () => {
             const result2 = await schemaManager.getSchemas(99999)
             expect(result2.size).toBe(0)
             expect(fetchSchemasSpy).toHaveBeenCalledTimes(1)
+        })
+    })
+
+    describe('enforce mode', () => {
+        it('returns schemas for events with enforcement_mode=enforce', async () => {
+            const eventDefId = await createEventDefinition(teamId, 'test_event', 'enforce')
+            const propGroupId = await createPropertyGroup(teamId)
+            await createEventSchema(eventDefId, propGroupId)
+            await createProperty(propGroupId, 'user_id', 'String', true)
+
+            const result = await schemaManager.getSchemas(teamId)
+
+            expect(result.size).toBe(1)
+            const schema = result.get('test_event')
+            expect(schema).toBeDefined()
+            expect(schema!.enforcement_mode).toBe('enforce')
+            expect(schema!.schema_version).toBe(1)
+        })
+
+        it('returns both reject and enforce schemas for the same team', async () => {
+            await createEnforcedSchema(teamId, 'reject_event', [{ name: 'prop', type: 'String', required: true }])
+            const enforceDefId = await createEventDefinition(teamId, 'enforce_event', 'enforce')
+            const propGroupId = await createPropertyGroup(teamId)
+            await createEventSchema(enforceDefId, propGroupId)
+            await createProperty(propGroupId, 'prop', 'String', true)
+
+            const result = await schemaManager.getSchemas(teamId)
+
+            expect(result.size).toBe(2)
+            expect(result.get('reject_event')!.enforcement_mode).toBe('reject')
+            expect(result.get('enforce_event')!.enforcement_mode).toBe('enforce')
         })
     })
 })

@@ -1,5 +1,6 @@
 import { EventSchemaEnforcement, PipelineEvent, Team } from '../../types'
 import { EventSchemaEnforcementManager } from '../../utils/event-schema-enforcement-manager'
+import { PipelineWarning } from '../pipelines/pipeline.interface'
 import { drop, ok } from '../pipelines/results'
 import { ProcessingStep } from '../pipelines/steps'
 import { isValidClickHouseDateTime } from './clickhouse-datetime-parser'
@@ -102,9 +103,36 @@ export function validateEventAgainstSchema(
     }
 }
 
+function buildSchemaValidationWarning(event: PipelineEvent, validationResult: SchemaValidationResult): PipelineWarning {
+    return {
+        type: 'schema_validation_failed',
+        details: {
+            eventUuid: event.uuid,
+            eventName: event.event,
+            distinctId: event.distinct_id,
+            errors: validationResult.errors.map((err) => ({
+                property: err.propertyName,
+                reason: err.reason,
+                expectedTypes: err.expectedTypes,
+                actualValue:
+                    err.actualValue !== undefined
+                        ? typeof err.actualValue === 'object'
+                            ? JSON.stringify(err.actualValue)
+                            : String(err.actualValue)
+                        : undefined,
+            })),
+        },
+    }
+}
+
 /**
  * Creates a processing step that validates events against enforced schemas.
- * Events that fail validation are dropped and an ingestion warning is emitted.
+ *
+ * Behavior depends on the enforcement mode:
+ * - `reject`: events that fail validation are dropped with an ingestion warning
+ * - `enforce`: events are always passed through, but stamped with +version (pass) or -version (fail)
+ *
+ * The kill switch `team.schema_validation_disabled` bypasses all validation.
  *
  * @param schemaManager - Manager for fetching enforced schemas (uses caching internally)
  */
@@ -113,6 +141,10 @@ export function createValidateEventSchemaStep<T extends { event: PipelineEvent; 
 ): ProcessingStep<T, T> {
     return async function validateEventSchemaStep(input) {
         const { event, team } = input
+
+        if (team.schema_validation_disabled) {
+            return ok(input)
+        }
 
         const enforcedSchemas = await schemaManager.getSchemas(team.id)
         if (enforcedSchemas.size === 0) {
@@ -126,34 +158,23 @@ export function createValidateEventSchemaStep<T extends { event: PipelineEvent; 
 
         const validationResult = validateEventAgainstSchema(event.properties, schema)
 
-        if (!validationResult.valid) {
-            return drop(
-                'schema_validation_failed',
-                [],
-                [
-                    {
-                        type: 'schema_validation_failed',
-                        details: {
-                            eventUuid: event.uuid,
-                            eventName: event.event,
-                            distinctId: event.distinct_id,
-                            errors: validationResult.errors.map((err) => ({
-                                property: err.propertyName,
-                                reason: err.reason,
-                                expectedTypes: err.expectedTypes,
-                                actualValue:
-                                    err.actualValue !== undefined
-                                        ? typeof err.actualValue === 'object'
-                                            ? JSON.stringify(err.actualValue)
-                                            : String(err.actualValue)
-                                        : undefined,
-                            })),
-                        },
-                    },
-                ]
-            )
+        if (schema.enforcement_mode === 'enforce') {
+            // Enforce mode: stamp version and always pass through
+            if (validationResult.valid) {
+                event.validated_schema_version = schema.schema_version
+            } else {
+                event.validated_schema_version = -schema.schema_version
+            }
+            const warnings = validationResult.valid ? [] : [buildSchemaValidationWarning(event, validationResult)]
+            return ok(input, [], warnings)
         }
 
+        // Reject mode: drop on failure, stamp on success
+        if (!validationResult.valid) {
+            return drop('schema_validation_failed', [], [buildSchemaValidationWarning(event, validationResult)])
+        }
+
+        event.validated_schema_version = schema.schema_version
         return ok(input)
     }
 }

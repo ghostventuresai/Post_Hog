@@ -9,6 +9,8 @@ import { LazyLoader } from './lazy-loader'
 interface RawSchemaPropertyRow {
     team_id: number
     event_name: string
+    enforcement_mode: 'reject' | 'enforce'
+    schema_version: number
     property_name: string
     property_types: string[]
 }
@@ -16,7 +18,7 @@ interface RawSchemaPropertyRow {
 /**
  * Manages event schema enforcement configuration for teams.
  *
- * Fetches schemas for events that have enforcement_mode='reject' on their EventDefinition,
+ * Fetches schemas for events that have enforcement_mode='reject' or 'enforce' on their EventDefinition,
  * which are validated at ingestion time.
  */
 /** Map from event_name to schema for O(1) lookups */
@@ -75,15 +77,17 @@ export class EventSchemaEnforcementManager {
             `SELECT
                 ed.team_id,
                 ed.name as event_name,
+                ed.enforcement_mode,
+                ed.schema_version as schema_version,
                 p.name as property_name,
                 array_agg(DISTINCT p.property_type ORDER BY p.property_type) as property_types
             FROM posthog_eventdefinition ed
             JOIN posthog_eventschema es ON es.event_definition_id = ed.id
             JOIN posthog_schemapropertygroupproperty p ON p.property_group_id = es.property_group_id
             WHERE ed.team_id = ANY($1)
-              AND ed.enforcement_mode = 'reject'
+              AND ed.enforcement_mode IN ('reject', 'enforce')
               AND p.is_required = true
-            GROUP BY ed.team_id, ed.name, p.name
+            GROUP BY ed.team_id, ed.name, ed.enforcement_mode, ed.schema_version, p.name
             ORDER BY ed.team_id, ed.name, p.name`,
             [numericTeamIds],
             'fetch-enforced-event-schemas'
@@ -112,7 +116,12 @@ export class EventSchemaEnforcementManager {
 
             let schema = result[teamId].get(row.event_name)
             if (!schema) {
-                schema = { event_name: row.event_name, required_properties: new Map() }
+                schema = {
+                    event_name: row.event_name,
+                    enforcement_mode: row.enforcement_mode,
+                    schema_version: row.schema_version,
+                    required_properties: new Map(),
+                }
                 result[teamId].set(row.event_name, schema)
             }
 
