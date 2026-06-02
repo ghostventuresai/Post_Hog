@@ -1,21 +1,18 @@
 import uuid
 
 import temporalio.activity
-from slack_sdk.errors import SlackApiError
 from structlog import get_logger
 from temporalio.exceptions import ApplicationError
 
-from posthog.exceptions_capture import capture_exception
 from posthog.models.subscription import Subscription, SubscriptionDelivery
 from posthog.sync import database_sync_to_async
 from posthog.temporal.subscriptions.ai_subscription.delivery import (
-    SlackIntegrationMissingError,
     generate_ai_subscription_markdown,
     send_email_ai_subscription_report,
     send_slack_ai_subscription_report,
 )
 from posthog.temporal.subscriptions.ai_subscription.spec_generator import PromptRejectedError
-from posthog.temporal.subscriptions.delivery_common import auto_disable_and_return
+from posthog.temporal.subscriptions.delivery_common import auto_disable_and_return, deliver_email, deliver_slack
 from posthog.temporal.subscriptions.types import (
     DeliverSubscriptionInputs,
     DeliverSubscriptionResult,
@@ -24,13 +21,8 @@ from posthog.temporal.subscriptions.types import (
     RecipientResult,
 )
 
-from ee.tasks.subscriptions import SLACK_USER_CONFIG_ERRORS, _capture_delivery_failed_event
-from ee.tasks.subscriptions.auto_disable import (
-    AI_CONSENT_REVOKED_DISABLE_REASON,
-    AI_PROMPT_INVALID_DISABLE_REASON,
-    SLACK_DISCONNECTED_DISABLE_REASON,
-    SLACK_PERMISSION_REVOKED_DISABLE_REASON,
-)
+from ee.tasks.subscriptions import _capture_delivery_failed_event
+from ee.tasks.subscriptions.auto_disable import AI_CONSENT_REVOKED_DISABLE_REASON, AI_PROMPT_INVALID_DISABLE_REASON
 
 LOGGER = get_logger(__name__)
 
@@ -143,95 +135,30 @@ async def _deliver_ai_subscription(
         )
 
     if subscription.target_type == Subscription.SubscriptionTarget.EMAIL:
-        return await _deliver_ai_email(subscription, inputs, markdown, recipient_results)
-    if subscription.target_type == Subscription.SubscriptionTarget.SLACK:
-        return await _deliver_ai_slack(subscription, markdown, recipient_results)
-    # `validate_subscription_for_delivery` auto-disables unsupported targets up front,
-    # so reaching here means an invariant was violated.
-    raise ApplicationError(
-        f"AI delivery reached an unsupported target {subscription.target_type!r}", non_retryable=True
-    )
+        # Dedup key for MessagingRecord: stable across this run's retries, unique per run so a re-test re-sends.
+        workflow_run_id = temporalio.activity.info().workflow_run_id
+        if workflow_run_id is None:
+            raise ApplicationError("AI email delivery requires a workflow run id", non_retryable=True)
 
-
-async def _deliver_ai_email(
-    subscription: Subscription,
-    inputs: DeliverSubscriptionInputs,
-    markdown: str,
-    recipient_results: list[RecipientResult],
-) -> DeliverSubscriptionResult:
-    emails = [e.strip() for e in subscription.target_value.split(",") if e.strip()]
-    if inputs.is_new_subscription_target and inputs.previous_value is not None:
-        previous_emails = {e.strip() for e in inputs.previous_value.split(",") if e.strip()}
-        emails = [e for e in emails if e not in previous_emails]
-    # workflow_run_id disambiguates the MessagingRecord dedup key: stable across activity
-    # retries within one run (a scheduled tick dedups its own retries) but unique per run,
-    # so a fresh "Test delivery" click (new workflow run) gets a fresh key and sends.
-    # Always set inside a Temporal activity, but typed Optional by the SDK.
-    workflow_run_id = temporalio.activity.info().workflow_run_id
-    if workflow_run_id is None:
-        raise ApplicationError("AI email delivery requires a workflow run id", non_retryable=True)
-
-    success_count = 0
-    last_error: Exception | None = None
-    for email in emails:
-        try:
+        async def _send_email(email: str) -> None:
             await database_sync_to_async(send_email_ai_subscription_report, thread_sensitive=False)(
                 email=email,
                 subscription=subscription,
                 markdown=markdown,
                 delivery_run_id=workflow_run_id,
             )
-            recipient_results.append(RecipientResult(recipient=email, status="success", error=None))
-            success_count += 1
-        except Exception as exc:
-            # One bad recipient shouldn't fail the others (matches the non-AI path).
-            LOGGER.error(
-                "deliver_subscription.ai_email_failed", subscription_id=subscription.id, email=email, exc_info=True
-            )
-            capture_exception(exc)
-            _capture_delivery_failed_event(subscription, exc)
-            recipient_results.append(
-                RecipientResult(
-                    recipient=email, status="failed", error={"message": str(exc), "type": type(exc).__name__}
-                )
-            )
-            last_error = exc
-    # If every recipient failed, raise so Temporal retries — the report is already
-    # persisted, so the retry re-sends without re-running the LLM pipeline.
-    if last_error is not None and success_count == 0:
-        raise last_error
-    return DeliverSubscriptionResult(recipient_results=recipient_results)
 
-
-async def _deliver_ai_slack(
-    subscription: Subscription,
-    markdown: str,
-    recipient_results: list[RecipientResult],
-) -> DeliverSubscriptionResult:
-    try:
-        await send_slack_ai_subscription_report(subscription=subscription, markdown=markdown)
-        recipient_results.append(RecipientResult(recipient=subscription.target_value, status="success", error=None))
-        return DeliverSubscriptionResult(recipient_results=recipient_results)
-    except SlackIntegrationMissingError as exc:
-        # Integration was disconnected since the user's last edit; auto-disable rather
-        # than re-firing into a silent no-op every cycle.
-        LOGGER.warning("deliver_subscription.ai_slack_no_integration", subscription_id=subscription.id)
-        _capture_delivery_failed_event(subscription, exc)
-        return await auto_disable_and_return(subscription, SLACK_DISCONNECTED_DISABLE_REASON, recipient_results)
-    except Exception as exc:
-        slack_error_code = exc.response.get("error") if isinstance(exc, SlackApiError) else None
-        is_user_config_error = slack_error_code in SLACK_USER_CONFIG_ERRORS
-        LOGGER.error(
-            "deliver_subscription.ai_slack_failed",
-            subscription_id=subscription.id,
-            slack_error=slack_error_code,
-            exc_info=True,
+        return await deliver_email(subscription, inputs, recipient_results, _send_email)
+    if subscription.target_type == Subscription.SubscriptionTarget.SLACK:
+        return await deliver_slack(
+            subscription,
+            recipient_results,
+            lambda integration: send_slack_ai_subscription_report(
+                subscription=subscription, markdown=markdown, integration=integration
+            ),
         )
-        capture_exception(exc)
-        _capture_delivery_failed_event(subscription, exc)
-        if is_user_config_error:
-            # Won't self-heal without user action — auto-disable so it stops re-firing.
-            return await auto_disable_and_return(
-                subscription, SLACK_PERMISSION_REVOKED_DISABLE_REASON, recipient_results
-            )
-        raise  # Transient Slack errors — let Temporal retry
+    # `validate_subscription_for_delivery` auto-disables unsupported targets up front,
+    # so reaching here means an invariant was violated.
+    raise ApplicationError(
+        f"AI delivery reached an unsupported target {subscription.target_type!r}", non_retryable=True
+    )

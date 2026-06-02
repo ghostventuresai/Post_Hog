@@ -8,17 +8,14 @@ from django.db.models import Q
 from django.utils import timezone as tz
 
 import temporalio.activity
-from slack_sdk.errors import SlackApiError
 from structlog import get_logger
-from temporalio.exceptions import ApplicationError
 
-from posthog.exceptions_capture import capture_exception
 from posthog.models.exported_asset import ExportedAsset
 from posthog.models.insight import Insight
 from posthog.models.subscription import Subscription, SubscriptionDelivery
 from posthog.sync import database_sync_to_async
 from posthog.temporal.subscriptions.ai_subscription.activities import _deliver_ai_subscription
-from posthog.temporal.subscriptions.delivery_common import auto_disable_and_return
+from posthog.temporal.subscriptions.delivery_common import auto_disable_and_return, deliver_email, deliver_slack
 from posthog.temporal.subscriptions.insight_snapshot import (
     build_initial_content_snapshot,
     build_insight_delivery_snapshot,
@@ -38,19 +35,14 @@ from posthog.temporal.subscriptions.types import (
 
 from products.dashboards.backend.models.dashboard_tile import DashboardTile
 
-from ee.tasks.subscriptions import SLACK_USER_CONFIG_ERRORS, _capture_delivery_failed_event
+from ee.tasks.subscriptions import _capture_delivery_failed_event
 from ee.tasks.subscriptions.auto_disable import (
-    SLACK_DISCONNECTED_DISABLE_REASON,
-    SLACK_PERMISSION_REVOKED_DISABLE_REASON,
     UNSUPPORTED_TARGET_DISABLE_REASON,
     disable_invalid_subscription,
     get_subscription_disable_reason,
 )
 from ee.tasks.subscriptions.email_subscriptions import send_email_subscription_report
-from ee.tasks.subscriptions.slack_subscriptions import (
-    get_slack_integration_for_team,
-    send_slack_message_with_integration_async,
-)
+from ee.tasks.subscriptions.slack_subscriptions import send_slack_message_with_integration_async
 
 LOGGER = get_logger(__name__)
 
@@ -373,151 +365,39 @@ async def _deliver_insight_dashboard_subscription(
         return DeliverSubscriptionResult(recipient_results=recipient_results)
 
     if subscription.target_type == "email":
-        emails = subscription.target_value.split(",")
-        await LOGGER.ainfo(
-            "deliver_subscription.sending_email",
-            subscription_id=inputs.subscription_id,
-            recipient_count=len(emails),
-        )
-        if inputs.is_new_subscription_target:
-            previous_emails = inputs.previous_value.split(",") if inputs.previous_value else []
-            emails = list(set(emails) - set(previous_emails))
 
-        last_error: Exception | None = None
-        success_count = 0
-        for email in emails:
-            try:
-                await database_sync_to_async(send_email_subscription_report, thread_sensitive=False)(
-                    email,
-                    subscription,
-                    assets,
-                    invite_message=inputs.invite_message or "" if inputs.is_new_subscription_target else None,
-                    total_asset_count=inputs.total_insight_count,
-                    send_async=False,
-                    change_summary=inputs.change_summary,
-                )
-                success_count += 1
-                recipient_results.append(RecipientResult(recipient=email, status="success"))
-            except Exception as e:
-                _capture_delivery_failed_event(subscription, e)
-                LOGGER.error(
-                    "deliver_subscription.email_failed",
-                    subscription_id=subscription.id,
-                    email=email,
-                    next_delivery_date=subscription.next_delivery_date,
-                    destination=subscription.target_type,
-                    exc_info=True,
-                )
-                capture_exception(e)
-                last_error = e
-                recipient_results.append(
-                    RecipientResult(
-                        recipient=email,
-                        status="failed",
-                        error={"message": str(e), "type": type(e).__name__},
-                    )
-                )
+        async def _send_email(email: str) -> None:
+            await database_sync_to_async(send_email_subscription_report, thread_sensitive=False)(
+                email,
+                subscription,
+                assets,
+                invite_message=inputs.invite_message or "" if inputs.is_new_subscription_target else None,
+                total_asset_count=inputs.total_insight_count,
+                send_async=False,
+                change_summary=inputs.change_summary,
+            )
 
-        await LOGGER.ainfo(
-            "deliver_subscription.email_complete",
-            subscription_id=inputs.subscription_id,
-            success_count=success_count,
-            total_count=len(emails),
-        )
-
-        # Only retry if ALL recipients failed — partial success is acceptable
-        # to avoid duplicate sends to already-delivered recipients
-        if last_error is not None and success_count == 0:
-            raise last_error
-
-    elif subscription.target_type == "slack":
-        try:
-            integration = subscription.integration
-            if integration is None:
-                integration = await database_sync_to_async(get_slack_integration_for_team, thread_sensitive=False)(
-                    subscription.team_id
-                )
-            elif integration.kind != "slack":
-                LOGGER.warn(
-                    "deliver_subscription.invalid_integration_kind",
-                    subscription_id=subscription.id,
-                    integration_id=integration.id,
-                    kind=integration.kind,
-                )
-                integration = await database_sync_to_async(get_slack_integration_for_team, thread_sensitive=False)(
-                    subscription.team_id
-                )
-
-            if not integration:
-                LOGGER.warning(
-                    "deliver_subscription.no_slack_integration",
-                    subscription_id=inputs.subscription_id,
-                )
-                # Slack integration disconnected — auto-disable, mirrors the alert pattern.
-                return await auto_disable_and_return(subscription, SLACK_DISCONNECTED_DISABLE_REASON, recipient_results)
-
-            LOGGER.info("deliver_subscription.sending_slack_message", subscription_id=subscription.id)
-            delivery_result = await send_slack_message_with_integration_async(
+        result = await deliver_email(subscription, inputs, recipient_results, _send_email)
+    else:
+        result = await deliver_slack(
+            subscription,
+            recipient_results,
+            lambda integration: send_slack_message_with_integration_async(
                 integration,
                 subscription,
                 assets,
                 total_asset_count=inputs.total_insight_count,
                 is_new_subscription=inputs.is_new_subscription_target,
                 change_summary=inputs.change_summary,
-            )
-
-            if delivery_result.is_complete_success:
-                await LOGGER.ainfo(
-                    "deliver_subscription.slack_sent",
-                    subscription_id=inputs.subscription_id,
-                )
-                recipient_results.append(RecipientResult(recipient=subscription.target_value, status="success"))
-            elif delivery_result.is_partial_failure:
-                await LOGGER.awarning(
-                    "deliver_subscription.slack_partial_failure",
-                    subscription_id=inputs.subscription_id,
-                    failed_thread_count=len(delivery_result.failed_thread_message_indices),
-                    total_thread_count=delivery_result.total_thread_messages,
-                )
-                recipient_results.append(
-                    RecipientResult(
-                        recipient=subscription.target_value,
-                        status="partial",
-                        error={
-                            "message": f"{len(delivery_result.failed_thread_message_indices)} thread message(s) failed",
-                            "type": "partial_thread_failure",
-                        },
-                    )
-                )
-
-        except ApplicationError:
-            raise
-        except Exception as e:
-            slack_error_code = e.response.get("error") if isinstance(e, SlackApiError) else None
-            is_user_config_error = slack_error_code in SLACK_USER_CONFIG_ERRORS
-            _capture_delivery_failed_event(subscription, e)
-            LOGGER.error(
-                "deliver_subscription.slack_failed",
-                subscription_id=subscription.id,
-                next_delivery_date=subscription.next_delivery_date,
-                destination=subscription.target_type,
-                exc_info=True,
-            )
-            capture_exception(e)
-            if is_user_config_error:
-                # Won't self-heal without user action — auto-disable so the subscription
-                # stops re-firing every cycle.
-                return await auto_disable_and_return(
-                    subscription, SLACK_PERMISSION_REVOKED_DISABLE_REASON, recipient_results
-                )
-            raise  # Transient Slack errors — let Temporal retry
+            ),
+        )
 
     await LOGGER.ainfo(
         "deliver_subscription.completed",
         subscription_id=inputs.subscription_id,
         target_type=subscription.target_type,
     )
-    return DeliverSubscriptionResult(recipient_results=recipient_results)
+    return result
 
 
 @temporalio.activity.defn

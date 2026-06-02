@@ -2,8 +2,6 @@ import datetime as dt
 
 from temporalio.common import RetryPolicy
 
-# Per-delivery activity lifecycle, shared by ProcessSubscriptionWorkflow and
-# ProcessAISubscriptionWorkflow so the two can't drift on retry behavior.
 SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY = RetryPolicy(
     initial_interval=dt.timedelta(seconds=5),
     maximum_interval=dt.timedelta(minutes=1),

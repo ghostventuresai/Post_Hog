@@ -41,7 +41,6 @@ from posthog.temporal.subscriptions.activities import (
     validate_subscription_for_delivery,
 )
 from posthog.temporal.subscriptions.ai_subscription.activities import generate_ai_subscription_report
-from posthog.temporal.subscriptions.ai_subscription.delivery import SlackIntegrationMissingError
 from posthog.temporal.subscriptions.ai_subscription.spec_generator import PromptRejectedError
 from posthog.temporal.subscriptions.types import (
     CreateDeliveryRecordInputs,
@@ -203,7 +202,7 @@ async def test_subscription_delivery_scheduling(
 @patch("posthog.temporal.exports.activities.exporter")
 @patch("posthog.slo.events.posthoganalytics")
 @patch("ee.tasks.subscriptions.get_metric_meter")
-@patch("posthog.temporal.subscriptions.activities.get_slack_integration_for_team", return_value=None)
+@patch("posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team", return_value=None)
 @patch("posthog.temporal.subscriptions.activities.send_email_subscription_report")
 @freeze_time("2022-02-02T08:55:00.000Z")
 @pytest.mark.asyncio
@@ -342,7 +341,7 @@ async def test_handle_subscription_value_change_email(
 
 
 @patch("posthog.temporal.subscriptions.activities.send_slack_message_with_integration_async", new_callable=AsyncMock)
-@patch("posthog.temporal.subscriptions.activities.get_slack_integration_for_team")
+@patch("posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team")
 @patch("posthog.temporal.exports.activities.exporter")
 @patch("posthog.slo.events.posthoganalytics")
 @patch("ee.tasks.subscriptions.get_metric_meter")
@@ -416,7 +415,7 @@ async def test_deliver_subscription_report_slack(
 
 @patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription")
 @patch("posthog.temporal.subscriptions.activities.build_insight_delivery_snapshot")
-@patch("posthog.temporal.subscriptions.activities.get_slack_integration_for_team", return_value=None)
+@patch("posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team", return_value=None)
 @freeze_time("2022-02-02T08:55:00.000Z")
 @pytest.mark.asyncio
 async def test_process_subscription_records_missing_slack_integration_failure(
@@ -546,10 +545,10 @@ async def test_deliver_subscription_auto_disables_invalid_subscriptions(
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription") as send_mock,
         # Always patched — only consulted on the slack branch, harmless otherwise.
         patch(
-            "posthog.temporal.subscriptions.activities.get_slack_integration_for_team",
+            "posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team",
             return_value=None,
         ),
-        patch("posthog.temporal.subscriptions.activities._capture_delivery_failed_event") as capture_mock,
+        patch("posthog.temporal.subscriptions.delivery_common._capture_delivery_failed_event") as capture_mock,
     ):
         result = await env.run(
             deliver_subscription,
@@ -647,7 +646,7 @@ async def test_deliver_subscription_retry_idempotent_after_auto_disable(team, us
     # First call: unsupported_target triggers auto-disable + per-recipient failure.
     with (
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription") as send_mock,
-        patch("posthog.temporal.subscriptions.activities._capture_delivery_failed_event") as capture_mock,
+        patch("posthog.temporal.subscriptions.delivery_common._capture_delivery_failed_event") as capture_mock,
     ):
         first_result = await env.run(deliver_subscription, inputs)
 
@@ -665,7 +664,7 @@ async def test_deliver_subscription_retry_idempotent_after_auto_disable(team, us
     # so the disable email and analytics event do NOT fire again.
     with (
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription") as send_mock,
-        patch("posthog.temporal.subscriptions.activities._capture_delivery_failed_event") as capture_mock,
+        patch("posthog.temporal.subscriptions.delivery_common._capture_delivery_failed_event") as capture_mock,
     ):
         second_result = await env.run(deliver_subscription, inputs)
 
@@ -820,7 +819,7 @@ async def test_deliver_subscription_handles_slack_api_errors(team, user, slack_e
     with (
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription") as send_mock,
         patch(
-            "posthog.temporal.subscriptions.activities.get_slack_integration_for_team",
+            "posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team",
             return_value=mock_integration,
         ),
         patch(
@@ -828,7 +827,7 @@ async def test_deliver_subscription_handles_slack_api_errors(team, user, slack_e
             new_callable=AsyncMock,
             side_effect=slack_error,
         ),
-        patch("posthog.temporal.subscriptions.activities._capture_delivery_failed_event") as capture_mock,
+        patch("posthog.temporal.subscriptions.delivery_common._capture_delivery_failed_event") as capture_mock,
     ):
         if expect_auto_disable:
             result = await ActivityEnvironment().run(deliver_subscription, inputs)
@@ -1877,7 +1876,7 @@ async def test_fetch_due_subscriptions_excludes_disabled(team, user):
 
 @patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription")
 @patch("posthog.temporal.subscriptions.activities.build_insight_delivery_snapshot")
-@patch("posthog.temporal.subscriptions.activities.get_slack_integration_for_team", return_value=None)
+@patch("posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team", return_value=None)
 @patch("posthog.temporal.exports.activities.exporter")
 @patch("posthog.slo.events.posthoganalytics")
 @freeze_time("2022-02-02T08:55:00.000Z")
@@ -2090,10 +2089,7 @@ async def test_deliver_ai_subscription_missing_slack_integration_auto_disables(t
     delivery = await _create_ai_delivery(sub, report="# Report")
 
     with (
-        patch(
-            "posthog.temporal.subscriptions.ai_subscription.activities.send_slack_ai_subscription_report",
-            side_effect=SlackIntegrationMissingError("disconnected"),
-        ),
+        patch("posthog.temporal.subscriptions.delivery_common.get_slack_integration_for_team", return_value=None),
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription"),
     ):
         result = await ActivityEnvironment().run(deliver_subscription, _ai_delivery_inputs(sub.id, delivery.id))
