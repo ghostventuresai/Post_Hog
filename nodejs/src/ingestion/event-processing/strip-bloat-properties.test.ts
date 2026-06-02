@@ -156,6 +156,7 @@ describe('stripFeatureFlagCalledProperties', () => {
         '$device_manufacturer',
         '$channel_type',
         '$user_id',
+        '$active_feature_flags',
     ])('preserves standard PostHog auto-captured property %s', (key) => {
         const properties: Record<string, any> = { [key]: 'value' }
 
@@ -165,7 +166,7 @@ describe('stripFeatureFlagCalledProperties', () => {
         expect(mockFlagInc).not.toHaveBeenCalled()
     })
 
-    it.each(['environment', 'platform', 'amount', 'plan', 'revenue', 'variant', '$active_feature_flags', 'random_key'])(
+    it.each(['environment', 'platform', 'amount', 'plan', 'revenue', 'variant', 'random_key'])(
         'strips non-whitelisted key %s and increments the counter',
         (key) => {
             const properties: Record<string, any> = { [key]: 'leaked', $feature_flag: 'kept' }
@@ -207,9 +208,10 @@ describe('stripFeatureFlagCalledProperties', () => {
             $group_0: 'org-123',
             $groups: { organization: 'acme' },
             $set: { plan: 'pro' },
+            $active_feature_flags: ['flag-a', 'flag-b'],
         })
         expect(mockFlagInc).toHaveBeenCalledTimes(1)
-        expect(mockFlagInc).toHaveBeenCalledWith(3)
+        expect(mockFlagInc).toHaveBeenCalledWith(2)
     })
 
     it('leaves properties empty when every key is non-whitelisted', () => {

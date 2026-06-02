@@ -36,8 +36,9 @@ export const FEATURE_FLAG_CALLED_KEEP_PREFIXES: readonly string[] = ['$feature/'
 // SDK-emitted with a fixed schema, but SDKs' cross-cutting methods (`register`,
 // super-properties) leak unrelated keys onto it. PostHog owns this event's
 // schema, so we strip non-whitelisted keys before ClickHouse persistence.
-// Compiled from auditing all PostHog SDKs plus a `system.query_log` audit of
-// actively-used insights/cohorts referencing `$feature_flag_called`.
+// Compiled from auditing all PostHog SDKs, a `system.query_log` audit of
+// actively-used insights/cohorts referencing `$feature_flag_called`, and the CDP
+// legacy-plugin destination/transformation property mappings.
 export const FEATURE_FLAG_CALLED_KEEP: ReadonlySet<string> = new Set<string>([
     // Flag-specific (SDK audit)
     '$feature_flag',
@@ -60,6 +61,11 @@ export const FEATURE_FLAG_CALLED_KEEP: ReadonlySet<string> = new Set<string>([
     // SDK identification
     '$lib',
     '$lib_version',
+
+    // Active feature flags — CDP destinations (e.g. rudderstack-posthog,
+    // posthog-laudspeaker) map this onto `context.active_feature_flags`, so it must
+    // survive on `$feature_flag_called` events forwarded to those destinations.
+    '$active_feature_flags',
 
     // Person/group writes consumed downstream — `$set` is mirrored into the
     // event row's `person_properties` column by createEvent; `$groups` is

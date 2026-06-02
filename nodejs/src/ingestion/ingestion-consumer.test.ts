@@ -600,8 +600,8 @@ describe('IngestionConsumer', () => {
                 $feature_flag: 'my-flag',
                 '$feature/my-flag': 'variant-a',
                 $lib: 'posthog-python',
+                $active_feature_flags: ['flag-a'],
             })
-            expect(ffCalledProperties).not.toHaveProperty('$active_feature_flags')
             expect(ffCalledProperties).not.toHaveProperty('environment')
             expect(ffCalledProperties).not.toHaveProperty('my_custom_prop')
 

@@ -162,6 +162,7 @@ describe('createPrepareEventStep', () => {
                 $feature_flag: 'my-flag',
                 $feature_flag_response: false,
                 '$feature/my-flag': false,
+                $active_feature_flags: ['flag-a'],
             })
         }
     })
@@ -224,7 +225,7 @@ describe('createPrepareEventStep', () => {
         {
             desc: 'strips non-whitelisted properties for a team not in the opt-out list',
             teamId: 7,
-            expected: { $feature_flag: 'my-flag' },
+            expected: { $feature_flag: 'my-flag', $active_feature_flags: ['flag-a'] },
         },
     ])('$desc on $feature_flag_called events', async ({ teamId, expected }) => {
         const event = createTestPluginEvent({
