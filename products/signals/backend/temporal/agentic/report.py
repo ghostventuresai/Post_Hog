@@ -211,9 +211,7 @@ def _build_autostart_task_description(
     # This is the bar the fix must clear, kept distinct from the inferred root cause in the summary
     # so the coding agent fixes what was observed rather than the most code-tractable nearby issue.
     observed = "\n".join(f"- {signal.content}" for signal in signals if signal.content)
-    observed_block = (
-        f"## Observed symptom (this is the bar your fix must clear)\n{observed}\n\n" if observed else ""
-    )
+    observed_block = f"## Observed symptom (this is the bar your fix must clear)\n{observed}\n\n" if observed else ""
 
     # Surface any linked session recordings so the agent can watch the real behaviour.
     # The task runs with read_only PostHog MCP scope, which can fetch recordings.
