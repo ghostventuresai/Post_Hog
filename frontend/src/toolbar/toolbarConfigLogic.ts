@@ -659,13 +659,21 @@ function verifyUiHostReachability(
         })
         .catch((error: unknown) => {
             actions.setAuthStatus('error')
-            captureToolbarException(error, 'ui_host_check', {
-                error_type: classifyFetchError(error),
-            })
+            const errorType = classifyFetchError(error)
+            // 4xx responses and network/CORS rejections are expected outcomes for
+            // misconfigured reverse-proxy installs — the .catch already degrades
+            // gracefully (auth status → error, config modal opens). Reporting them
+            // as toolbar exceptions just adds error-tracking noise, so skip the
+            // exception capture and rely on the analytics event below for visibility.
+            if (errorType !== 'http_error' && errorType !== 'network_or_cors') {
+                captureToolbarException(error, 'ui_host_check', {
+                    error_type: errorType,
+                })
+            }
             toolbarPosthogJS.capture('toolbar ui host check', {
                 ...checkBaseProps,
                 status: 'error',
-                error_type: classifyFetchError(error),
+                error_type: errorType,
                 duration_ms: Date.now() - checkStart,
             })
 

@@ -8,6 +8,7 @@ import {
     toolbarFetch,
     toolbarUploadMedia,
 } from '~/toolbar/toolbarConfigLogic'
+import { toolbarPosthogJS } from '~/toolbar/toolbarPosthogJS'
 import { cleanToolbarAuthHash, OAUTH_LOCALSTORAGE_KEY, PKCE_STORAGE_KEY, readToolbarAuthHash } from '~/toolbar/utils'
 
 global.fetch = jest.fn(() =>
@@ -342,6 +343,68 @@ describe('toolbar toolbarConfigLogic', () => {
             logic.mount()
             expect(logic.values.authStatus).toBe('checking')
             window.history.pushState({}, '', '/')
+        })
+    })
+
+    describe('reachability check exception reporting', () => {
+        let captureExceptionSpy: jest.SpyInstance
+        let captureSpy: jest.SpyInstance
+
+        beforeEach(() => {
+            captureExceptionSpy = jest.spyOn(toolbarPosthogJS, 'captureException').mockImplementation(() => undefined)
+            captureSpy = jest.spyOn(toolbarPosthogJS, 'capture').mockImplementation(() => undefined as any)
+        })
+
+        afterEach(() => {
+            captureExceptionSpy.mockRestore()
+            captureSpy.mockRestore()
+        })
+
+        async function mountWithCheckFailure(failure: () => Promise<any>): Promise<void> {
+            ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
+                if (typeof url === 'string' && url.endsWith('/toolbar_oauth/check')) {
+                    return failure()
+                }
+                return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) })
+            })
+            const logic = toolbarConfigLogic.build({ uiHost: 'https://selfhosted.example.com' } as any)
+            logic.mount()
+            await expectLogic(logic).delay(0).toMatchValues({ authStatus: 'error' })
+        }
+
+        function uiHostCheckErrorEvents(): any[] {
+            return captureSpy.mock.calls.filter((c) => c[0] === 'toolbar ui host check' && c[1]?.status === 'error')
+        }
+
+        it.each([
+            ['HTTP 4xx', () => Promise.resolve({ ok: false, status: 404 }), 'http_error'],
+            ['network or CORS rejection', () => Promise.reject(new TypeError('Failed to fetch')), 'network_or_cors'],
+        ])(
+            'does not report %s as a toolbar exception but still emits the analytics event',
+            async (_label, failure, errorType) => {
+                await mountWithCheckFailure(failure)
+
+                expect(captureExceptionSpy).not.toHaveBeenCalled()
+                const errorEvents = uiHostCheckErrorEvents()
+                expect(errorEvents).toHaveLength(1)
+                expect(errorEvents[0][1].error_type).toBe(errorType)
+            }
+        )
+
+        it.each([
+            ['timeout', () => Promise.reject(new DOMException('aborted', 'AbortError')), 'timeout'],
+            ['unknown failure', () => Promise.reject(new Error('boom')), 'unknown'],
+        ])('still reports %s as a toolbar exception', async (_label, failure, errorType) => {
+            await mountWithCheckFailure(failure)
+
+            expect(captureExceptionSpy).toHaveBeenCalledTimes(1)
+            expect(captureExceptionSpy.mock.calls[0][1]).toMatchObject({
+                toolbar_context: 'ui_host_check',
+                error_type: errorType,
+            })
+            const errorEvents = uiHostCheckErrorEvents()
+            expect(errorEvents).toHaveLength(1)
+            expect(errorEvents[0][1].error_type).toBe(errorType)
         })
     })
 
