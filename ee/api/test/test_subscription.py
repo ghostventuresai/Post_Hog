@@ -692,7 +692,7 @@ class TestSubscriptionTemporal(APILicensedTest):
         self.organization.is_ai_data_processing_approved = True
         self.organization.save()
 
-        with patch("ee.api.subscription.is_team_limited", return_value=is_limited):
+        with patch("ee.api.subscription.is_team_over_ai_credit_budget", return_value=is_limited):
             response = self._create_subscription(summary_enabled=True)
 
         assert response.status_code == expected_status, response.content
@@ -705,7 +705,7 @@ class TestSubscriptionTemporal(APILicensedTest):
         create_response = self._create_subscription(summary_enabled=False)
         sub_id = create_response.json()["id"]
 
-        with patch("ee.api.subscription.is_team_limited", return_value=True):
+        with patch("ee.api.subscription.is_team_over_ai_credit_budget", return_value=True):
             patch_response = self.client.patch(
                 f"/api/projects/{self.team.id}/subscriptions/{sub_id}",
                 {"summary_enabled": True},
@@ -721,7 +721,7 @@ class TestSubscriptionTemporal(APILicensedTest):
         self.organization.save()
         existing = self._seed_active_summary_subscriptions(1)
 
-        with patch("ee.api.subscription.is_team_limited", return_value=True):
+        with patch("ee.api.subscription.is_team_over_ai_credit_budget", return_value=True):
             response = self.client.patch(
                 f"/api/projects/{self.team.id}/subscriptions/{existing[0].id}",
                 {"title": "renamed while over budget"},
