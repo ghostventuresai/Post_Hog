@@ -24,7 +24,11 @@ from products.signals.backend.report_generation.research import (
     run_multi_turn_research,
 )
 from products.signals.backend.report_generation.select_repo import RepoSelectionResult
-from products.signals.backend.temporal.agentic.report import RunAgenticReportInput, run_agentic_report_activity
+from products.signals.backend.temporal.agentic.report import (
+    RunAgenticReportInput,
+    _build_autostart_task_description,
+    run_agentic_report_activity,
+)
 from products.signals.backend.temporal.agentic.select_repository import (
     SelectRepositoryInput,
     select_repository_activity,
@@ -238,6 +242,44 @@ async def test_select_repository_activity_does_not_raise_with_only_user_integrat
 
     assert result.repository == "posthog/posthog"
     assert captured_user_id == [user.id], "user_id should come from the UserIntegration owner"
+
+
+def test_build_autostart_task_description_surfaces_observed_symptom_and_recording():
+    result = _build_research_output()
+    signals = [
+        SignalData(
+            signal_id="sig-1",
+            content="Users see a brief white screen with a spinner, then a misleading not-found state.",
+            source_product="session_summaries",
+            source_type="session_problem",
+            source_id="seg-1",
+            weight=0.8,
+            timestamp=datetime.now(UTC),
+            extra={"session_id": "rec-xyz", "problem_type": "confusion"},
+        ),
+    ]
+
+    description = _build_autostart_task_description(result, signals, "posthog/posthog")
+
+    # The observed symptom is surfaced verbatim as the bar the fix must clear.
+    assert "Observed symptom" in description
+    assert "brief white screen with a spinner" in description
+    # The session recording is surfaced so the agent can watch the real behaviour.
+    assert "rec-xyz" in description
+    # Research-backed code paths and the anti-drift / verification guidance are present.
+    assert "frontend/src/scenes/onboarding/OnboardingFlow.tsx" in description
+    assert "stop rather than opening a PR for the wrong problem" in description
+    assert "unit tests alone do not verify a visual symptom" in description
+
+
+def test_build_autostart_task_description_omits_blocks_without_signals():
+    description = _build_autostart_task_description(_build_research_output(), [], "posthog/posthog")
+
+    assert "Observed symptom" not in description
+    assert "Session recordings showing this" not in description
+    # The summary and instruction still render.
+    assert "Repository: posthog/posthog" in description
+    assert "Address the observed symptom above" in description
 
 
 @pytest.mark.asyncio
