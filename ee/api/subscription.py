@@ -1,5 +1,6 @@
 import uuid
 import asyncio
+from collections.abc import Callable
 from typing import Any, Optional
 
 from django.conf import settings
@@ -234,19 +235,25 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
     def _infer_resource_type(self, attrs: dict, existing: Optional[Subscription]) -> str:
         # resource_type is derived from the populated target — never set by the client — so a
-        # kind can't be switched mid-life (which would strand fields from the previous kind that
-        # the delivery path can't reason about). On update it stays pinned to the existing kind.
+        # kind can't be switched mid-life. On update it stays pinned to the existing kind; the
+        # model's `derive_resource_type` is the single source of truth for the derivation.
         if existing is not None:
             return existing.resource_type
-        # A present (non-null) prompt marks AI intent, so a malformed AI payload — a stray
+        # A present (non-null) prompt marks AI intent and routes to the AI validator (which
+        # reports against `prompt`) BEFORE deferring to the model derivation — so a stray
         # insight/dashboard alongside it, or an all-whitespace prompt the CharField trims to
-        # "" — still routes to the AI validator and reports against `prompt`. Valid payloads
-        # only ever populate one target, so this agrees with `derive_resource_type`.
+        # "", still surfaces a prompt error instead of mis-routing or raising.
         if attrs.get("prompt") is not None:
             return Subscription.ResourceType.AI_PROMPT
-        if attrs.get("dashboard"):
-            return Subscription.ResourceType.DASHBOARD
-        return Subscription.ResourceType.INSIGHT
+        insight, dashboard = attrs.get("insight"), attrs.get("dashboard")
+        try:
+            return Subscription.derive_resource_type(
+                insight.id if insight else None, dashboard.id if dashboard else None, None
+            )
+        except ValueError:
+            # Nothing populated yet — default to insight so its validator surfaces the
+            # "insight is required" error rather than a 500.
+            return Subscription.ResourceType.INSIGHT
 
     def _validate_insight_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
         if not (attrs.get("insight") or (existing and existing.insight_id)):
@@ -308,11 +315,12 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             raise ValidationError({"insight": ["This insight does not belong to your team."]})
 
         resource_type = self._infer_resource_type(attrs, existing)
-        validate_for_resource_type = {
+        content_validators: dict[str, Callable[[dict, Optional[Subscription]], None]] = {
             Subscription.ResourceType.INSIGHT: self._validate_insight_content,
             Subscription.ResourceType.DASHBOARD: self._validate_dashboard_content,
             Subscription.ResourceType.AI_PROMPT: self._validate_ai_content,
-        }.get(resource_type)
+        }
+        validate_for_resource_type = content_validators.get(resource_type)
         # Fail soft on an unexpected resource_type (e.g. a stale DB row) — a 400 is
         # diagnosable, an unhandled KeyError surfaces as a 500.
         if validate_for_resource_type is None:
