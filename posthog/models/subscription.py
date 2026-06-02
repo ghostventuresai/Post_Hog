@@ -191,6 +191,11 @@ class Subscription(ModelActivityMixin, models.Model):
     def resource_type(self) -> str:
         return self.derive_resource_type(self.insight_id, self.dashboard_id, self.prompt)
 
+    @property
+    def _has_resource(self) -> bool:
+        # Guards url/resource_info from resource_type's raise on a relationless sub.
+        return bool(self.insight_id or self.dashboard_id or self.prompt)
+
     @staticmethod
     def _build_rrule(
         *,
@@ -277,6 +282,8 @@ class Subscription(ModelActivityMixin, models.Model):
 
     @property
     def url(self) -> str | None:
+        if not self._has_resource:
+            return None
         match self.resource_type:
             case self.ResourceType.INSIGHT if self.insight:
                 return absolute_uri(f"/insights/{self.insight.short_id}/subscriptions/{self.id}")
@@ -288,6 +295,8 @@ class Subscription(ModelActivityMixin, models.Model):
 
     @property
     def resource_info(self) -> Optional[SubscriptionResourceInfo]:
+        if not self._has_resource:
+            return None
         match self.resource_type:
             case self.ResourceType.INSIGHT if self.insight:
                 return SubscriptionResourceInfo(
