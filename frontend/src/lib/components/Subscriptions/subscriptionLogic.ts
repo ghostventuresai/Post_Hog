@@ -7,7 +7,7 @@ import posthog from 'posthog-js'
 import api, { ApiError } from 'lib/api'
 import { dayjs } from 'lib/dayjs'
 import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
-import { isEmail, isURL } from 'lib/utils'
+import { isEmail } from 'lib/utils'
 import { getInsightId } from 'scenes/insights/utils'
 
 import { ExportedAssetType, ExporterFormat, SubscriptionType } from '~/types'
@@ -139,7 +139,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                 title: !title ? 'You need to give your subscription a name' : undefined,
                 interval: !interval ? 'You need to set an interval' : undefined,
                 start_date: !start_date ? 'You need to set a delivery time' : undefined,
-                target_type: !['slack', 'email', 'webhook'].includes(target_type)
+                target_type: !['slack', 'email'].includes(target_type)
                     ? 'Unsupported target type'
                     : undefined,
                 prompt: validatePrompt(resource_type, prompt),
@@ -155,11 +155,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                         ? !target_value
                             ? 'A channel is required'
                             : undefined
-                        : target_type == 'webhook'
-                          ? !isURL(target_value)
-                              ? 'Must be a valid URL'
-                              : undefined
-                          : undefined,
+                        : undefined,
                 dashboard_export_insights:
                     props.dashboardId && (!dashboard_export_insights || dashboard_export_insights.length === 0)
                         ? ('Select at least one insight' as any)
