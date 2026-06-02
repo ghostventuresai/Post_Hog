@@ -37,10 +37,10 @@ from posthog.temporal.subscriptions.activities import (
     create_export_assets,
     deliver_subscription,
     fetch_due_subscriptions_activity,
-    generate_ai_subscription_report,
     update_delivery_record,
     validate_subscription_for_delivery,
 )
+from posthog.temporal.subscriptions.ai_subscription.activities import generate_ai_subscription_report
 from posthog.temporal.subscriptions.ai_subscription.delivery import SlackIntegrationMissingError
 from posthog.temporal.subscriptions.ai_subscription.spec_generator import PromptRejectedError
 from posthog.temporal.subscriptions.types import (
@@ -72,7 +72,7 @@ from ee.tasks.test.subscriptions.subscriptions_test_factory import create_subscr
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.django_db(transaction=True)]
 
-_GENERATE_MARKDOWN = "posthog.temporal.subscriptions.activities.generate_ai_subscription_markdown"
+_GENERATE_MARKDOWN = "posthog.temporal.subscriptions.ai_subscription.activities.generate_ai_subscription_markdown"
 
 SUBSCRIPTION_SCHEDULE_ACTIVITIES: Sequence[Callable[..., Any]] = cast(
     Sequence[Callable[..., Any]],
@@ -2075,7 +2075,9 @@ async def test_deliver_ai_subscription_sends_persisted_report_to_email(team, use
     sub = await _create_ai_subscription(team, user)
     delivery = await _create_ai_delivery(sub, report="# Report")
 
-    with patch("posthog.temporal.subscriptions.activities.send_email_ai_subscription_report") as mock_send:
+    with patch(
+        "posthog.temporal.subscriptions.ai_subscription.activities.send_email_ai_subscription_report"
+    ) as mock_send:
         result = await ActivityEnvironment().run(deliver_subscription, _ai_delivery_inputs(sub.id, delivery.id))
 
     mock_send.assert_called_once()
@@ -2089,7 +2091,7 @@ async def test_deliver_ai_subscription_missing_slack_integration_auto_disables(t
 
     with (
         patch(
-            "posthog.temporal.subscriptions.activities.send_slack_ai_subscription_report",
+            "posthog.temporal.subscriptions.ai_subscription.activities.send_slack_ai_subscription_report",
             side_effect=SlackIntegrationMissingError("disconnected"),
         ),
         patch("ee.tasks.subscriptions.auto_disable.send_notifications_for_disabled_subscription"),
@@ -2143,8 +2145,11 @@ async def test_generate_ai_report_skips_regeneration_when_already_persisted(team
 
 @patch("posthog.slo.events.posthoganalytics")
 @patch("ee.tasks.subscriptions.get_metric_meter")
-@patch("posthog.temporal.subscriptions.activities.send_email_ai_subscription_report")
-@patch("posthog.temporal.subscriptions.activities.generate_ai_subscription_markdown", return_value="# AI Report")
+@patch("posthog.temporal.subscriptions.ai_subscription.activities.send_email_ai_subscription_report")
+@patch(
+    "posthog.temporal.subscriptions.ai_subscription.activities.generate_ai_subscription_markdown",
+    return_value="# AI Report",
+)
 @freeze_time("2022-02-02T08:55:00.000Z")
 @pytest.mark.asyncio
 async def test_schedule_routes_ai_subscription_through_full_workflow(

@@ -4,10 +4,10 @@ from posthog.temporal.subscriptions.activities import (
     create_export_assets,
     deliver_subscription,
     fetch_due_subscriptions_activity,
-    generate_ai_subscription_report,
     update_delivery_record,
     validate_subscription_for_delivery,
 )
+from posthog.temporal.subscriptions.ai_subscription.activities import generate_ai_subscription_report
 from posthog.temporal.subscriptions.snapshot_activities import snapshot_subscription_insights
 from posthog.temporal.subscriptions.workflows import (
     HandleSubscriptionValueChangeWorkflow,
