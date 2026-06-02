@@ -32,9 +32,14 @@ from posthog.temporal.subscriptions.activities import (
     update_delivery_record,
     validate_subscription_for_delivery,
 )
+from posthog.temporal.subscriptions.retry_policy import (
+    SUBSCRIPTION_DELIVER_RETRY_POLICY,
+    SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
+    SUBSCRIPTION_VALIDATE_RETRY_POLICY,
+)
 from posthog.temporal.subscriptions.snapshot_activities import snapshot_subscription_insights
 from posthog.temporal.subscriptions.types import (
-    AI_PROMPT_CONTENT_TYPE,
+    AI_PROMPT_RESOURCE_TYPE,
     CreateDeliveryRecordInputs,
     CreateExportAssetsInputs,
     DeliverSubscriptionInputs,
@@ -52,32 +57,8 @@ from posthog.temporal.subscriptions.types import (
     UpdateDeliveryRecordInputs,
 )
 
-# Retry policies for the per-delivery activity lifecycle, shared by both
-# ProcessSubscriptionWorkflow and ProcessAISubscriptionWorkflow. Hoisted to module level
-# so the two workflows can't drift on retry behavior. Plain data constructed at import —
-# determinism-safe for the Temporal workflow sandbox.
-_RECORD_LIFECYCLE_RETRY = temporalio.common.RetryPolicy(
-    initial_interval=dt.timedelta(seconds=5),
-    maximum_interval=dt.timedelta(minutes=1),
-    maximum_attempts=3,
-)
-_VALIDATE_RETRY = temporalio.common.RetryPolicy(
-    initial_interval=dt.timedelta(seconds=5),
-    maximum_interval=dt.timedelta(seconds=30),
-    maximum_attempts=3,
-)
-_DELIVER_RETRY = temporalio.common.RetryPolicy(
-    initial_interval=dt.timedelta(seconds=10),
-    maximum_interval=dt.timedelta(minutes=5),
-    maximum_attempts=5,
-)
-
 
 def _to_recipient_dicts(recipient_results: list[RecipientResult]) -> list[dict]:
-    """Serialize RecipientResult objects to the dict shape `update_delivery_record` persists.
-
-    Shared by both ProcessSubscriptionWorkflow and ProcessAISubscriptionWorkflow.
-    """
     return [
         {"recipient": r.recipient, "status": r.status, **({"error": r.error} if r.error else {})}
         for r in recipient_results
@@ -149,7 +130,7 @@ class ScheduleAllSubscriptionsWorkflow(PostHogWorkflow):
                 distinct_id=sub.distinct_id,
                 trigger_type=SubscriptionTriggerType.SCHEDULED,
                 scheduled_at=sub.next_delivery_date,
-                content_type=sub.content_type,
+                resource_type=sub.resource_type,
                 slo=SloConfig(
                     operation=SloOperation.SUBSCRIPTION_DELIVERY,
                     area=SloArea.ANALYTIC_PLATFORM,
@@ -158,12 +139,10 @@ class ScheduleAllSubscriptionsWorkflow(PostHogWorkflow):
                     distinct_id=sub.distinct_id,
                 ),
             )
-            # AI-prompt subscriptions run a dedicated workflow (LLM generation + delivery);
-            # everything else runs the insight/dashboard export pipeline. Both share this
-            # scheduler and the underlying activities. Distinct child-ID prefixes keep the
-            # "deterministic ID prevents overlapping duplicates" guarantee per type.
+            # AI-prompt subs run a dedicated workflow; distinct child-ID prefixes keep the
+            # overlapping-duplicate guarantee per type.
             workflow: Callable[..., Coroutine[Any, Any, None]]
-            if sub.content_type == AI_PROMPT_CONTENT_TYPE:
+            if sub.resource_type == AI_PROMPT_RESOURCE_TYPE:
                 workflow = ProcessAISubscriptionWorkflow.run
                 child_id = f"process-ai-subscription-{sub.subscription_id}"
             else:
@@ -244,7 +223,7 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
                     idempotency_key=str(temporalio.workflow.uuid4()),
                 ),
                 start_to_close_timeout=dt.timedelta(minutes=2),
-                retry_policy=_RECORD_LIFECYCLE_RETRY,
+                retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
             )
 
             # Validate up-front: if the subscription is already disabled or its target
@@ -254,7 +233,7 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
                 validate_subscription_for_delivery,
                 inputs.subscription_id,
                 start_to_close_timeout=dt.timedelta(minutes=1),
-                retry_policy=_VALIDATE_RETRY,
+                retry_policy=SUBSCRIPTION_VALIDATE_RETRY_POLICY,
             )
             if abort_info is not None:
                 # Just-disabled → FAILED with reason. Already-disabled (no failed_recipient) → SKIPPED default.
@@ -369,7 +348,7 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
                     change_summary=change_summary,
                 ),
                 start_to_close_timeout=dt.timedelta(minutes=5),
-                retry_policy=_DELIVER_RETRY,
+                retry_policy=SUBSCRIPTION_DELIVER_RETRY_POLICY,
             )
 
             # Capture per-recipient results for the delivery record
@@ -407,7 +386,7 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
                             finished=True,
                         ),
                         start_to_close_timeout=dt.timedelta(minutes=2),
-                        retry_policy=_RECORD_LIFECYCLE_RETRY,
+                        retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
                     )
                 except Exception:
                     temporalio.workflow.logger.exception(
@@ -424,7 +403,7 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
                     advance_next_delivery_date,
                     inputs.subscription_id,
                     start_to_close_timeout=dt.timedelta(minutes=2),
-                    retry_policy=_RECORD_LIFECYCLE_RETRY,
+                    retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
                 )
 
             # Enrich SLO event with per-insight detail (non-user errors only).
@@ -450,19 +429,11 @@ class ProcessSubscriptionWorkflow(PostHogWorkflow):
 
 @temporalio.workflow.defn(name="process-ai-subscription")
 class ProcessAISubscriptionWorkflow(PostHogWorkflow):
-    """Scheduled delivery for AI-prompt subscriptions.
+    """Scheduled delivery for AI-prompt subs: create-record -> validate -> generate (LLM) -> deliver.
 
-    Separate from ProcessSubscriptionWorkflow because AI subs have no insights to export —
-    the report is produced by an LLM. The shape is: create-record -> validate -> generate
-    (LLM, persisted to the delivery row by reference) -> deliver (ships the persisted
-    report). Reuses the same activities and is dispatched by the same scheduler.
-
-    The create-record / validate / finally (finalize + advance schedule) scaffolding is
-    deliberately parallel to ProcessSubscriptionWorkflow — the only real difference is the
-    middle phase (LLM generate vs insight export). Keep the two in sync: a change to the
-    delivery-record lifecycle, retry policies, or the advance-schedule guard here almost
-    certainly applies there too. (Not extracted into a shared base because Temporal
-    workflow classes can't share run-method control flow without sandbox-determinism risk.)
+    The lifecycle scaffolding mirrors ProcessSubscriptionWorkflow (only the middle phase
+    differs); keep the two in sync. Not a shared base — Temporal workflow classes can't
+    share run-method control flow without sandbox-determinism risk.
     """
 
     @staticmethod
@@ -489,7 +460,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
                     idempotency_key=str(temporalio.workflow.uuid4()),
                 ),
                 start_to_close_timeout=dt.timedelta(minutes=2),
-                retry_policy=_RECORD_LIFECYCLE_RETRY,
+                retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
             )
 
             # Up-front validation: already-disabled (idempotency redispatch) or a
@@ -499,7 +470,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
                 validate_subscription_for_delivery,
                 inputs.subscription_id,
                 start_to_close_timeout=dt.timedelta(minutes=1),
-                retry_policy=_VALIDATE_RETRY,
+                retry_policy=SUBSCRIPTION_VALIDATE_RETRY_POLICY,
             )
             if abort_info is not None:
                 # Just-disabled → FAILED with reason. Already-disabled (no failed_recipient)
@@ -542,7 +513,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
                     delivery_id=delivery_id,
                 ),
                 start_to_close_timeout=dt.timedelta(minutes=5),
-                retry_policy=_DELIVER_RETRY,
+                retry_policy=SUBSCRIPTION_DELIVER_RETRY_POLICY,
             )
             delivery_recipient_results = _to_recipient_dicts(deliver_result.recipient_results)
             final_status = DeliveryStatus.COMPLETED
@@ -574,7 +545,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
                             finished=True,
                         ),
                         start_to_close_timeout=dt.timedelta(minutes=2),
-                        retry_policy=_RECORD_LIFECYCLE_RETRY,
+                        retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
                     )
                 except Exception:
                     temporalio.workflow.logger.exception(
@@ -591,7 +562,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
                     advance_next_delivery_date,
                     inputs.subscription_id,
                     start_to_close_timeout=dt.timedelta(minutes=2),
-                    retry_policy=_RECORD_LIFECYCLE_RETRY,
+                    retry_policy=SUBSCRIPTION_RECORD_LIFECYCLE_RETRY_POLICY,
                 )
 
             # Auto-disable aborts (consent revoked / prompt invalid) return normally rather
@@ -601,7 +572,7 @@ class ProcessAISubscriptionWorkflow(PostHogWorkflow):
             # below; SloInterceptor maps the exception to a FAILURE outcome, same as
             # ProcessSubscriptionWorkflow, so we don't set the outcome here.
             if inputs.slo:
-                inputs.slo.completion_properties.setdefault("content_type", AI_PROMPT_CONTENT_TYPE)
+                inputs.slo.completion_properties.setdefault("resource_type", AI_PROMPT_RESOURCE_TYPE)
 
         # Re-raise after cleanup completes — Temporal blocks activity scheduling in the
         # finally block while an exception is propagating.
@@ -625,7 +596,7 @@ class HandleSubscriptionValueChangeWorkflow(PostHogWorkflow):
             previous_value=inputs.previous_value,
             invite_message=inputs.invite_message,
             trigger_type=inputs.trigger_type,
-            content_type=inputs.content_type,
+            resource_type=inputs.resource_type,
             slo=SloConfig(
                 operation=SloOperation.SUBSCRIPTION_DELIVERY,
                 area=SloArea.ANALYTIC_PLATFORM,
@@ -637,7 +608,7 @@ class HandleSubscriptionValueChangeWorkflow(PostHogWorkflow):
         # Route AI-prompt subs (test delivery / target change) to the AI workflow, same
         # as the scheduler fan-out.
         child_workflow: Callable[..., Coroutine[Any, Any, None]]
-        if inputs.content_type == AI_PROMPT_CONTENT_TYPE:
+        if inputs.resource_type == AI_PROMPT_RESOURCE_TYPE:
             child_workflow = ProcessAISubscriptionWorkflow.run
             child_id = f"process-ai-subscription-{inputs.trigger_type}-{inputs.subscription_id}"
         else:

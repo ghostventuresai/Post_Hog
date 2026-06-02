@@ -175,15 +175,21 @@ class Subscription(ModelActivityMixin, models.Model):
                 kwargs["update_fields"].append("next_delivery_date")
         super().save(*args, **kwargs)
 
+    @classmethod
+    def derive_resource_type(cls, insight_id: int | None, dashboard_id: int | None, prompt: str | None) -> str:
+        # Shared by the `resource_type` property and the scheduler's `.values()` fan-out
+        # (which has field dicts, not model instances) so the derivation stays single-source.
+        if insight_id:
+            return cls.ResourceType.INSIGHT
+        if dashboard_id:
+            return cls.ResourceType.DASHBOARD
+        if prompt:
+            return cls.ResourceType.AI_PROMPT
+        return cls.ResourceType.INSIGHT
+
     @property
     def resource_type(self) -> str:
-        if self.insight_id:
-            return self.ResourceType.INSIGHT
-        if self.dashboard_id:
-            return self.ResourceType.DASHBOARD
-        if self.prompt:
-            return self.ResourceType.AI_PROMPT
-        return self.ResourceType.INSIGHT
+        return self.derive_resource_type(self.insight_id, self.dashboard_id, self.prompt)
 
     @staticmethod
     def _build_rrule(

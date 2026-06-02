@@ -20,9 +20,9 @@ class DeliveryStatus:
     SKIPPED = "skipped"
 
 
-# Mirrors Subscription.ContentType.AI_PROMPT — a plain constant so the Temporal
-# workflow sandbox can route by content type without importing the Django model.
-AI_PROMPT_CONTENT_TYPE = "ai_prompt"
+# Mirrors Subscription.ResourceType.AI_PROMPT — a plain constant so the Temporal
+# workflow sandbox can route by resource type without importing the Django model.
+AI_PROMPT_RESOURCE_TYPE = "ai_prompt"
 
 
 class SubscriptionTriggerType:
@@ -45,7 +45,7 @@ class SubscriptionInfo:
     next_delivery_date: typing.Optional[str] = None
     # Lets the scheduler fan out AI-prompt subscriptions to ProcessAISubscriptionWorkflow
     # and everything else to ProcessSubscriptionWorkflow.
-    content_type: str = ""
+    resource_type: str = ""
 
 
 @dataclasses.dataclass
@@ -96,11 +96,8 @@ class DeliverSubscriptionInputs:
     previous_value: typing.Optional[str] = None
     invite_message: typing.Optional[str] = None
     change_summary: typing.Optional[str] = None
-    # AI subscriptions only: the SubscriptionDelivery row the upstream
-    # `generate_ai_subscription_report` activity wrote the report markdown onto.
-    # Delivery reads the report back from this row rather than receiving it on
-    # the wire (the markdown can exceed Temporal's ~2 MiB payload cap). None for
-    # non-AI deliveries.
+    # The delivery row to write outcomes onto. AI deliveries also read the generated
+    # report markdown back from it (kept off the Temporal wire, ~2 MiB cap).
     delivery_id: typing.Optional[uuid.UUID] = None
 
 
@@ -115,7 +112,7 @@ class ProcessSubscriptionWorkflowInputs:
     scheduled_at: typing.Optional[str] = None
     # Lets HandleSubscriptionValueChangeWorkflow route AI-prompt subs to
     # ProcessAISubscriptionWorkflow. Passed by the API from the loaded instance.
-    content_type: str = ""
+    resource_type: str = ""
 
 
 @dataclasses.dataclass
@@ -136,7 +133,7 @@ class TrackedSubscriptionInputs:
     slo: SloConfig | None = None
     trigger_type: str = SubscriptionTriggerType.TARGET_CHANGE
     scheduled_at: typing.Optional[str] = None
-    content_type: str = ""
+    resource_type: str = ""
 
 
 RecipientResultStatus = typing.Literal["success", "failed", "partial"]

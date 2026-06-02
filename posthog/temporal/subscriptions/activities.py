@@ -76,10 +76,9 @@ AI_REPORT_SNAPSHOT_KEY = "ai_report"
 
 
 async def _load_ai_report(delivery_id: uuid.UUID) -> str | None:
-    """Read the report markdown the generation activity wrote onto this delivery row."""
-
     @database_sync_to_async(thread_sensitive=False)
     def _read() -> str | None:
+        # DoesNotExist is tolerated here (read side): a missing row just means "no report yet".
         try:
             snapshot = SubscriptionDelivery.objects.values_list("content_snapshot", flat=True).get(pk=delivery_id)
         except SubscriptionDelivery.DoesNotExist:
@@ -93,10 +92,10 @@ async def _load_ai_report(delivery_id: uuid.UUID) -> str | None:
 
 
 async def _persist_ai_report(delivery_id: uuid.UUID, markdown: str) -> None:
-    """Write the generated report markdown onto the delivery row for the delivery activity."""
-
     @database_sync_to_async(thread_sensitive=False)
     def _write() -> None:
+        # No DoesNotExist guard: create_delivery_record always writes this row before
+        # generation runs, so a missing row is a wiring bug — let it raise loudly.
         delivery = SubscriptionDelivery.objects.get(pk=delivery_id)
         delivery.content_snapshot = {**(delivery.content_snapshot or {}), AI_REPORT_SNAPSHOT_KEY: markdown}
         delivery.save(update_fields=["content_snapshot", "last_updated_at"])
@@ -147,16 +146,7 @@ async def fetch_due_subscriptions_activity(inputs: FetchDueSubscriptionsActivity
                 if sub["created_by__distinct_id"]
                 else str(sub["team_id"]),
                 next_delivery_date=sub["next_delivery_date"].isoformat() if sub["next_delivery_date"] else None,
-                # resource_type is a derived property, not a column — mirror Subscription.resource_type
-                content_type=(
-                    Subscription.ResourceType.INSIGHT
-                    if sub["insight_id"]
-                    else Subscription.ResourceType.DASHBOARD
-                    if sub["dashboard_id"]
-                    else Subscription.ResourceType.AI_PROMPT
-                    if sub["prompt"]
-                    else Subscription.ResourceType.INSIGHT
-                ),
+                resource_type=Subscription.derive_resource_type(sub["insight_id"], sub["dashboard_id"], sub["prompt"]),
             )
             for sub in Subscription.objects.filter(next_delivery_date__lte=now_with_buffer, deleted=False, enabled=True)
             .exclude(dashboard__deleted=True)
@@ -231,9 +221,7 @@ async def create_export_assets(inputs: CreateExportAssetsInputs) -> CreateExport
     )
 
     # Early exit if target value hasn't changed — avoids creating orphaned assets
-    # for subs whose payload is identical to the previous delivery. AI-prompt subs
-    # never reach this activity (the scheduler routes them to
-    # ProcessAISubscriptionWorkflow), so no AI carve-out is needed here.
+    # for subs whose payload is identical to the previous delivery.
     if inputs.previous_value is not None and subscription.target_value == inputs.previous_value:
         await LOGGER.ainfo(
             "create_export_assets.no_change_skipping",
@@ -387,7 +375,7 @@ async def deliver_subscription(inputs: DeliverSubscriptionInputs) -> DeliverSubs
         target_type=subscription.target_type,
         asset_count=len(inputs.exported_asset_ids),
         is_new=inputs.is_new_subscription_target,
-        content_type=subscription.resource_type,
+        resource_type=subscription.resource_type,
     )
 
     if subscription.resource_type == Subscription.ResourceType.AI_PROMPT:
@@ -589,41 +577,22 @@ async def deliver_subscription(inputs: DeliverSubscriptionInputs) -> DeliverSubs
 
 @temporalio.activity.defn
 async def generate_ai_subscription_report(inputs: GenerateAIReportInputs) -> GenerateAIReportResult:
-    """Run the AI report pipeline (planner + HogQL + synthesis) and persist the markdown
-    onto the delivery row for `deliver_subscription` to ship.
-
-    This is the "decide what to send" phase, kept separate from delivery so the LLM work
-    runs once, up front, with its own retry policy. Terminal, non-self-healing failures
-    (org revoked AI-data-processing consent, prompt no longer valid) auto-disable the
-    subscription and return `aborted=True` so the workflow skips delivery and records the
-    failure. Transient LLM/network errors bubble up for the activity's Temporal retry.
-    """
+    # The "decide what to send" phase, split from delivery so the LLM runs once up front with
+    # its own retry policy. Terminal failures (consent revoked, prompt invalid) auto-disable and
+    # return aborted=True; transient errors bubble up for the activity's Temporal retry.
     subscription = await database_sync_to_async(
         Subscription.objects.select_related("created_by", "team", "team__organization").get,
         thread_sensitive=False,
     )(pk=inputs.subscription_id)
 
-    # Idempotency on Temporal redispatch (worker crash mid-acknowledge, etc.):
-    # if a prior attempt already produced the report, don't re-bill the LLM — the
-    # whole point of the generate -> deliver split is that the LLM runs once.
+    # Idempotency on Temporal redispatch: if a prior attempt already produced the report,
+    # don't re-bill the LLM — the point of the generate -> deliver split is one LLM run.
     if await _load_ai_report(inputs.delivery_id) is not None:
         await LOGGER.ainfo("generate_ai_subscription_report.already_generated", subscription_id=subscription.id)
         return GenerateAIReportResult(aborted=False)
 
-    # Mirror the `validate_subscription_for_delivery` / `deliver_subscription` guard: if a
-    # prior attempt already auto-disabled this sub (consent/prompt terminal failure) and
-    # Temporal redispatched, don't re-run the consent check or the LLM against a now-disabled
-    # subscription — just report the abort.
-    if not subscription.enabled:
-        await LOGGER.ainfo("generate_ai_subscription_report.already_disabled_skipping", subscription_id=subscription.id)
-        return GenerateAIReportResult(aborted=True)
-
-    # Consent is gated once, here, before any LLM cost — not at delivery. Creation-time
-    # gates fire only on create, so an org that revokes AI-data-processing approval
-    # afterwards must be caught before we ship project data to the LLM. Auto-disable
-    # (rather than silently skip) so the subscription stops re-firing and the creator is
-    # told how to restore it. `team__organization` is select_related above, so this is an
-    # in-memory attribute read (no DB I/O, no async wrapper needed).
+    # Consent is gated once here, before any LLM cost — creation-time gates don't catch an
+    # org that revokes AI-data-processing approval later. Auto-disable so it stops re-firing.
     if not subscription.team.organization.is_ai_data_processing_approved:
         LOGGER.warning("generate_ai_subscription_report.consent_revoked", subscription_id=subscription.id)
         aborted = await _auto_disable_and_return(subscription, AI_CONSENT_REVOKED_DISABLE_REASON, [])
@@ -662,15 +631,8 @@ async def _deliver_ai_subscription(
     inputs: DeliverSubscriptionInputs,
     recipient_results: list[RecipientResult],
 ) -> DeliverSubscriptionResult:
-    """Ship the report `generate_ai_subscription_report` already produced to email or Slack.
-
-    No LLM work happens here — the report is read back from the delivery row (the
-    generate -> deliver handoff). Consent and target-type validity were checked up front
-    in the AI workflow, so the only failures handled here are send-side: transient errors
-    bubble up for Temporal retry, terminal Slack errors auto-disable. Per-recipient
-    outcomes are appended to `recipient_results` in the same shape as the insight/dashboard
-    path so `update_delivery_record` can persist them.
-    """
+    # Ships the report generate_ai_subscription_report already produced (read back from the
+    # delivery row) — no LLM work here. Transient send errors retry; terminal Slack errors auto-disable.
     if inputs.delivery_id is None:
         # The AI workflow always creates the delivery row and runs generation before
         # delivery, so a missing reference is a wiring bug, not a runtime state.

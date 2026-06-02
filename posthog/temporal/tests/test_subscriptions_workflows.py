@@ -72,6 +72,8 @@ from ee.tasks.test.subscriptions.subscriptions_test_factory import create_subscr
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.django_db(transaction=True)]
 
+_GENERATE_MARKDOWN = "posthog.temporal.subscriptions.activities.generate_ai_subscription_markdown"
+
 SUBSCRIPTION_SCHEDULE_ACTIVITIES: Sequence[Callable[..., Any]] = cast(
     Sequence[Callable[..., Any]],
     [
@@ -1975,13 +1977,6 @@ async def test_deliver_subscription_emits_success_slo_when_disabling(
         )
 
 
-# ---------------------------------------------------------------------------
-# AI-prompt subscription activities (generation + delivery split)
-# ---------------------------------------------------------------------------
-
-_GENERATE_MARKDOWN = "posthog.temporal.subscriptions.activities.generate_ai_subscription_markdown"
-
-
 @sync_to_async
 def _create_ai_subscription(team, user, *, target_type="email", target_value="ai@posthog.com") -> Subscription:
     return create_subscription(
@@ -2195,7 +2190,7 @@ async def test_schedule_routes_ai_subscription_through_full_workflow(
     assert delivery.status == SubscriptionDelivery.Status.COMPLETED
 
 
-async def test_fetch_due_subscriptions_includes_ai_with_content_type(team, user):
+async def test_fetch_due_subscriptions_includes_ai_with_resource_type(team, user):
     sub = await _create_ai_subscription(team, user)
     # `Subscription.save` recomputes next_delivery_date from the rrule, so write a past
     # value via `.update()` to make it due.
@@ -2209,4 +2204,4 @@ async def test_fetch_due_subscriptions_includes_ai_with_content_type(team, user)
 
     match = next((s for s in fetched if s.subscription_id == sub.id), None)
     assert match is not None, "due AI subscription must be picked up by the shared scheduler fetch"
-    assert match.content_type == Subscription.ResourceType.AI_PROMPT
+    assert match.resource_type == Subscription.ResourceType.AI_PROMPT
