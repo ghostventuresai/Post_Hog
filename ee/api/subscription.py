@@ -51,7 +51,7 @@ from posthog.temporal.subscriptions.ai_subscription.spec_generator import (
 from posthog.temporal.subscriptions.types import ProcessSubscriptionWorkflowInputs, SubscriptionTriggerType
 from posthog.utils import str_to_bool
 
-from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
+from ee.billing.quota_limiting import is_team_over_ai_credit_budget
 from ee.tasks.subscriptions.auto_disable import validate_re_enable
 from ee.tasks.subscriptions.subscription_utils import DEFAULT_MAX_ASSET_COUNT
 
@@ -439,11 +439,10 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
     def _validate_summary_credit_budget(self) -> None:
         # Mirror the chat assistant's entry-point gate (ee/api/conversation.py): refuse to
-        # turn a summary on while the org is over its AI credit budget. is_team_limited reads
-        # the billing quota-limiting cache — the same signal Max chat enforces — not the
-        # display-only /usage credit calculation.
+        # turn a summary on while the org is over its AI credit budget — the same billing
+        # quota-limiting signal Max chat enforces, not the display-only /usage calculation.
         team = self.context["get_team"]()
-        if is_team_limited(team.api_token, QuotaResource.AI_CREDITS, QuotaLimitingCaches.QUOTA_LIMITER_CACHE_KEY):
+        if is_team_over_ai_credit_budget(team.api_token):
             raise QuotaLimitExceeded(
                 "Your organization reached its AI credit usage limit. "
                 "Increase the limits in Billing settings, or ask an org admin to do so."

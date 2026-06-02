@@ -824,10 +824,10 @@ class TestConversation(APIBaseTest):
                 workflow_inputs = call_args[0][1]
                 self.assertEqual(workflow_inputs.billing_context, None)
 
-    @patch("ee.api.conversation.is_team_limited")
-    def test_quota_limit_exceeded(self, mock_is_team_limited):
+    @patch("ee.api.conversation.is_team_over_ai_credit_budget")
+    def test_quota_limit_exceeded(self, mock_over_budget):
         """Test that requests are blocked when team exceeds quota limits."""
-        mock_is_team_limited.return_value = True
+        mock_over_budget.return_value = True
 
         response = self.client.post(
             f"/api/environments/{self.team.id}/conversations/",
@@ -843,12 +843,12 @@ class TestConversation(APIBaseTest):
             response.json()["detail"],
             "Your organization reached its AI credit usage limit. Increase the limits in Billing settings, or ask an org admin to do so.",
         )
-        mock_is_team_limited.assert_called_once()
+        mock_over_budget.assert_called_once()
 
-    @patch("ee.api.conversation.is_team_limited")
-    def test_quota_limit_not_exceeded(self, mock_is_team_limited):
+    @patch("ee.api.conversation.is_team_over_ai_credit_budget")
+    def test_quota_limit_not_exceeded(self, mock_over_budget):
         """Test that requests proceed normally when team has not exceeded quota limits."""
-        mock_is_team_limited.return_value = False
+        mock_over_budget.return_value = False
 
         with patch(
             "ee.hogai.core.executor.AgentExecutor.astream",
@@ -865,7 +865,7 @@ class TestConversation(APIBaseTest):
                 )
 
                 self.assertEqual(response.status_code, status.HTTP_200_OK)
-                mock_is_team_limited.assert_called_once()
+                mock_over_budget.assert_called_once()
 
     def test_create_conversation_with_research_agent_mode(self):
         """Test that agent_mode=RESEARCH routes to ResearchAgentWorkflow."""

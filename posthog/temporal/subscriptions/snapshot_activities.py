@@ -19,7 +19,7 @@ from posthog.temporal.subscriptions.results_summarizer import build_results_summ
 from posthog.temporal.subscriptions.types import SnapshotInsightsInputs, SnapshotInsightsResult
 from posthog.text_sanitization import PROMPT_GUIDE_MAX_LEN, sanitize_user_text
 
-from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
+from ee.billing.quota_limiting import is_team_over_ai_credit_budget
 from ee.models import CoreMemory
 
 LOGGER = get_logger(__name__)
@@ -416,15 +416,11 @@ async def _run_snapshot_subscription_insights(inputs: SnapshotInsightsInputs) ->
         )
         return SnapshotInsightsResult()
 
-    # Stop generating summaries once the org is over its AI credit budget — the same
-    # billing quota-limiting signal the chat assistant enforces (ee/api/conversation.py).
-    # Degrade gracefully (skip the summary, deliver the rest) rather than fail the delivery.
-    # is_team_limited reads an in-process-cached Redis set (not the DB), so use sync_to_async
-    # to keep the event loop free. Fail open: if the quota lookup itself errors, generate the
-    # summary rather than silently dropping it on a transient cache/Redis blip.
+    # Skip the summary (but still deliver the rest) once the org is over its AI credit budget.
+    # Fail open: a transient quota-lookup error shouldn't silently drop the summary.
     try:
-        is_over_credit_budget = await sync_to_async(is_team_limited, thread_sensitive=False)(
-            subscription.team.api_token, QuotaResource.AI_CREDITS, QuotaLimitingCaches.QUOTA_LIMITER_CACHE_KEY
+        is_over_credit_budget = await sync_to_async(is_team_over_ai_credit_budget, thread_sensitive=False)(
+            subscription.team.api_token
         )
     except Exception as e:
         is_over_credit_budget = False

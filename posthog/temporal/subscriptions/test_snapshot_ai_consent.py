@@ -157,7 +157,7 @@ async def test_skips_summary_when_org_over_credit_budget(team, user, monkeypatch
         fake_generate,
     )
     monkeypatch.setattr(
-        "posthog.temporal.subscriptions.snapshot_activities.is_team_limited",
+        "posthog.temporal.subscriptions.snapshot_activities.is_team_over_ai_credit_budget",
         lambda *a, **kw: True,
     )
 
@@ -190,7 +190,7 @@ async def test_runs_summary_when_org_under_credit_budget(team, user, monkeypatch
     )
 
     monkeypatch.setattr(
-        "posthog.temporal.subscriptions.snapshot_activities.is_team_limited",
+        "posthog.temporal.subscriptions.snapshot_activities.is_team_over_ai_credit_budget",
         lambda *a, **kw: False,
     )
     monkeypatch.setattr(
@@ -229,7 +229,7 @@ async def test_generates_summary_when_credit_check_errors(team, user, monkeypatc
     def boom(*args, **kwargs):
         raise RuntimeError("quota cache unavailable")
 
-    monkeypatch.setattr("posthog.temporal.subscriptions.snapshot_activities.is_team_limited", boom)
+    monkeypatch.setattr("posthog.temporal.subscriptions.snapshot_activities.is_team_over_ai_credit_budget", boom)
     monkeypatch.setattr(
         "posthog.temporal.subscriptions.snapshot_activities.generate_change_summary",
         lambda *a, **kw: "- generated despite quota error",
