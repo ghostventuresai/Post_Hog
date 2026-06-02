@@ -75,18 +75,14 @@ export function AccountNotebooksExpansion({ accountId }: { accountId: string }):
     ]
 
     return (
-        <div className="p-3 bg-bg-light">
-            <LemonTable<AccountNotebookApi>
-                size="small"
-                embedded
-                dataSource={notebooks ?? []}
-                rowKey="short_id"
-                loading={notebooksLoading}
-                columns={columns}
-                emptyState={
-                    notebooks === null ? 'Failed to load account notes.' : 'No notes linked to this account yet.'
-                }
-            />
-        </div>
+        <LemonTable<AccountNotebookApi>
+            size="small"
+            embedded
+            dataSource={notebooks ?? []}
+            rowKey="short_id"
+            loading={notebooksLoading}
+            columns={columns}
+            emptyState={notebooks === null ? 'Failed to load account notes.' : 'No notes linked to this account yet.'}
+        />
     )
 }

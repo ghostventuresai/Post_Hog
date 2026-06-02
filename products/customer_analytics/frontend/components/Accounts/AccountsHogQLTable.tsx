@@ -16,6 +16,7 @@ import { QueryContext, QueryContextColumn, QueryContextColumnComponent } from '~
 
 import { ACCOUNTS_HOGQL_DATA_NODE_KEY } from '../../constants'
 import { AccountNotebooksExpansion } from './AccountNotebooksExpansion'
+import { AccountRelatedUsersExpansion } from './AccountRelatedUsersExpansion'
 import { ACCOUNTS_NAME_COLUMN, accountsColumnConfigLogic } from './accountsColumnConfigLogic'
 import { AccountRoleKey, accountsLogic } from './accountsLogic'
 
@@ -246,8 +247,22 @@ function useExpandable(): QueryContext<DataTableNode>['expandable'] {
         () => ({
             noIndent: true,
             expandedRowRender: ({ result }) => {
-                const accountId = getNameCell(result, visibleColumnNames)?.id
-                return accountId ? <AccountNotebooksExpansion accountId={accountId} /> : null
+                const cell = getNameCell(result, visibleColumnNames)
+                if (!cell) {
+                    return null
+                }
+                return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-bg-light">
+                        <div className="flex flex-col gap-2">
+                            <h5 className="m-0 text-muted">Notes</h5>
+                            <AccountNotebooksExpansion accountId={cell.id} />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <h5 className="m-0 text-muted">Related users</h5>
+                            <AccountRelatedUsersExpansion externalId={cell.external_id ?? ''} />
+                        </div>
+                    </div>
+                )
             },
         }),
         [visibleColumnNames]

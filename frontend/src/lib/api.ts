@@ -1020,6 +1020,10 @@ export class ApiRequest {
         return this.organizations().current().addPathComponent('members')
     }
 
+    public organizationMembersForAccount(): ApiRequest {
+        return this.projectsDetail().addPathComponent('organization_members')
+    }
+
     public organizationMember(uuid: OrganizationMemberType['user']['uuid']): ApiRequest {
         return this.organizationMembers().addPathComponent(uuid)
     }
@@ -3523,6 +3527,14 @@ const api = {
 
         async listAll(params: ListOrganizationMembersParams = {}): Promise<OrganizationMemberType[]> {
             const url = new ApiRequest().organizationMembers().withQueryString(params).assembleFullUrl()
+            return api.loadPaginatedResults<OrganizationMemberType>(url)
+        },
+
+        async listAllForOrg(organizationId: OrganizationType['id']): Promise<OrganizationMemberType[]> {
+            const url = new ApiRequest()
+                .organizationMembersForAccount()
+                .withQueryString({ organization_id: organizationId })
+                .assembleFullUrl()
             return api.loadPaginatedResults<OrganizationMemberType>(url)
         },
 
