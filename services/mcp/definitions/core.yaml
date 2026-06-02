@@ -581,37 +581,11 @@ tools:
     session-recordings-sharing-refresh-create:
         operation: session_recordings_sharing_refresh_create
         enabled: false
-    # Subscriptions MCP tools are defined in products/subscriptions/mcp/tools.yaml.
-    # These entries are disabled stubs kept only so scaffold-yaml --sync-all stays stable.
-    subscriptions-create:
-        operation: subscriptions_create
-        enabled: false
     subscriptions-deliveries-list:
         operation: subscriptions_deliveries_list
         enabled: false
     subscriptions-deliveries-retrieve:
         operation: subscriptions_deliveries_retrieve
-        enabled: false
-    subscriptions-destroy:
-        operation: subscriptions_destroy
-        enabled: false
-    subscriptions-list:
-        operation: subscriptions_list
-        enabled: false
-    subscriptions-partial-update:
-        operation: subscriptions_partial_update
-        enabled: false
-    subscriptions-retrieve:
-        operation: subscriptions_retrieve
-        enabled: false
-    subscriptions-summary-quota-retrieve:
-        operation: subscriptions_summary_quota_retrieve
-        enabled: false
-    subscriptions-test-delivery-create:
-        operation: subscriptions_test_delivery_create
-        enabled: false
-    subscriptions-update:
-        operation: subscriptions_update
         enabled: false
     user-get:
         operation: users_retrieve

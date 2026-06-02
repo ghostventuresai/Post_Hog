@@ -4,9 +4,6 @@
 #
 # To enable a tool, set enabled: true and add required scopes + annotations.
 # All other fields (title, description, enrich_url, etc.) are yours to configure.
-#
-# This file is the single source of truth for the Subscriptions MCP tools — the
-# corresponding entries in services/mcp/definitions/core.yaml are disabled stubs.
 category: Subscriptions
 feature: subscriptions
 url_prefix: /subscriptions
@@ -23,76 +20,29 @@ tools:
             idempotent: false
         title: Create subscription
         description: >
-            Create a recurring subscription. The kind is inferred from which field you populate and
-            returned as the read-only `resource_type`:
+            Create a recurring subscription. The kind is inferred from which field you populate and returned as the
+            read-only `resource_type`:
 
             (1) set `insight` — schedule periodic snapshots of one insight (`resource_type: "insight"`).
 
-            (2) set `dashboard` and `dashboard_export_insights` (the subset of the dashboard's insights to
-            include, max 6) — schedule periodic snapshots of one dashboard (`resource_type: "dashboard"`).
+            (2) set `dashboard` and `dashboard_export_insights` (the subset of the dashboard's insights to include, max
+            6) — schedule periodic snapshots of one dashboard (`resource_type: "dashboard"`).
 
-            (3) set `prompt` (≤4000 chars, with no insight or dashboard) — schedule a recurring LLM-generated
-            report (`resource_type: "ai_prompt"`). Available on PostHog Cloud (self-hosted production is not
-            eligible) once the organization has approved AI data processing and AI subscriptions are enabled
-            for it; otherwise create is rejected with a 400.
+            (3) set `prompt` (≤4000 chars, with no insight or dashboard) — schedule a recurring LLM-generated report
+            (`resource_type: "ai_prompt"`). Available on PostHog Cloud (self-hosted production is not eligible) once the
+            organization has approved AI data processing and AI subscriptions are enabled for it; otherwise create is
+            rejected with a 400.
 
             Delivery is set by `target_type` (`email` or `slack`).
 
-            The kind is fixed at create time — a PATCH that would change the populated relation to a different
-            kind is rejected.
+            The kind is fixed at create time — a PATCH that would change the populated relation to a different kind is
+            rejected.
         exclude_params:
             - deleted
             - next_delivery_date
             - resource_name
             - insight_short_id
             - ai_config
-    subscriptions-retrieve:
-        operation: subscriptions_retrieve
-        enabled: true
-        scopes:
-            - subscription:read
-        annotations:
-            readOnly: true
-            destructive: false
-            idempotent: true
-        title: Get subscription
-        description: Retrieve a single subscription by ID.
-    subscriptions-list:
-        operation: subscriptions_list
-        enabled: true
-        scopes:
-            - subscription:read
-        annotations:
-            readOnly: true
-            destructive: false
-            idempotent: true
-        list: true
-        title: List subscriptions
-        description: >
-            List the team's subscriptions. Use `search` to filter by title, insight name (including the
-            auto-generated name of an unnamed insight), or dashboard name. AI-prompt subscriptions are only
-            matched on their `title` — the `prompt` text is not searchable.
-        response:
-            exclude:
-                - invite_message
-    subscriptions-partial-update:
-        operation: subscriptions_partial_update
-        enabled: true
-        scopes:
-            - subscription:write
-        annotations:
-            readOnly: false
-            destructive: false
-            idempotent: true
-        title: Update subscription
-        description: >
-            Update a subscription's mutable fields (title, target, schedule, prompt for AI subs, `enabled`).
-            The kind (`resource_type`) is fixed at create — a PATCH that would introduce another kind's field
-            (e.g. a `prompt` on an insight sub) is rejected with 400. For AI subs, re-enabling a previously
-            auto-disabled sub requires either a valid `prompt` already persisted or one supplied in the PATCH body.
-        exclude_params:
-            # Deletion goes through the dedicated subscriptions-delete tool, not a PATCH.
-            - deleted
     subscriptions-delete:
         operation: subscriptions_destroy
         enabled: true
@@ -151,6 +101,55 @@ tools:
                 - content_snapshot
                 - recipient_results
                 - error
+    subscriptions-list:
+        operation: subscriptions_list
+        enabled: true
+        scopes:
+            - subscription:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        list: true
+        title: List subscriptions
+        description: >
+            List the team's subscriptions. Use `search` to filter by title, insight name (including the auto-generated
+            name of an unnamed insight), or dashboard name. AI-prompt subscriptions are only matched on their `title` —
+            the `prompt` text is not searchable.
+        response:
+            exclude:
+                - invite_message
+    subscriptions-partial-update:
+        operation: subscriptions_partial_update
+        enabled: true
+        scopes:
+            - subscription:write
+        annotations:
+            readOnly: false
+            destructive: false
+            idempotent: true
+        title: Update subscription
+        description: >
+            Update a subscription's mutable fields (title, target, schedule, prompt for AI subs, `enabled`). The kind
+            (`resource_type`) is fixed at create — a PATCH that would introduce another kind's field (e.g. a `prompt` on
+            an insight sub) is rejected with 400. For AI subs, re-enabling a previously auto-disabled sub requires
+            either a valid `prompt` already persisted or one supplied in the PATCH body.
+        exclude_params:
+            - deleted
+    subscriptions-retrieve:
+        operation: subscriptions_retrieve
+        enabled: true
+        scopes:
+            - subscription:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        title: Get subscription
+        description: Retrieve a single subscription by ID.
+    subscriptions-summary-quota-retrieve:
+        operation: subscriptions_summary_quota_retrieve
+        enabled: false
     subscriptions-test-delivery-create:
         operation: subscriptions_test_delivery_create
         enabled: true
@@ -162,19 +161,12 @@ tools:
             idempotent: false
         title: Send test delivery
         description: >
-            Trigger an immediate test delivery of a subscription to its configured target(s) (email or Slack).
-            Runs the same pipeline as a scheduled delivery but with trigger_type=manual, producing a real delivery
-            record you can inspect via subscriptions-deliveries-list / subscriptions-deliveries-retrieve. Returns 202
-            Accepted once the delivery workflow is queued; poll subscriptions-deliveries-list (newest first) or
-            subscriptions-deliveries-retrieve for the outcome. Returns 409 if a test delivery for the same
-            subscription is already in flight, or if the subscription is disabled (re-enable it first); 404 if it
-            has been deleted.
+            Trigger an immediate test delivery of a subscription to its configured target(s) (email or Slack). Runs the
+            same pipeline as a scheduled delivery but with trigger_type=manual, producing a real delivery record you can
+            inspect via subscriptions-deliveries-list / subscriptions-deliveries-retrieve. Returns 202 Accepted once the
+            delivery workflow is queued; poll subscriptions-deliveries-list (newest first) or
+            subscriptions-deliveries-retrieve for the outcome. Returns 409 if a test delivery for the same subscription
+            is already in flight, or if the subscription is disabled (re-enable it first); 404 if it has been deleted.
     subscriptions-update:
         operation: subscriptions_update
-        enabled: false
-    subscriptions-ai-report-create:
-        operation: subscriptions_ai_report_create
-        enabled: false
-    subscriptions-summary-quota-retrieve:
-        operation: subscriptions_summary_quota_retrieve
         enabled: false
