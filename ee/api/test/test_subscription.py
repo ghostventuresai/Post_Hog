@@ -2033,13 +2033,14 @@ class TestAISubscriptionAPI(APILicensedTest):
 
     @parameterized.expand(
         [
-            ("empty_prompt", {"prompt": "   "}),
-            ("oversize_prompt", {"prompt": "x" * 4001}),
-            ("insight_set_too", {"prompt": "ok", "insight": -1}),
-            ("dashboard_set_too", {"prompt": "ok", "dashboard": -1}),
+            # blank prompt → no derivable target → non-field "must target" error
+            ("empty_prompt", {"prompt": "   "}, None),
+            ("oversize_prompt", {"prompt": "x" * 4001}, "prompt"),
+            ("insight_set_too", {"prompt": "ok", "insight": -1}, "insight"),
+            ("dashboard_set_too", {"prompt": "ok", "dashboard": -1}, "dashboard"),
         ]
     )
-    def test_rejects_invalid_ai_payloads(self, mock_is_cloud, mock_flag, mock_sync, name, overrides):
+    def test_rejects_invalid_ai_payloads(self, mock_is_cloud, mock_flag, mock_sync, name, overrides, expected_attr):
         self._enable_ai()
         self._mock_temporal(mock_sync)
         if overrides.get("insight") == -1:
@@ -2054,9 +2055,10 @@ class TestAISubscriptionAPI(APILicensedTest):
             self._make_ai_payload(**overrides),
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response.json()
-        # AI validation errors are field-keyed on `prompt` (surfaced as `attr`), not bundled
-        # under a generic non-field error.
-        assert response.json()["attr"] == "prompt", response.json()
+        # The kind is derived from the populated target, so a malformed payload reports against
+        # the target field that drove the derivation (insight over dashboard over prompt), or a
+        # non-field error (attr None) when nothing valid was provided.
+        assert response.json()["attr"] == expected_attr, response.json()
 
     def test_can_update_ai_subscription_prompt(self, mock_is_cloud, mock_flag, mock_sync):
         self._enable_ai()

@@ -9,6 +9,9 @@ import { urls } from 'scenes/urls'
 
 import { InsightShortId, SubscriptionType } from '~/types'
 
+// Keep in sync with PROMPT_MAX_LENGTH in posthog/temporal/subscriptions/ai_subscription/spec_generator.py.
+export const AI_PROMPT_MAX_LENGTH = 4000
+
 export interface SubscriptionBaseProps {
     dashboardId?: number
     insightShortId?: InsightShortId

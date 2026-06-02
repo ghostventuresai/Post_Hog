@@ -88,9 +88,7 @@ def _ai_create_gate_reason(organization) -> Optional[str]:
         return "AI subscriptions are only available in PostHog Cloud."
     if not organization.is_ai_data_processing_approved:
         return "Your organization must approve AI data processing before creating AI subscriptions."
-    # DEBUG-mode dev environments skip the network feature-flag check so local
-    # testing doesn't require provisioning a flag in the analytics backend.
-    if not settings.DEBUG and not posthoganalytics.feature_enabled(
+    if not posthoganalytics.feature_enabled(
         SUBSCRIPTION_AI_PROMPT_FEATURE_FLAG_KEY,
         str(organization.id),
         groups={"organization": str(organization.id)},
@@ -233,28 +231,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         info = obj.resource_info
         return info.name if info else None
 
-    def _infer_resource_type(self, attrs: dict, existing: Optional[Subscription]) -> str:
-        # resource_type is derived from the populated target — never set by the client — so a
-        # kind can't be switched mid-life. On update it stays pinned to the existing kind; the
-        # model's `derive_resource_type` is the single source of truth for the derivation.
-        if existing is not None:
-            return existing.resource_type
-        # A present (non-null) prompt marks AI intent and routes to the AI validator (which
-        # reports against `prompt`) BEFORE deferring to the model derivation — so a stray
-        # insight/dashboard alongside it, or an all-whitespace prompt the CharField trims to
-        # "", still surfaces a prompt error instead of mis-routing or raising.
-        if attrs.get("prompt") is not None:
-            return Subscription.ResourceType.AI_PROMPT
-        insight, dashboard = attrs.get("insight"), attrs.get("dashboard")
-        try:
-            return Subscription.derive_resource_type(
-                insight.id if insight else None, dashboard.id if dashboard else None, None
-            )
-        except ValueError:
-            # Nothing populated yet — default to insight so its validator surfaces the
-            # "insight is required" error rather than a 500.
-            return Subscription.ResourceType.INSIGHT
-
     def _validate_insight_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
         if not (attrs.get("insight") or (existing and existing.insight_id)):
             raise ValidationError({"insight": ["Insight is required for insight subscriptions."]})
@@ -270,30 +246,22 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     def _validate_ai_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
         if attrs.get("insight") or attrs.get("dashboard"):
             raise ValidationError({"prompt": ["AI subscriptions cannot also set insight or dashboard."]})
-        # Explicit-key check so a deliberate `""` in a PATCH body doesn't fall through to the
-        # stale instance value and pass validation while writing empty to the DB (the next
-        # delivery would then PromptRejectedError + auto-disable).
+        # Explicit-key check so a PATCH sending prompt="" doesn't fall through to the stale value.
         prompt = (attrs["prompt"] if "prompt" in attrs else (existing.prompt if existing else None)) or ""
         prompt = prompt.strip()
         if not prompt:
             raise ValidationError({"prompt": ["Prompt is required for AI subscriptions."]})
         if len(prompt) > AI_PROMPT_MAX_LENGTH:
             raise ValidationError({"prompt": [f"Prompt cannot exceed {AI_PROMPT_MAX_LENGTH} characters."]})
-        # Persist the trimmed prompt so the stored value matches what we validated — keeps
-        # the DB free of boundary whitespace rather than relying on delivery-time stripping.
         if "prompt" in attrs:
             attrs["prompt"] = prompt
-        # The delivery activity rejects unsupported targets, but auto-disabling on the first
-        # scheduled run is a poor first impression — fail fast here.
         target_type = attrs.get("target_type") or (existing.target_type if existing else None)
         if target_type and target_type not in (
             Subscription.SubscriptionTarget.EMAIL,
             Subscription.SubscriptionTarget.SLACK,
         ):
             raise ValidationError({"target_type": ["AI subscriptions only support email or slack delivery."]})
-        # Cloud / consent / feature-flag gates fire on create only. `resource_type` is derived,
-        # so an existing AI sub can't be created by mutation; existing AI subs stay editable
-        # (owners can still disable/delete) and the delivery path is the authoritative cost gate.
+        # Gates fire on create only; existing AI subs stay editable.
         if existing is None:
             gate_reason = _ai_create_gate_reason(self.context["get_organization"]())
             if gate_reason is not None:
@@ -314,7 +282,16 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         if attrs.get("insight") and attrs["insight"].team.id != self.context["team_id"]:
             raise ValidationError({"insight": ["This insight does not belong to your team."]})
 
-        resource_type = self._infer_resource_type(attrs, existing)
+        if existing is not None:
+            resource_type = existing.resource_type
+        else:
+            insight, dashboard = attrs.get("insight"), attrs.get("dashboard")
+            try:
+                resource_type = Subscription.derive_resource_type(
+                    insight.id if insight else None, dashboard.id if dashboard else None, attrs.get("prompt")
+                )
+            except ValueError as exc:
+                raise ValidationError(str(exc))
         content_validators: dict[str, Callable[[dict, Optional[Subscription]], None]] = {
             Subscription.ResourceType.INSIGHT: self._validate_insight_content,
             Subscription.ResourceType.DASHBOARD: self._validate_dashboard_content,
@@ -360,10 +337,6 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                 try:
                     sanitize_prompt(prompt_after)
                 except PromptRejectedError as exc:
-                    # Surface under "enabled" not "prompt" — the user's PATCH likely
-                    # only flipped `enabled=true` and didn't touch `prompt`. Pointing
-                    # the error at the field they actually changed makes the cause
-                    # diagnosable. The reason still names the prompt.
                     raise ValidationError(
                         {"enabled": [f"Cannot re-enable AI subscription: prompt is invalid ({exc})."]}
                     )

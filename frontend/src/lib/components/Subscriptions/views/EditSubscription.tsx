@@ -38,8 +38,6 @@ import { InsightSelector } from '../InsightSelector'
 import { subscriptionCountLogic } from '../subscriptionCountLogic'
 import { subscriptionLogic } from '../subscriptionLogic'
 
-const AI_PROMPT_CHAR_LIMIT = 4000
-
 // Shown wherever AI subscriptions are gated off (org hasn't approved AI data
 // processing). Mirrors the backend gate in `_ai_create_gate_reason`, which 403s
 // the create regardless — so the form must block before submit, not after.
@@ -88,6 +86,7 @@ import {
     timeOptions,
     weekdayOptions,
     WEEKDAYS,
+    AI_PROMPT_MAX_LENGTH,
 } from '../utils'
 
 interface EditSubscriptionProps {
@@ -139,6 +138,87 @@ function FreeTierCreateGate(props: EditSubscriptionProps): JSX.Element {
         )
     }
     return <EditSubscriptionForm {...props} />
+}
+
+function AiPromptFields({
+    prompt,
+    showConsentBanner,
+    onSelectExample,
+}: {
+    prompt?: string | null
+    showConsentBanner: boolean
+    onSelectExample: (prompt: string, label: string) => void
+}): JSX.Element {
+    return (
+        <>
+            {showConsentBanner && (
+                <LemonBanner type="warning" className="text-sm">
+                    <AiConsentGateMessage />
+                </LemonBanner>
+            )}
+            <LemonBanner type="info" className="text-sm">
+                The AI analyzes your project's recent events and writes a markdown report. Each delivery is generated
+                independently.
+            </LemonBanner>
+            <LemonField
+                name="prompt"
+                label="Prompt"
+                help="Describe what the AI should look for. The same prompt runs every time the subscription fires."
+            >
+                <LemonTextArea
+                    placeholder="e.g. Which events grew the most week-over-week? Highlight any unusual spikes."
+                    minRows={4}
+                    maxLength={AI_PROMPT_MAX_LENGTH}
+                />
+            </LemonField>
+            {/* Starter chips replace the whole prompt, so only offer them while the field is empty — once the
+                user has typed anything, a stray click would wipe their prompt with no undo. */}
+            {!prompt?.trim() && (
+                <div className="flex flex-col gap-1">
+                    <span className="text-xs text-secondary">Try one of these prompts:</span>
+                    <div className="flex flex-wrap gap-1">
+                        {AI_PROMPT_EXAMPLES.map((example) => (
+                            <LemonButton
+                                key={example.label}
+                                size="xsmall"
+                                type="secondary"
+                                onClick={() => onSelectExample(example.prompt, example.label)}
+                            >
+                                {example.label}
+                            </LemonButton>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </>
+    )
+}
+
+function DashboardInsightsField({
+    dashboard,
+    subscription,
+    onResetSubscription,
+}: {
+    dashboard: DashboardType<any>
+    subscription: SubscriptionType
+    onResetSubscription: (subscription: SubscriptionType) => void
+}): JSX.Element {
+    return (
+        <LemonField name="dashboard_export_insights" label="Insights to include">
+            {({ value, onChange }) => (
+                <InsightSelector
+                    tiles={dashboard.tiles}
+                    selectedInsightIds={value ?? []}
+                    onChange={onChange}
+                    // Reset the form's "changed" state after auto-selecting defaults so it doesn't trip the
+                    // unsaved-changes warning; merge the IDs into the subscription to preserve them.
+                    onDefaultsApplied={(selectedIds) =>
+                        onResetSubscription({ ...subscription, dashboard_export_insights: selectedIds })
+                    }
+                />
+            )}
+        </LemonField>
+    )
 }
 
 function EditSubscriptionForm({
@@ -296,25 +376,11 @@ function EditSubscriptionForm({
                         </div>
 
                         {dashboard?.tiles && selectionReady && (
-                            <LemonField name="dashboard_export_insights" label="Insights to include">
-                                {({ value, onChange }) => (
-                                    <InsightSelector
-                                        tiles={dashboard.tiles}
-                                        selectedInsightIds={value ?? []}
-                                        onChange={onChange}
-                                        // After auto-selecting default insights, reset the form's "changed"
-                                        // state so that auto-selection alone doesn't trigger the
-                                        // "unsaved changes" warning when leaving. We merge the selected IDs
-                                        // into the subscription to preserve the auto-selected values.
-                                        onDefaultsApplied={(selectedIds) =>
-                                            resetSubscription({
-                                                ...subscription,
-                                                dashboard_export_insights: selectedIds,
-                                            })
-                                        }
-                                    />
-                                )}
-                            </LemonField>
+                            <DashboardInsightsField
+                                dashboard={dashboard}
+                                subscription={subscription}
+                                onResetSubscription={resetSubscription}
+                            />
                         )}
 
                         {aiGate.showResourceTypeToggle && (
@@ -349,55 +415,11 @@ function EditSubscriptionForm({
                         )}
 
                         {isAiPrompt ? (
-                            <>
-                                {aiGate.showAiFormConsentBanner && (
-                                    <LemonBanner type="warning" className="text-sm">
-                                        <AiConsentGateMessage />
-                                    </LemonBanner>
-                                )}
-                                <LemonBanner type="info" className="text-sm">
-                                    The AI analyzes your project's recent events and writes a markdown report. Each
-                                    delivery is generated independently.
-                                </LemonBanner>
-                                <LemonField
-                                    name="prompt"
-                                    label="Prompt"
-                                    help="Describe what the AI should look for. The same prompt runs every time the subscription fires."
-                                >
-                                    <LemonTextArea
-                                        placeholder="e.g. Which events grew the most week-over-week? Highlight any unusual spikes."
-                                        minRows={4}
-                                        maxLength={AI_PROMPT_CHAR_LIMIT}
-                                    />
-                                </LemonField>
-                                {/*
-                                 * Starter chips replace the whole prompt, so only offer them while the field is
-                                 * empty. Once the user has typed anything, hide them — a stray click would
-                                 * otherwise wipe a prompt in progress with no undo.
-                                 */}
-                                {!subscription.prompt?.trim() && (
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-xs text-secondary">Try one of these prompts:</span>
-                                        <div className="flex flex-wrap gap-1">
-                                            {AI_PROMPT_EXAMPLES.map((example) => (
-                                                <LemonButton
-                                                    key={example.label}
-                                                    size="xsmall"
-                                                    type="secondary"
-                                                    onClick={() =>
-                                                        logic.actions.selectAiExamplePrompt(
-                                                            example.prompt,
-                                                            example.label
-                                                        )
-                                                    }
-                                                >
-                                                    {example.label}
-                                                </LemonButton>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </>
+                            <AiPromptFields
+                                prompt={subscription.prompt}
+                                showConsentBanner={aiGate.showAiFormConsentBanner}
+                                onSelectExample={logic.actions.selectAiExamplePrompt}
+                            />
                         ) : null}
 
                         <LemonField name="target_type" label="Destination">

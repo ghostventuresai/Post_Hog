@@ -14,9 +14,7 @@ import { ExportedAssetType, ExporterFormat, SubscriptionType } from '~/types'
 
 import type { subscriptionLogicType } from './subscriptionLogicType'
 import { subscriptionsLogic } from './subscriptionsLogic'
-import { SubscriptionBaseProps, urlForSubscription } from './utils'
-
-const AI_PROMPT_MAX_LENGTH = 4000
+import { AI_PROMPT_MAX_LENGTH, SubscriptionBaseProps, urlForSubscription } from './utils'
 
 function validatePrompt(
     resource_type: SubscriptionType['resource_type'],
