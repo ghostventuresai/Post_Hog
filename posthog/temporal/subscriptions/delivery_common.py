@@ -56,6 +56,10 @@ async def deliver_email(
         previous = {e.strip() for e in inputs.previous_value.split(",") if e.strip()}
         emails = [e for e in emails if e not in previous]
 
+    await LOGGER.ainfo(
+        "deliver_subscription.sending_email", subscription_id=subscription.id, recipient_count=len(emails)
+    )
+
     success_count = 0
     last_error: Exception | None = None
     for email in emails:
@@ -65,7 +69,12 @@ async def deliver_email(
             success_count += 1
         except Exception as exc:
             LOGGER.error(
-                "deliver_subscription.email_failed", subscription_id=subscription.id, email=email, exc_info=True
+                "deliver_subscription.email_failed",
+                subscription_id=subscription.id,
+                email=email,
+                next_delivery_date=subscription.next_delivery_date,
+                destination=subscription.target_type,
+                exc_info=True,
             )
             capture_exception(exc)
             _capture_delivery_failed_event(subscription, exc)
@@ -75,6 +84,13 @@ async def deliver_email(
                 )
             )
             last_error = exc
+
+    await LOGGER.ainfo(
+        "deliver_subscription.email_complete",
+        subscription_id=subscription.id,
+        success_count=success_count,
+        total_count=len(emails),
+    )
 
     if last_error is not None and success_count == 0:
         raise last_error
@@ -108,6 +124,7 @@ async def deliver_slack(
         LOGGER.warning("deliver_subscription.no_slack_integration", subscription_id=subscription.id)
         return await auto_disable_and_return(subscription, SLACK_DISCONNECTED_DISABLE_REASON, recipient_results)
 
+    LOGGER.info("deliver_subscription.sending_slack_message", subscription_id=subscription.id)
     try:
         result = await send(integration)
     except ApplicationError:
@@ -119,6 +136,8 @@ async def deliver_slack(
             "deliver_subscription.slack_failed",
             subscription_id=subscription.id,
             slack_error=slack_error_code,
+            next_delivery_date=subscription.next_delivery_date,
+            destination=subscription.target_type,
             exc_info=True,
         )
         capture_exception(exc)
@@ -130,8 +149,15 @@ async def deliver_slack(
         raise  # Transient Slack errors — let Temporal retry
 
     if result.is_complete_success:
+        await LOGGER.ainfo("deliver_subscription.slack_sent", subscription_id=subscription.id)
         recipient_results.append(RecipientResult(recipient=subscription.target_value, status="success", error=None))
     elif result.is_partial_failure:
+        await LOGGER.awarning(
+            "deliver_subscription.slack_partial_failure",
+            subscription_id=subscription.id,
+            failed_thread_count=len(result.failed_thread_message_indices),
+            total_thread_count=result.total_thread_messages,
+        )
         recipient_results.append(
             RecipientResult(
                 recipient=subscription.target_value,
