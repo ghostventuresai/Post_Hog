@@ -1,8 +1,6 @@
 import { router } from 'kea-router'
 import { expectLogic, partial } from 'kea-test-utils'
 
-import { FEATURE_FLAGS } from 'lib/constants'
-import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 import { teamLogic } from 'scenes/teamLogic'
 import { urls } from 'scenes/urls'
 
@@ -81,15 +79,14 @@ const BIGQUERY_BATCH_EXPORT = fixture('test-bq-id', 'BigQuery Export', {
 const BIGQUERY_INTEGRATION_BATCH_EXPORT = fixture('test-bq-integration-id', 'BigQuery Integration Export', {
     type: 'BigQuery',
     integration: 7,
-    // Integration-backed config legitimately omits the service-account fields that
-    // BatchExportServiceBigQuery['config'] declares, so the cast keeps the fixture honest.
+    // Integration-backed config omits the (now-optional) service-account fields.
     config: {
         dataset_id: 'test_dataset',
         table_id: 'events',
         exclude_events: [],
         include_events: [],
         use_json_type: false,
-    } as any,
+    },
 })
 
 const POSTGRES_BATCH_EXPORT = fixture('fixture-postgres', 'Postgres Export', {
@@ -402,7 +399,7 @@ describe('batchExportConfigFormLogic', () => {
                 service: 'Snowflake' as const,
                 fields: ['account', 'database', 'warehouse', 'user', 'password', 'schema', 'table_name'],
             },
-            { service: 'BigQuery' as const, fields: ['json_config_file', 'dataset_id', 'table_id'] },
+            { service: 'BigQuery' as const, fields: ['integration_id', 'dataset_id', 'table_id'] },
             { service: 'HTTP' as const, fields: ['url', 'token'] },
             {
                 service: 'Databricks' as const,
@@ -519,51 +516,6 @@ describe('batchExportConfigFormLogic', () => {
             await expectLogic(logic).toFinishAllListeners()
 
             expect(logic.values.configurationErrors.redshift_s3_bucket).toBe(expected)
-        })
-    })
-
-    describe('BigQuery uploads parsed JSON config', () => {
-        // Selecting json_config_file reads it via FileReader, parses JSON, and lifts the
-        // service-account fields into the form. We stub FileReader to make the test hermetic.
-        let originalFileReader: any
-        let fileReaderResult: string
-        beforeEach(() => {
-            originalFileReader = (global as any).FileReader
-            ;(global as any).FileReader = jest.fn().mockImplementation(() => ({
-                readAsText() {
-                    setTimeout(() => this.onload({ target: { result: fileReaderResult } }), 0)
-                },
-            }))
-        })
-        afterEach(() => {
-            ;(global as any).FileReader = originalFileReader
-        })
-
-        it('parses uploaded JSON and writes service-account fields into the form', async () => {
-            const config = {
-                project_id: 'parsed-project',
-                private_key: 'parsed-key',
-                private_key_id: 'parsed-key-id',
-                client_email: 'parsed@iam.gserviceaccount.com',
-                token_uri: 'https://oauth2.googleapis.com/token',
-            }
-            fileReaderResult = JSON.stringify(config)
-            await initLogic({ service: 'BigQuery', id: null })
-
-            logic.actions.setConfigurationValue('json_config_file', [new Blob(['{}'], { type: 'application/json' })])
-            await expectLogic(logic).toFinishAllListeners()
-
-            expect(logic.values.configuration).toEqual(expect.objectContaining(config))
-        })
-
-        it('sets a manual error when the uploaded JSON is invalid', async () => {
-            fileReaderResult = 'not json'
-            await initLogic({ service: 'BigQuery', id: null })
-
-            logic.actions.setConfigurationValue('json_config_file', [new Blob(['x'], { type: 'application/json' })])
-            await expectLogic(logic).toFinishAllListeners()
-
-            expect(logic.values.configurationErrors.json_config_file).toBe('The config file is not valid')
         })
     })
 
@@ -822,38 +774,8 @@ describe('batchExportConfigFormLogic', () => {
                 },
             },
             {
-                // BigQuery's required-field set depends on BATCH_EXPORTS_BIGQUERY_INTEGRATION.
-                // With the flag off, json_config_file is required but stripped from the payload;
-                // we set parsed fields directly to bypass the file-reader side effect.
-                name: 'BigQuery (integration flag off)',
+                name: 'BigQuery',
                 service: 'BigQuery' as const,
-                requiredValues: {
-                    json_config_file: ['placeholder'],
-                    project_id: 'p',
-                    private_key: 'pk',
-                    private_key_id: 'pki',
-                    client_email: 'ce',
-                    token_uri: 'tu',
-                    dataset_id: 'ds',
-                    table_id: 'events',
-                },
-                expectedDestination: {
-                    type: 'BigQuery',
-                    config: {
-                        project_id: 'p',
-                        private_key: 'pk',
-                        private_key_id: 'pki',
-                        client_email: 'ce',
-                        token_uri: 'tu',
-                        dataset_id: 'ds',
-                        table_id: 'events',
-                    },
-                },
-            },
-            {
-                name: 'BigQuery (integration flag on)',
-                service: 'BigQuery' as const,
-                featureFlags: { [FEATURE_FLAGS.BATCH_EXPORTS_BIGQUERY_INTEGRATION]: true } as Record<string, boolean>,
                 requiredValues: {
                     integration_id: 5,
                     dataset_id: 'ds',
@@ -868,34 +790,27 @@ describe('batchExportConfigFormLogic', () => {
                     },
                 },
             },
-        ])(
-            'create $name sends expected payload',
-            async ({ service, requiredValues, expectedDestination, featureFlags }) => {
-                if (featureFlags) {
-                    featureFlagLogic.mount()
-                    featureFlagLogic.actions.setFeatureFlags(Object.keys(featureFlags), featureFlags)
-                }
-                await initLogic({ service, id: null })
+        ])('create $name sends expected payload', async ({ service, requiredValues, expectedDestination }) => {
+            await initLogic({ service, id: null })
 
-                logic.actions.setConfigurationValues({
-                    ...logic.values.configuration,
-                    interval: 'hour',
-                    name: `Test ${service} Export`,
-                    model: 'events',
-                    ...requiredValues,
-                })
+            logic.actions.setConfigurationValues({
+                ...logic.values.configuration,
+                interval: 'hour',
+                name: `Test ${service} Export`,
+                model: 'events',
+                ...requiredValues,
+            })
 
-                await expectLogic(logic, () => {
-                    logic.actions.submitConfiguration()
-                })
-                    .toDispatchActions(['submitConfiguration', 'updateBatchExportConfigSuccess'])
-                    .toFinishAllListeners()
+            await expectLogic(logic, () => {
+                logic.actions.submitConfiguration()
+            })
+                .toDispatchActions(['submitConfiguration', 'updateBatchExportConfigSuccess'])
+                .toFinishAllListeners()
 
-                expect(lastPostBody).not.toBeNull()
-                expect(lastPostBody!.destination).toEqual(expectedDestination)
-                expect(router.values.location.pathname).toContain(urls.batchExport('new-export-id'))
-            }
-        )
+            expect(lastPostBody).not.toBeNull()
+            expect(lastPostBody!.destination).toEqual(expectedDestination)
+            expect(router.values.location.pathname).toContain(urls.batchExport('new-export-id'))
+        })
     })
 
     describe('round-trip: load and save preserves destination config', () => {
