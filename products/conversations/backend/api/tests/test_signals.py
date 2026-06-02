@@ -9,7 +9,7 @@ from parameterized import parameterized
 
 from posthog.models.comment import Comment
 
-from products.conversations.backend.models import Ticket
+from products.conversations.backend.models import EmailChannel, Ticket
 from products.conversations.backend.models.constants import Channel
 
 
@@ -314,6 +314,68 @@ class TestTicketMessageSignals(BaseTest):
         )
 
         mock_delay.assert_not_called()
+
+    @parameterized.expand(
+        [
+            (
+                "email_and_verified_domain",
+                {"email": "customer@example.com", "name": "Customer"},
+                True,
+                True,
+            ),
+            ("missing_email", {"name": "Customer"}, True, False),
+            ("unverified_domain", {"email": "customer@example.com"}, False, False),
+        ]
+    )
+    @patch("products.conversations.backend.tasks.send_email_reply.delay")
+    def test_widget_ticket_email_reply_behaviour(
+        self,
+        _name,
+        anonymous_traits,
+        domain_verified,
+        expected_email_sent,
+        mock_delay,
+        mock_on_commit,
+    ):
+        self.team.conversations_settings = {"email_enabled": True}
+        self.team.save()
+        email_config = EmailChannel.objects.create(
+            team=self.team,
+            inbound_token="widgetreply123",
+            from_email="support@example.com",
+            from_name="Support",
+            domain="example.com",
+            domain_verified=domain_verified,
+        )
+        widget_ticket = Ticket.objects.create_with_number(
+            team=self.team,
+            widget_session_id=self.widget_session_id,
+            distinct_id="widget-user-1",
+            channel_source=Channel.WIDGET,
+            anonymous_traits=anonymous_traits,
+        )
+
+        Comment.objects.create(
+            team=self.team,
+            scope="conversations_ticket",
+            item_id=str(widget_ticket.id),
+            content="Support reply",
+            created_by=self.user,
+            item_context={"author_type": "team", "is_private": False},
+        )
+
+        widget_ticket.refresh_from_db()
+        if expected_email_sent:
+            assert widget_ticket.email_config_id == email_config.id
+            assert widget_ticket.email_from == "customer@example.com"
+            assert widget_ticket.email_subject == f"#{widget_ticket.ticket_number}"
+            mock_delay.assert_called_once()
+            call_kwargs = mock_delay.call_args[1]
+            assert call_kwargs["ticket_id"] == str(widget_ticket.id)
+            assert call_kwargs["team_id"] == self.team.id
+        else:
+            assert widget_ticket.email_config_id is None
+            mock_delay.assert_not_called()
 
     @patch("products.conversations.backend.signals.invalidate_tickets_cache")
     def test_message_invalidates_tickets_cache(self, mock_invalidate, mock_on_commit):

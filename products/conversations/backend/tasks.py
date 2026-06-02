@@ -485,7 +485,7 @@ def send_email_reply(
         txt_body = content
         html_body = f"<p>{html_mod.escape(content)}</p>"
 
-    subject = ticket.email_subject or "Your support request"
+    subject = ticket.email_subject or f"#{ticket.ticket_number}"
     is_reply = latest_mapping is not None
     if is_reply and not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
