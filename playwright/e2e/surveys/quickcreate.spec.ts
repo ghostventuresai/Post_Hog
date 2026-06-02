@@ -90,6 +90,7 @@ test.describe('Quick create survey from feature flag', () => {
 
         // start ff creation
         await page.locator('[data-attr="new-feature-flag"]').click()
+        await page.locator('[data-attr="blank-feature-flag-template"]').click()
         await page.locator('[data-attr="feature-flag-key"]').fill(name)
         await page.locator('[data-attr="rollout-percentage"]').fill('100')
     })
