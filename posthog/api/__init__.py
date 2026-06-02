@@ -749,6 +749,12 @@ organizations_router.register(
     "organization_members",
     ["organization_id"],
 )
+projects_router.register(
+    r"organization_members",
+    organization_member.OrganizationMembersForAccountViewSet,
+    "project_organization_members",
+    ["project_id"],
+)
 organizations_router.register(
     r"invites",
     organization_invite.OrganizationInviteViewSet,

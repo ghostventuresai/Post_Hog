@@ -1,4 +1,5 @@
 from typing import Any, cast
+from uuid import UUID
 
 from django.contrib.postgres.search import TrigramWordSimilarity
 from django.db.models import F, Model, Prefetch, Q, QuerySet, Value
@@ -33,7 +34,7 @@ from posthog.helpers.trigram_search import MAX_SEARCH_LENGTH, MIN_NAME_TRIGRAM_S
 from posthog.models import OrganizationMembership
 from posthog.models.user import User
 from posthog.models.webauthn_credential import WebauthnCredential
-from posthog.permissions import TimeSensitiveActionPermission, extract_organization
+from posthog.permissions import PostHogFeatureFlagPermission, TimeSensitiveActionPermission, extract_organization
 from posthog.utils import posthoganalytics
 
 tracer = trace.get_tracer(__name__)
@@ -274,4 +275,48 @@ class OrganizationMemberViewSet(
                 "has_keys_active_last_week": api_keys_data["has_keys_active_last_week"],
                 "keys": api_keys_data["keys"],
             }
+        )
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name="organization_id",
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description="Organization to return members for.",
+        ),
+    ],
+)
+class OrganizationMembersForAccountViewSet(
+    TeamAndOrgViewSetMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Members of the organization given by `organization_id`, gated on the customer-analytics-csp flag.
+
+    For Customer analytics accounts (an account's external id is an organization id). Read-only, internal.
+    """
+
+    scope_object = "INTERNAL"
+    serializer_class = OrganizationMemberSerializer
+    permission_classes = [PostHogFeatureFlagPermission]
+    posthog_feature_flag = "customer-analytics-csp"
+
+    def dangerously_get_queryset(self) -> QuerySet:
+        # Not scoped to the caller's org — the target org comes from the query param; the flag gates access.
+        organization_id = self.request.GET.get("organization_id")
+        if not organization_id:
+            return OrganizationMembership.objects.none()
+        try:
+            UUID(str(organization_id))
+        except (ValueError, TypeError):
+            return OrganizationMembership.objects.none()
+        return (
+            OrganizationMembership.objects.filter(organization_id=organization_id, user__is_active=True)
+            .exclude(user__email__endswith=INTERNAL_BOT_EMAIL_SUFFIX)
+            .select_related("user")
+            .annotate(last_login=F("user__last_login"))
+            .order_by("-level", "user__first_name", "user__email")
         )
