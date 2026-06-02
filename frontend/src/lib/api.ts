@@ -4120,11 +4120,13 @@ const api = {
         symbolSets: {
             async list({
                 status,
+                search,
                 offset = 0,
                 limit = 100,
                 orderBy = '-created_at',
             }: {
                 status?: SymbolSetStatusFilter
+                search?: string
                 offset: number
                 limit: number
                 orderBy?: SymbolSetOrder
@@ -4132,6 +4134,7 @@ const api = {
                 const queryString = {
                     order_by: orderBy,
                     status,
+                    search: search?.trim() || undefined,
                     offset,
                     limit,
                 }
