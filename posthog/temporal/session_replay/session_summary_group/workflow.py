@@ -511,13 +511,7 @@ async def _wait_for_update() -> None:
 
 async def _start_session_group_summary_workflow(
     inputs: SessionGroupSummaryInputs, workflow_id: str
-) -> AsyncGenerator[
-    tuple[
-        SessionSummaryStreamUpdate,
-        tuple[EnrichedSessionGroupSummaryPatternsList, str, list[FailedSessionInfo]] | str | SessionProgressStreamData,
-    ],
-    None,
-]:
+) -> AsyncGenerator[tuple[SessionSummaryStreamUpdate, tuple[EnrichedSessionGroupSummaryPatternsList, str, list[FailedSessionInfo]] | str | SessionProgressStreamData]]:
     """Start the workflow and yield status updates until completion."""
     client = await async_connect()
     retry_policy = RetryPolicy(maximum_attempts=int(settings.TEMPORAL_WORKFLOW_MAX_ATTEMPTS))
@@ -661,13 +655,7 @@ async def execute_summarize_session_group(
     local_reads_prod: bool = False,
     video_based: bool = False,
     trigger_session_id: str | None = None,
-) -> AsyncGenerator[
-    tuple[
-        SessionSummaryStreamUpdate,
-        tuple[EnrichedSessionGroupSummaryPatternsList, str, list[FailedSessionInfo]] | str | SessionProgressStreamData,
-    ],
-    None,
-]:
+) -> AsyncGenerator[tuple[SessionSummaryStreamUpdate, tuple[EnrichedSessionGroupSummaryPatternsList, str, list[FailedSessionInfo]] | str | SessionProgressStreamData]]:
     """
     Start the workflow and yield status updates and final summary for the group of sessions.
     """

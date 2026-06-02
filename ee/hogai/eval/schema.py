@@ -20,12 +20,12 @@ T = TypeVar("T", bound=Model)
 class BaseSnapshot(AvroBase, ABC, Generic[T]):
     @classmethod
     @abstractmethod
-    def serialize_for_team(cls, *, team_id: int) -> Generator[Self, None, None]:
+    def serialize_for_team(cls, *, team_id: int) -> Generator[Self]:
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def deserialize_for_team(cls, models: Sequence[Self], *, team_id: int, project_id: int) -> Generator[T, None, None]:
+    def deserialize_for_team(cls, models: Sequence[Self], *, team_id: int, project_id: int) -> Generator[T]:
         raise NotImplementedError
 
 
@@ -42,7 +42,7 @@ class TeamSnapshot(BaseSnapshot[Team]):
     @classmethod
     def deserialize_for_team(
         cls, models: Sequence[Self], *, team_id: int, project_id: int
-    ) -> Generator[Team, None, None]:
+    ) -> Generator[Team]:
         for model in models:
             yield Team(
                 id=team_id,
