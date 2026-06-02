@@ -13,7 +13,7 @@ from posthog.schema import AssistantEventType, AssistantMessage, HumanMessage
 
 from posthog.temporal.ai.chat_agent import ChatAgentWorkflow, ChatAgentWorkflowInputs
 
-from ee.hogai.core.executor import AgentExecutor
+from ee.hogai.core.executor import AgentExecutor, has_pending_queue_work
 from ee.hogai.stream.redis_stream import (
     ConversationEvent,
     ConversationRedisStream,
@@ -68,6 +68,7 @@ class TestAgentExecutor(BaseTest):
                 conversation_id=self.conversation.id,
                 stream_key=get_conversation_stream_key(self.conversation.id),
                 trace_id=str(uuid4()),
+                message=HumanMessage(content="hello").model_dump(),
             )
 
             # Call the method
@@ -92,6 +93,164 @@ class TestAgentExecutor(BaseTest):
             self.assertEqual(call_args[1]["task_queue"], settings.MAX_AI_TASK_QUEUE)
             self.assertIn("conversation-", call_args[1]["id"])
 
+    async def test_astream_reconnects_during_queued_workflow_handoff(self):
+        """When ``Conversation.status`` is IDLE but a queued workflow is pending,
+        ``astream`` must read from the Redis stream rather than spawn a new
+        workflow — otherwise it would race the queued workflow and delete its
+        events. Regression test for the "Cannot continue streaming from an
+        idle conversation" handoff race.
+        """
+        self.conversation.status = Conversation.Status.IDLE
+
+        async def mock_stream_gen():
+            yield ("message", {"content": "from-queued-workflow"})
+
+        with (
+            patch.object(self.manager, "stream_conversation") as mock_stream,
+            patch.object(self.manager, "start_workflow") as mock_start,
+            patch("ee.hogai.core.executor.has_pending_queue_work", new=AsyncMock(return_value=True)),
+        ):
+            mock_stream.return_value = mock_stream_gen()
+
+            workflow_inputs = ChatAgentWorkflowInputs(
+                team_id=self.team_id,
+                user_id=self.user_id,
+                conversation_id=self.conversation.id,
+                stream_key=get_conversation_stream_key(self.conversation.id),
+                trace_id=str(uuid4()),
+                # message=None and resume_payload=None signal a pure reconnect.
+            )
+
+            results = [chunk async for chunk in self.manager.astream(ChatAgentWorkflow, workflow_inputs)]
+
+            self.assertEqual(results, [("message", {"content": "from-queued-workflow"})])
+            mock_stream.assert_called_once()
+            mock_start.assert_not_called()
+
+    async def test_astream_yields_empty_when_idle_pure_reconnect_with_no_pending_work(self):
+        """A bare reconnect (no message, no resume payload) against an IDLE
+        conversation with nothing queued must not start a duplicate workflow.
+        It returns an empty stream so the client closes cleanly and re-syncs
+        via ``completeThreadGeneration`` -> ``loadConversation`` instead of
+        seeing a 400.
+        """
+        self.conversation.status = Conversation.Status.IDLE
+
+        with (
+            patch.object(
+                self.manager,
+                "stream_conversation",
+                side_effect=AssertionError("stream_conversation should not be called when nothing is pending"),
+            ) as mock_stream,
+            patch.object(
+                self.manager,
+                "start_workflow",
+                side_effect=AssertionError("start_workflow should not be called on a pure reconnect"),
+            ) as mock_start,
+            patch("ee.hogai.core.executor.has_pending_queue_work", new=AsyncMock(return_value=False)),
+        ):
+            workflow_inputs = ChatAgentWorkflowInputs(
+                team_id=self.team_id,
+                user_id=self.user_id,
+                conversation_id=self.conversation.id,
+                stream_key=get_conversation_stream_key(self.conversation.id),
+                trace_id=str(uuid4()),
+                # message=None and resume_payload=None signal a pure reconnect.
+            )
+
+            results = [chunk async for chunk in self.manager.astream(ChatAgentWorkflow, workflow_inputs)]
+
+            self.assertEqual(results, [])
+            mock_stream.assert_not_called()
+            mock_start.assert_not_called()
+
+    async def test_astream_starts_workflow_for_new_message_when_idle(self):
+        """IDLE + a new human message is the normal "start a new turn" path —
+        still routes through ``start_workflow``."""
+        self.conversation.status = Conversation.Status.IDLE
+
+        async def mock_start_gen():
+            yield ("message", {"content": "fresh"})
+
+        with (
+            patch.object(self.manager, "stream_conversation") as mock_stream,
+            patch.object(self.manager, "start_workflow") as mock_start,
+        ):
+            mock_start.return_value = mock_start_gen()
+
+            workflow_inputs = ChatAgentWorkflowInputs(
+                team_id=self.team_id,
+                user_id=self.user_id,
+                conversation_id=self.conversation.id,
+                stream_key=get_conversation_stream_key(self.conversation.id),
+                trace_id=str(uuid4()),
+                message=HumanMessage(content="hello").model_dump(),
+            )
+
+            results = [chunk async for chunk in self.manager.astream(ChatAgentWorkflow, workflow_inputs)]
+
+            self.assertEqual(results, [("message", {"content": "fresh"})])
+            mock_stream.assert_not_called()
+            mock_start.assert_called_once()
+
+    @patch("ee.hogai.core.executor.async_connect")
+    async def test_has_pending_queue_work_with_queued_message(self, mock_connect):
+        with patch("ee.hogai.core.executor.ConversationQueueStore") as mock_queue_store_cls:
+            mock_queue_store = Mock()
+            mock_queue_store.list.return_value = [{"id": "q1", "content": "hi"}]
+            mock_queue_store_cls.return_value = mock_queue_store
+
+            self.assertTrue(await has_pending_queue_work(str(self.conversation.id)))
+            mock_connect.assert_not_called()  # short-circuits before talking to Temporal
+
+    @patch("ee.hogai.core.executor.async_connect")
+    async def test_has_pending_queue_work_with_running_queued_workflow(self, mock_connect):
+        async def queued_workflows():
+            yield Mock(id=f"conversation-{self.conversation.id}-queued-abc")
+
+        mock_client = Mock()
+        mock_client.list_workflows = Mock(return_value=queued_workflows())
+        mock_connect.return_value = mock_client
+
+        with patch("ee.hogai.core.executor.ConversationQueueStore") as mock_queue_store_cls:
+            mock_queue_store = Mock()
+            mock_queue_store.list.return_value = []
+            mock_queue_store_cls.return_value = mock_queue_store
+
+            self.assertTrue(await has_pending_queue_work(str(self.conversation.id)))
+
+    @patch("ee.hogai.core.executor.async_connect")
+    async def test_has_pending_queue_work_returns_false_when_nothing_pending(self, mock_connect):
+        async def empty_workflows():
+            return
+            yield  # pragma: no cover
+
+        mock_client = Mock()
+        mock_client.list_workflows = Mock(return_value=empty_workflows())
+        mock_connect.return_value = mock_client
+
+        with patch("ee.hogai.core.executor.ConversationQueueStore") as mock_queue_store_cls:
+            mock_queue_store = Mock()
+            mock_queue_store.list.return_value = []
+            mock_queue_store_cls.return_value = mock_queue_store
+
+            self.assertFalse(await has_pending_queue_work(str(self.conversation.id)))
+
+    @patch("ee.hogai.core.executor.async_connect")
+    async def test_has_pending_queue_work_tolerates_temporal_failure(self, mock_connect):
+        """If Temporal is unreachable, the helper falls back to ``False``. The
+        executor still serves an empty stream for pure reconnects on IDLE so
+        the client can refresh cleanly; we just won't attempt the Redis-stream
+        recovery path in that degraded case."""
+        mock_connect.side_effect = Exception("temporal down")
+
+        with patch("ee.hogai.core.executor.ConversationQueueStore") as mock_queue_store_cls:
+            mock_queue_store = Mock()
+            mock_queue_store.list.return_value = []
+            mock_queue_store_cls.return_value = mock_queue_store
+
+            self.assertFalse(await has_pending_queue_work(str(self.conversation.id)))
+
     @patch("ee.hogai.core.executor.async_connect")
     async def test_start_workflow_and_stream_connection_error(self, mock_connect):
         """Test error handling when connection fails."""
@@ -104,6 +263,7 @@ class TestAgentExecutor(BaseTest):
             conversation_id=self.conversation.id,
             stream_key=get_conversation_stream_key(self.conversation.id),
             trace_id=str(uuid4()),
+            message=HumanMessage(content="hello").model_dump(),
         )
 
         # Call the method

@@ -389,9 +389,18 @@ class ConversationViewSet(
 
         if has_message and not is_idle and not is_sandbox:
             raise Conflict("Cannot resume streaming with a new message")
-        # If the frontend is trying to resume streaming for a finished conversation, return a conflict error
-        if not has_message and conversation.status == Conversation.Status.IDLE and not has_resume_payload:
-            raise exceptions.ValidationError("Cannot continue streaming from an idle conversation")
+        # A bare reconnect (no message, no resume payload) against an IDLE conversation used to raise
+        # ``Cannot continue streaming from an idle conversation``. It does not now: the executor returns
+        # an empty SSE response, the client closes the stream cleanly and re-syncs via its existing
+        # ``loadConversation`` path. Two recovery paths benefit:
+        #   1. The handoff window between a main workflow completing and a queued workflow starting,
+        #      during which status is briefly IDLE even though more events are about to flow (see
+        #      ``posthog/temporal/ai/chat_agent.py:process_chat_agent_activity`` and the matching
+        #      comment on the ``cancel`` action below). The executor reads the Redis stream so the
+        #      queued workflow's output reaches the client.
+        #   2. Late reconnects that race a clean completion (e.g. the 409-retry path in
+        #      ``maxThreadLogic.tsx`` sleeping past the workflow's last event). Nothing is in flight,
+        #      so the client gets an empty stream and refreshes state rather than seeing a 400.
 
         is_impersonated = is_impersonated_session(request)
 
