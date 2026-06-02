@@ -3,6 +3,7 @@ import { router } from 'kea-router'
 
 import { IconEllipsis } from '@posthog/icons'
 import { LemonButton, LemonMenu, LemonModal, Link } from '@posthog/lemon-ui'
+import type { SubscriptionApi } from '@posthog/products-subscriptions/frontend/generated/api.schemas'
 
 import { DetectiveHog } from 'lib/components/hedgehogs'
 import { ProductIntroduction } from 'lib/components/ProductIntroduction/ProductIntroduction'
@@ -16,7 +17,6 @@ import { sceneConfigurations } from 'scenes/scenes'
 import { Scene, SceneExport } from 'scenes/sceneTypes'
 import { urls } from 'scenes/urls'
 
-import type { SubscriptionApi } from '~/generated/core/api.schemas'
 import { SceneContent } from '~/layout/scenes/components/SceneContent'
 import { SceneTitleSection } from '~/layout/scenes/components/SceneTitleSection'
 import { ProductKey } from '~/queries/schema/schema-general'

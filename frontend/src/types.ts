@@ -5063,7 +5063,7 @@ export type WeekdayType = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'fri
 
 export type SubscriptionResourceType = 'insight' | 'dashboard' | 'ai_prompt'
 
-// TODO: migrate to SubscriptionApi from frontend/src/generated/core/api.schemas.ts.
+// TODO: migrate to SubscriptionApi from @posthog/products-subscriptions/frontend/generated/api.schemas.
 // This hand-written interface predates the generated type and now requires
 // dual-maintenance for every backend field change.
 export interface SubscriptionType {

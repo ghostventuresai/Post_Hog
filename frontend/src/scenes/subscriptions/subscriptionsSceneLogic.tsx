@@ -3,6 +3,16 @@ import { loaders } from 'kea-loaders'
 import { router } from 'kea-router'
 
 import { Sorting } from '@posthog/lemon-ui'
+import {
+    subscriptionsList,
+    subscriptionsTestDeliveryCreate,
+} from '@posthog/products-subscriptions/frontend/generated/api'
+import {
+    SubscriptionsListResourceType,
+    TargetTypeEnumApi,
+    type PaginatedSubscriptionListApi,
+    type SubscriptionsListTargetType,
+} from '@posthog/products-subscriptions/frontend/generated/api.schemas'
 
 import { runSubscriptionTestDelivery } from 'lib/components/Subscriptions/runSubscriptionTestDelivery'
 import { toggleSubscriptionEnabled } from 'lib/components/Subscriptions/toggleSubscriptionEnabled'
@@ -15,13 +25,6 @@ import { Scene } from 'scenes/sceneTypes'
 import { urls } from 'scenes/urls'
 import { userLogic } from 'scenes/userLogic'
 
-import { subscriptionsList, subscriptionsTestDeliveryCreate } from '~/generated/core/api'
-import {
-    SubscriptionsListResourceType,
-    TargetTypeEnumApi,
-    type PaginatedSubscriptionListApi,
-    type SubscriptionsListTargetType,
-} from '~/generated/core/api.schemas'
 import { Breadcrumb } from '~/types'
 
 import type { subscriptionsSceneLogicType } from './subscriptionsSceneLogicType'
