@@ -32,6 +32,7 @@ class AccessMethod(StrEnum):
 
 class Product(StrEnum):
     API = "api"
+    AUTORESEARCH = "autoresearch"
     BATCH_EXPORT = "batch_export"
     COHORTS = "cohorts"
     CONVERSATIONS = "conversations"

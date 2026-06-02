@@ -258,6 +258,7 @@ export interface PatchedTaskAutomationApi {
  * `support_queue` - Support Queue
  * `session_summaries` - Session Summaries
  * `signal_report` - Signal Report
+ * `autoresearch` - Autoresearch
  * `signals_scout` - Signals Scout
  */
 export type OriginProductEnumApi = (typeof OriginProductEnumApi)[keyof typeof OriginProductEnumApi]
@@ -271,6 +272,7 @@ export const OriginProductEnumApi = {
     SupportQueue: 'support_queue',
     SessionSummaries: 'session_summaries',
     SignalReport: 'signal_report',
+    Autoresearch: 'autoresearch',
     SignalsScout: 'signals_scout',
 } as const
 
@@ -313,6 +315,7 @@ export interface TaskApi {
   * `support_queue` - Support Queue
   * `session_summaries` - Session Summaries
   * `signal_report` - Signal Report
+  * `autoresearch` - Autoresearch
   * `signals_scout` - Signals Scout */
     origin_product?: OriginProductEnumApi
     /**
@@ -395,6 +398,7 @@ export interface PatchedTaskApi {
   * `support_queue` - Support Queue
   * `session_summaries` - Session Summaries
   * `signal_report` - Signal Report
+  * `autoresearch` - Autoresearch
   * `signals_scout` - Signals Scout */
     origin_product?: OriginProductEnumApi
     /**

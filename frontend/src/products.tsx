@@ -78,6 +78,9 @@ export const productScenes: Record<string, () => Promise<any>> = {
         import('../../products/ai_observability/frontend/clusters/AIObservabilityClustersScene'),
     AIObservabilityCluster: () =>
         import('../../products/ai_observability/frontend/clusters/AIObservabilityClusterScene'),
+    Autoresearch: () => import('../../products/autoresearch/frontend/AutoresearchScene'),
+    AutoresearchNew: () => import('../../products/autoresearch/frontend/AutoresearchNewScene'),
+    AutoresearchPipeline: () => import('../../products/autoresearch/frontend/AutoresearchPipelineScene'),
     BusinessKnowledge: () => import('../../products/business_knowledge/frontend/scenes/BusinessKnowledgeScene'),
     Transformations: () => import('../../frontend/src/scenes/data-pipelines/TransformationsScene'),
     EventFiltering: () => import('../../frontend/src/scenes/data-pipelines/event-filtering/EventFilterScene'),
@@ -194,6 +197,9 @@ export const productRoutes: Record<string, [string, string]> = {
     '/prompt-management/prompts/:name': ['AIObservabilityPrompt', 'aiObservabilityPrompt'],
     '/prompt-management/skills': ['AIObservabilitySkills', 'aiObservabilitySkills'],
     '/prompt-management/skills/:name': ['AIObservabilitySkill', 'aiObservabilitySkill'],
+    '/autoresearch': ['Autoresearch', 'autoresearch'],
+    '/autoresearch/new': ['AutoresearchNew', 'autoresearchNew'],
+    '/autoresearch/:id': ['AutoresearchPipeline', 'autoresearchPipeline'],
     '/business-knowledge': ['BusinessKnowledge', 'businessKnowledge'],
     '/transformations': ['Transformations', 'transformations'],
     '/event-filtering': ['EventFiltering', 'eventFiltering'],
@@ -534,6 +540,14 @@ export const productConfiguration: Record<string, any> = {
         layout: 'app-container',
         iconType: 'llm_clusters',
     },
+    Autoresearch: {
+        name: 'Autoresearch',
+        projectBased: true,
+        description: 'Automatically find the best model to predict user behavior and score your users daily.',
+        iconType: 'experiment',
+    },
+    AutoresearchNew: { name: 'New prediction', projectBased: true },
+    AutoresearchPipeline: { name: 'Autoresearch pipeline', projectBased: true },
     BusinessKnowledge: {
         name: 'Business knowledge',
         projectBased: true,
@@ -871,6 +885,9 @@ export const productUrls = {
         runId ? `/ai-observability/clusters/${encodeURIComponent(runId)}` : '/ai-observability/clusters',
     aiObservabilityCluster: (runId: string, clusterId: number | string): string =>
         `/ai-observability/clusters/${encodeURIComponent(runId)}/${clusterId}`,
+    autoresearch: (): string => '/autoresearch',
+    autoresearchNew: (): string => '/autoresearch/new',
+    autoresearchPipeline: (id: string): string => `/autoresearch/${id}`,
     businessKnowledge: (): string => '/business-knowledge',
     transformations: (): string => '/transformations',
     eventFiltering: (): string => '/event-filtering',
@@ -1519,6 +1536,18 @@ export const getTreeItemsNew = (): FileSystemImport[] => [
 
 /** This const is auto-generated, as is the whole file */
 export const getTreeItemsProducts = (): FileSystemImport[] => [
+    {
+        path: 'Autoresearch',
+        intents: [ProductKey.AUTORESEARCH],
+        category: ProductItemCategory.UNRELEASED,
+        type: 'autoresearch',
+        href: urls.autoresearch(),
+        flag: FEATURE_FLAGS.AUTORESEARCH,
+        iconType: 'experiment',
+        tags: ['alpha'],
+        sceneKey: 'Autoresearch',
+        sceneKeys: ['Autoresearch', 'AutoresearchNew', 'AutoresearchPipeline'],
+    },
     {
         path: 'Clusters',
         intents: [ProductKey.LLM_CLUSTERS],

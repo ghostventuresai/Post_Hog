@@ -57,6 +57,13 @@
             "intents": ["llm_prompts"]
         },
         {
+            "path": "Autoresearch",
+            "category": "Unreleased",
+            "iconType": "experiment",
+            "type": "autoresearch",
+            "intents": ["autoresearch"]
+        },
+        {
             "path": "Web scripts",
             "category": "Tools",
             "iconType": "data_pipeline",

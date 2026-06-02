@@ -1,0 +1,31 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+        "horizon_days": {
+            "default": 7,
+            "description": "Predict whether the target event occurs within this many days.",
+            "maximum": 365,
+            "minimum": 1,
+            "type": "number"
+        },
+        "inference_population": {
+            "description": "Population filter for daily scoring. Defaults to training_population if not provided."
+        },
+        "target_event": {
+            "description": "Event name to predict, e.g. '$pageview'. Must exist in the team's event schema.",
+            "type": "string"
+        },
+        "training_lookback_days": {
+            "default": 180,
+            "description": "How far back to look for training examples. Default: 180.",
+            "maximum": 730,
+            "minimum": 7,
+            "type": "number"
+        },
+        "training_population": {
+            "description": "Population filter for training examples. Use {} for all identified users."
+        }
+    },
+    "required": ["target_event"],
+    "type": "object"
+}
