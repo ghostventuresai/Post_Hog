@@ -38,15 +38,17 @@ re-calling the tool will not help.
 ## Required arguments
 
 ```yaml
-content_type: "ai_prompt"            # discriminator — pinned for the lifetime of the sub
-prompt: "..."                         # ≤4000 chars; what the LLM should report on
+prompt: "..."                         # ≤4000 chars; setting this (with no insight/dashboard) makes it an AI sub → resource_type "ai_prompt"
 target_type: "email" | "slack"        # webhook is rejected for AI subs
 target_value: "..."                   # comma-separated emails, or "<channel_id>|<channel_name>"
 frequency: "daily" | "weekly" | "monthly" | "yearly"
 interval: 1                            # 1 = every tick; 2 = every other tick; etc.
-start_date: "2026-09-15T09:00:00Z"   # first delivery (must be in the future), also defines time-of-day
+start_date: "2026-09-15T09:00:00Z"   # anchors the recurrence + time-of-day; need not be in the future — the scheduler delivers the next occurrence
 title: "..."                          # display name in the subscriptions list
 ```
+
+There is no `content_type`/`resource_type` argument to send — the kind is **derived**
+from which field you set (`prompt` ⇒ AI report) and returned as the read-only `resource_type`.
 
 ## Optional arguments
 
@@ -77,7 +79,6 @@ returns). Build it in three steps:
 ### Weekly Monday-morning AI summary by email
 
 ```yaml
-content_type: ai_prompt
 prompt: 'Top events week over week, with the biggest drops and any new failure modes called out.'
 target_type: email
 target_value: founders@acme.example
@@ -91,7 +92,6 @@ title: 'Weekly product pulse'
 ### Daily Slack report at 9am
 
 ```yaml
-content_type: ai_prompt
 prompt: "Yesterday's sign-ups, where they came from, and any errors they hit during onboarding."
 target_type: slack
 target_value: 'C0123456789|growth-updates' # <channel_id>|<channel_name>, name has no leading #
@@ -104,8 +104,9 @@ title: 'Daily onboarding watch'
 
 ## Pitfalls
 
-- **`content_type` is immutable.** You can't flip an insight or dashboard sub
-  into an AI sub after the fact, and vice versa. Pick the right kind at create time.
+- **The kind is immutable.** It's derived from which relation is set, so you can't flip an
+  insight or dashboard sub into an AI sub after the fact (or vice versa) — a PATCH that adds a
+  `prompt` to an insight sub is rejected. Pick the right kind at create time.
 - **Re-enabling a previously auto-disabled AI sub** requires either a valid `prompt`
   already persisted on the row, or a new `prompt` in the PATCH body — bare
   `{"enabled": true}` is rejected until the underlying prompt issue is fixed.
@@ -125,7 +126,7 @@ title: 'Daily onboarding watch'
 
 ## After it lands
 
-`subscriptions-list` will return the new row. Confirm `content_type: "ai_prompt"`,
+`subscriptions-list` will return the new row. Confirm `resource_type: "ai_prompt"`,
 `enabled: true`, `next_delivery_date` is in the future, and `prompt` matches what
 you sent. The first scheduled tick will run the planner → HogQL → synthesis
 pipeline and email/Slack the rendered markdown.

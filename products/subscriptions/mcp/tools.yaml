@@ -23,22 +23,23 @@ tools:
             idempotent: false
         title: Create subscription
         description: >
-            Create a recurring subscription. Three flavours:
+            Create a recurring subscription. The kind is inferred from which field you populate and
+            returned as the read-only `resource_type`:
 
-            (1) `content_type: "insight"` — schedule periodic snapshots of one insight. Requires `insight`.
+            (1) set `insight` — schedule periodic snapshots of one insight (`resource_type: "insight"`).
 
-            (2) `content_type: "dashboard"` — schedule periodic snapshots of one dashboard. Requires `dashboard`
-            and `dashboard_export_insights` (the subset of the dashboard's insights to include, max 6).
+            (2) set `dashboard` and `dashboard_export_insights` (the subset of the dashboard's insights to
+            include, max 6) — schedule periodic snapshots of one dashboard (`resource_type: "dashboard"`).
 
-            (3) `content_type: "ai_prompt"` — schedule a recurring LLM-generated report from a free-text prompt.
-            Requires `prompt` (≤4000 chars). Available on PostHog Cloud (self-hosted production is not eligible)
-            once the organization has approved AI data processing and AI subscriptions are enabled for it;
-            otherwise create is rejected with a 400.
+            (3) set `prompt` (≤4000 chars, with no insight or dashboard) — schedule a recurring LLM-generated
+            report (`resource_type: "ai_prompt"`). Available on PostHog Cloud (self-hosted production is not
+            eligible) once the organization has approved AI data processing and AI subscriptions are enabled
+            for it; otherwise create is rejected with a 400.
 
-            Delivery is set by `target_type` (`email`, `slack`, or `webhook`); AI-prompt subscriptions support
-            `email` and `slack` only.
+            Delivery is set by `target_type` (`email` or `slack`).
 
-            `content_type` is pinned at create time — switching kind via PATCH is rejected.
+            The kind is fixed at create time — a PATCH that would change the populated relation to a different
+            kind is rejected.
         exclude_params:
             - deleted
             - next_delivery_date
@@ -86,9 +87,9 @@ tools:
         title: Update subscription
         description: >
             Update a subscription's mutable fields (title, target, schedule, prompt for AI subs, `enabled`).
-            `content_type` is immutable after create — rejected with 400 if supplied with a different value.
-            For AI subs, re-enabling a previously auto-disabled sub requires either a valid `prompt` already
-            persisted or one supplied in the PATCH body.
+            The kind (`resource_type`) is fixed at create — a PATCH that would introduce another kind's field
+            (e.g. a `prompt` on an insight sub) is rejected with 400. For AI subs, re-enabling a previously
+            auto-disabled sub requires either a valid `prompt` already persisted or one supplied in the PATCH body.
         exclude_params:
             # Deletion goes through the dedicated subscriptions-delete tool, not a PATCH.
             - deleted
@@ -106,9 +107,6 @@ tools:
         param_overrides:
             id:
                 cast: string-int
-        # The viewset forbids hard DELETE (ForbidDestroyModel); soft-delete is a
-        # PATCH with `{deleted: true}`. soft_delete: true makes the generated handler
-        # issue that PATCH instead of a DELETE that would 405.
         soft_delete: true
     subscriptions-deliveries-list:
         operation: subscriptions_deliveries_list
@@ -160,11 +158,11 @@ tools:
             - subscription:write
         annotations:
             readOnly: false
-            destructive: true
+            destructive: false
             idempotent: false
         title: Send test delivery
         description: >
-            Trigger an immediate test delivery of a subscription to its configured target(s) (email, Slack, or webhook).
+            Trigger an immediate test delivery of a subscription to its configured target(s) (email or Slack).
             Runs the same pipeline as a scheduled delivery but with trigger_type=manual, producing a real delivery
             record you can inspect via subscriptions-deliveries-list / subscriptions-deliveries-retrieve. Returns 202
             Accepted once the delivery workflow is queued; poll subscriptions-deliveries-list (newest first) or

@@ -31,6 +31,7 @@ import { GENERATED_TOOLS as queryWrappers } from './query-wrappers'
 import { GENERATED_TOOLS as replay } from './replay'
 import { GENERATED_TOOLS as sdk_doctor } from './sdk_doctor'
 import { GENERATED_TOOLS as signals } from './signals'
+import { GENERATED_TOOLS as subscriptions } from './subscriptions'
 import { GENERATED_TOOLS as surveys } from './surveys'
 import { GENERATED_TOOLS as tracing } from './tracing'
 import { GENERATED_TOOLS as user_interviews } from './user_interviews'
@@ -69,6 +70,7 @@ export const GENERATED_TOOL_MAP: Record<string, () => ToolBase<ZodObjectAny>> = 
     ...replay,
     ...sdk_doctor,
     ...signals,
+    ...subscriptions,
     ...surveys,
     ...tracing,
     ...user_interviews,
