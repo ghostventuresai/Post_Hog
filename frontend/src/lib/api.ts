@@ -3530,12 +3530,14 @@ const api = {
             return api.loadPaginatedResults<OrganizationMemberType>(url)
         },
 
-        async listAllForOrg(organizationId: OrganizationType['id']): Promise<OrganizationMemberType[]> {
-            const url = new ApiRequest()
+        async listForOrg(
+            organizationId: OrganizationType['id'],
+            params: { limit?: number; offset?: number } = {}
+        ): Promise<CountedPaginatedResponse<OrganizationMemberType>> {
+            return await new ApiRequest()
                 .organizationMembersForAccount()
-                .withQueryString({ organization_id: organizationId })
-                .assembleFullUrl()
-            return api.loadPaginatedResults<OrganizationMemberType>(url)
+                .withQueryString({ organization_id: organizationId, ...params })
+                .get()
         },
 
         async delete(uuid: OrganizationMemberType['user']['uuid']): Promise<PaginatedResponse<void>> {

@@ -1,4 +1,4 @@
-import { useValues } from 'kea'
+import { useActions, useValues } from 'kea'
 
 import { LemonTable, LemonTableColumns, Link } from '@posthog/lemon-ui'
 
@@ -7,11 +7,12 @@ import { urls } from 'scenes/urls'
 
 import { OrganizationMemberType } from '~/types'
 
-import { accountRelatedUsersLogic } from './accountRelatedUsersLogic'
+import { accountRelatedUsersLogic, PAGE_SIZE } from './accountRelatedUsersLogic'
 
 export function AccountRelatedUsersExpansion({ externalId }: { externalId: string }): JSX.Element {
     const logic = accountRelatedUsersLogic({ externalId })
-    const { members, membersLoading } = useValues(logic)
+    const { membersResponse, membersResponseLoading, page } = useValues(logic)
+    const { setPage } = useActions(logic)
 
     const columns: LemonTableColumns<OrganizationMemberType> = [
         {
@@ -39,15 +40,22 @@ export function AccountRelatedUsersExpansion({ externalId }: { externalId: strin
         <LemonTable<OrganizationMemberType>
             size="small"
             embedded
-            dataSource={members ?? []}
+            dataSource={membersResponse?.results ?? []}
             rowKey="id"
-            loading={membersLoading}
+            loading={membersResponseLoading}
             columns={columns}
-            pagination={{ pageSize: 5, hideOnSinglePage: true }}
+            pagination={{
+                controlled: true,
+                pageSize: PAGE_SIZE,
+                currentPage: page,
+                entryCount: membersResponse?.count ?? 0,
+                onForward: () => setPage(page + 1),
+                onBackward: () => setPage(page - 1),
+            }}
             emptyState={
                 !externalId
                     ? 'This account has no linked organization.'
-                    : members === null
+                    : membersResponse === null
                       ? 'Failed to load related users.'
                       : 'No users related to this account yet.'
             }

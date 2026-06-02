@@ -37,6 +37,7 @@ import products.customer_analytics.backend.api.views as customer_analytics
 import products.data_warehouse.backend.api.fix_hogql as fix_hogql
 import products.mcp_store.backend.presentation.views as mcp_store
 import products.legal_documents.backend.presentation.views as legal_documents
+import products.customer_analytics.backend.api.organization_members as customer_analytics_organization_members
 from products.ai_observability.backend.api import (
     AIObservabilityClusteringRunViewSet,
     AIObservabilityOfflineEvaluationsViewSet,
@@ -751,7 +752,7 @@ organizations_router.register(
 )
 projects_router.register(
     r"organization_members",
-    organization_member.OrganizationMembersForAccountViewSet,
+    customer_analytics_organization_members.OrganizationMembersForAccountViewSet,
     "project_organization_members",
     ["project_id"],
 )

@@ -1,11 +1,11 @@
 import { expectLogic } from 'kea-test-utils'
 
-import api from 'lib/api'
+import api, { CountedPaginatedResponse } from 'lib/api'
 
 import { initKeaTests } from '~/test/init'
 import type { OrganizationMemberType } from '~/types'
 
-import { accountRelatedUsersLogic } from './accountRelatedUsersLogic'
+import { accountRelatedUsersLogic, PAGE_SIZE } from './accountRelatedUsersLogic'
 
 const buildMember = (overrides: Partial<OrganizationMemberType> = {}): OrganizationMemberType =>
     ({
@@ -21,6 +21,16 @@ const buildMember = (overrides: Partial<OrganizationMemberType> = {}): Organizat
         ...overrides,
     }) as OrganizationMemberType
 
+const buildResponse = (
+    members: OrganizationMemberType[],
+    count: number = members.length
+): CountedPaginatedResponse<OrganizationMemberType> => ({
+    results: members,
+    count,
+    next: null,
+    previous: null,
+})
+
 describe('accountRelatedUsersLogic', () => {
     let logic: ReturnType<typeof accountRelatedUsersLogic.build>
 
@@ -33,24 +43,39 @@ describe('accountRelatedUsersLogic', () => {
         logic?.unmount()
     })
 
-    it('loads the organization members for the account external id', async () => {
-        const members = [buildMember()]
-        const listAllForOrg = jest.spyOn(api.organizationMembers, 'listAllForOrg').mockResolvedValue(members)
+    it('loads the first page of organization members for the account external id', async () => {
+        const response = buildResponse([buildMember()], 1)
+        const listForOrg = jest.spyOn(api.organizationMembers, 'listForOrg').mockResolvedValue(response)
 
         logic = accountRelatedUsersLogic({ externalId: 'org-uuid' })
         logic.mount()
 
-        await expectLogic(logic).toFinishAllListeners().toMatchValues({ members })
-        expect(listAllForOrg).toHaveBeenCalledWith('org-uuid')
+        await expectLogic(logic).toFinishAllListeners().toMatchValues({ membersResponse: response })
+        expect(listForOrg).toHaveBeenCalledWith('org-uuid', { limit: PAGE_SIZE, offset: 0 })
     })
 
     it('does not load when the account has no external id', async () => {
-        const listAllForOrg = jest.spyOn(api.organizationMembers, 'listAllForOrg')
+        const listForOrg = jest.spyOn(api.organizationMembers, 'listForOrg')
 
         logic = accountRelatedUsersLogic({ externalId: '' })
         logic.mount()
 
-        await expectLogic(logic).toMatchValues({ members: null })
-        expect(listAllForOrg).not.toHaveBeenCalled()
+        await expectLogic(logic).toMatchValues({ membersResponse: null })
+        expect(listForOrg).not.toHaveBeenCalled()
+    })
+
+    it('reloads the next page when setPage is called', async () => {
+        const listForOrg = jest
+            .spyOn(api.organizationMembers, 'listForOrg')
+            .mockResolvedValue(buildResponse([buildMember()], 7))
+
+        logic = accountRelatedUsersLogic({ externalId: 'org-uuid' })
+        logic.mount()
+        await expectLogic(logic).toFinishAllListeners()
+
+        logic.actions.setPage(2)
+
+        await expectLogic(logic).toFinishAllListeners()
+        expect(listForOrg).toHaveBeenLastCalledWith('org-uuid', { limit: PAGE_SIZE, offset: PAGE_SIZE })
     })
 })

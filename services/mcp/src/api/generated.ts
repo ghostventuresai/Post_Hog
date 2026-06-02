@@ -48375,21 +48375,6 @@ export namespace Schemas {
     offset?: number;
     };
 
-    export type OrganizationMembersListParams = {
-    /**
-     * Number of results to return per page.
-     */
-    limit?: number;
-    /**
-     * The initial index from which to return the results.
-     */
-    offset?: number;
-    /**
-     * Organization to return members for.
-     */
-    organization_id: string;
-    };
-
     export type PersistedFolderListParams = {
     /**
      * Number of results to return per page.
