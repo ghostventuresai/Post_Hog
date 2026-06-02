@@ -138,6 +138,10 @@ from posthog.temporal.session_replay.summarization_sweep import (
     SUMMARIZATION_SWEEP_ACTIVITIES,
     SUMMARIZATION_SWEEP_WORKFLOWS,
 )
+from posthog.temporal.session_replay.surfacing_scoring_sweep import (
+    SURFACING_SCORING_SWEEP_ACTIVITIES,
+    SURFACING_SCORING_SWEEP_WORKFLOWS,
+)
 from posthog.temporal.subscriptions import (
     ACTIVITIES as SUBSCRIPTION_ACTIVITIES,
     WORKFLOWS as SUBSCRIPTION_WORKFLOWS,
@@ -355,6 +359,11 @@ _task_queue_specs = [
         settings.DEPLOYMENTS_TASK_QUEUE,
         DEPLOYMENTS_WORKFLOWS,
         DEPLOYMENTS_ACTIVITIES,
+    ),
+    (
+        settings.SURFACING_SCORING_SWEEP_TASK_QUEUE,
+        SURFACING_SCORING_SWEEP_WORKFLOWS,
+        SURFACING_SCORING_SWEEP_ACTIVITIES,
     ),
 ]
 
@@ -599,6 +608,11 @@ class Command(BaseCommand):
                 combined_metrics_server_enabled=not disable_combined_metrics_server,
             )
             logger.info("Starting Temporal Worker")
+
+            if task_queue == settings.SURFACING_SCORING_SWEEP_TASK_QUEUE:
+                from posthog.temporal.session_replay.surfacing_scoring_sweep.scorer import warmup
+
+                warmup()
 
             worker = runner.run(
                 create_worker(
