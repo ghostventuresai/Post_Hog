@@ -169,6 +169,7 @@ export type SettingId =
     | 'js-snippet-version'
     | 'logs'
     | 'logs-alerting'
+    | 'logs-distinct-id-attribute-key'
     | 'logs-drop-rules'
     | 'logs-json-parse'
     | 'logs-pii-scrub'
