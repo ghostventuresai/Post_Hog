@@ -32,7 +32,7 @@ export function subscriptionEditHref(sub: SubscriptionApi): string | null {
     if (sub.dashboard) {
         return urls.dashboardSubscription(sub.dashboard, String(sub.id))
     }
-    if (sub.content_type === 'ai_prompt') {
+    if (sub.resource_type === 'ai_prompt') {
         return urls.subscriptionEdit(sub.id)
     }
     return null
@@ -117,7 +117,7 @@ function buildColumns(renderRowActions: (sub: SubscriptionApi) => JSX.Element): 
             key: 'type',
             width: '7rem',
             render: (_value: unknown, sub: SubscriptionApi) => {
-                if (sub.content_type === 'ai_prompt') {
+                if (sub.resource_type === 'ai_prompt') {
                     return (
                         <LemonTag type="default" size="small" icon={<IconAI />}>
                             AI report
@@ -151,7 +151,7 @@ function buildColumns(renderRowActions: (sub: SubscriptionApi) => JSX.Element): 
             render: (_value: unknown, sub: SubscriptionApi) => {
                 // AI subs have no insight/dashboard FK — surface the prompt instead so the row
                 // reads as intentional ("this is what the AI was asked to do") rather than empty.
-                if (sub.content_type === 'ai_prompt') {
+                if (sub.resource_type === 'ai_prompt') {
                     const prompt = sub.prompt?.trim()
                     if (!prompt) {
                         return <span className="text-secondary">—</span>

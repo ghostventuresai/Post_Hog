@@ -85,11 +85,11 @@ export interface PaginatedSubscriptionDeliveryListApi {
 /**
  * * `insight` - Insight
  * `dashboard` - Dashboard
- * `ai_prompt` - Ai Prompt
+ * `ai_prompt` - AI prompt
  */
-export type ContentTypeEnumApi = (typeof ContentTypeEnumApi)[keyof typeof ContentTypeEnumApi]
+export type ResourceTypeEnumApi = (typeof ResourceTypeEnumApi)[keyof typeof ResourceTypeEnumApi]
 
-export const ContentTypeEnumApi = {
+export const ResourceTypeEnumApi = {
     Insight: 'insight',
     Dashboard: 'dashboard',
     AiPrompt: 'ai_prompt',
@@ -206,12 +206,12 @@ export interface UserBasicApi {
  */
 export interface SubscriptionApi {
     readonly id: number
-    /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Cannot be changed after creation.
+    /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Read-only — derived from the populated target (insight → insight, dashboard → dashboard, prompt → ai_prompt).
 
   * `insight` - Insight
   * `dashboard` - Dashboard
-  * `ai_prompt` - Ai Prompt */
-    content_type?: ContentTypeEnumApi
+  * `ai_prompt` - AI prompt */
+    readonly resource_type: ResourceTypeEnumApi
     /**
      * Dashboard ID to subscribe to (mutually exclusive with insight on create).
      * @nullable
@@ -229,7 +229,7 @@ export interface SubscriptionApi {
     /** List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6. */
     dashboard_export_insights?: number[]
     /**
-     * Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters.
+     * Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters.
      * @nullable
      */
     prompt?: string | null
@@ -347,12 +347,12 @@ export const PatchedSubscriptionApiByweekdayItem = {
  */
 export interface PatchedSubscriptionApi {
     readonly id?: number
-    /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Cannot be changed after creation.
+    /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Read-only — derived from the populated target (insight → insight, dashboard → dashboard, prompt → ai_prompt).
 
   * `insight` - Insight
   * `dashboard` - Dashboard
-  * `ai_prompt` - Ai Prompt */
-    content_type?: ContentTypeEnumApi
+  * `ai_prompt` - AI prompt */
+    readonly resource_type?: ResourceTypeEnumApi
     /**
      * Dashboard ID to subscribe to (mutually exclusive with insight on create).
      * @nullable
@@ -370,7 +370,7 @@ export interface PatchedSubscriptionApi {
     /** List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6. */
     dashboard_export_insights?: number[]
     /**
-     * Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters.
+     * Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters.
      * @nullable
      */
     prompt?: string | null

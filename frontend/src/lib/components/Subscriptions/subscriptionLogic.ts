@@ -19,10 +19,10 @@ import { SubscriptionBaseProps, urlForSubscription } from './utils'
 const AI_PROMPT_MAX_LENGTH = 4000
 
 function validatePrompt(
-    content_type: SubscriptionType['content_type'],
+    resource_type: SubscriptionType['resource_type'],
     prompt: string | undefined
 ): string | undefined {
-    if (content_type !== 'ai_prompt') {
+    if (resource_type !== 'ai_prompt') {
         return undefined
     }
     const trimmedPrompt = prompt?.trim()
@@ -47,7 +47,7 @@ function subscriptionSaveErrorMessage(error: unknown): string {
 }
 
 const NEW_SUBSCRIPTION: Partial<SubscriptionType> = {
-    content_type: 'insight',
+    resource_type: 'insight',
     frequency: 'weekly',
     interval: 1,
     start_date: dayjs().hour(9).minute(0).second(0).toISOString(),
@@ -134,7 +134,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                 title,
                 start_date,
                 dashboard_export_insights,
-                content_type,
+                resource_type,
                 prompt,
             }) => ({
                 frequency: !frequency ? 'You need to set a schedule frequency' : undefined,
@@ -144,7 +144,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                 target_type: !['slack', 'email', 'webhook'].includes(target_type)
                     ? 'Unsupported target type'
                     : undefined,
-                prompt: validatePrompt(content_type, prompt),
+                prompt: validatePrompt(resource_type, prompt),
                 target_value: !target_value
                     ? 'This field is required.'
                     : target_type == 'email'
@@ -168,7 +168,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
                         : undefined,
             }),
             submit: async (subscription, breakpoint) => {
-                const isAi = subscription.content_type === 'ai_prompt'
+                const isAi = subscription.resource_type === 'ai_prompt'
                 const insightId = !isAi && props.insightShortId ? await getInsightId(props.insightShortId) : undefined
 
                 const payload = {
@@ -344,7 +344,7 @@ export const subscriptionLogic = kea<subscriptionLogicType>([
             actions.loadSubscription()
         },
         '/subscriptions/new': (_, searchParams) => {
-            actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION, content_type: 'ai_prompt' })
+            actions.loadSubscriptionSuccess({ ...NEW_SUBSCRIPTION, resource_type: 'ai_prompt' })
             if (searchParams.target_type) {
                 actions.setSubscriptionValue('target_type', searchParams.target_type)
             }

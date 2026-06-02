@@ -88,7 +88,7 @@ class TestSubscriptionTemporal(APILicensedTest):
         data = response.json()
         assert data == {
             "id": data["id"],
-            "content_type": "insight",
+            "resource_type": "insight",
             "dashboard": None,
             "insight": self.insight.id,
             "insight_short_id": self.insight.short_id,
@@ -1915,7 +1915,6 @@ class TestAISubscriptionAPI(APILicensedTest):
 
     def _make_ai_payload(self, **overrides):
         payload = {
-            "content_type": "ai_prompt",
             "prompt": "What are the biggest event gains week-over-week?",
             "target_type": "email",
             "target_value": "ai@posthog.com",
@@ -1942,7 +1941,7 @@ class TestAISubscriptionAPI(APILicensedTest):
         )
         assert response.status_code == status.HTTP_201_CREATED, response.json()
         data = response.json()
-        assert data["content_type"] == "ai_prompt"
+        assert data["resource_type"] == "ai_prompt"
         assert data["prompt"] == "What are the biggest event gains week-over-week?"
         assert data["insight"] is None
         assert data["dashboard"] is None
@@ -1957,9 +1956,9 @@ class TestAISubscriptionAPI(APILicensedTest):
         assert response.status_code == status.HTTP_201_CREATED, response.json()
         assert response.json()["prompt"] == "Weekly growth recap"
 
-    def test_create_includes_content_type_in_slo_properties(self, mock_is_cloud, mock_flag, mock_sync):
-        # content_type adoption telemetry rides on the existing subscription-create SLO
-        # rather than a separate capture, so the split lives in one metric/dashboard.
+    def test_create_includes_resource_type_in_slo_properties(self, mock_is_cloud, mock_flag, mock_sync):
+        # resource_type telemetry rides on the existing subscription-create SLO rather than
+        # a separate capture, so the content-kind split lives in one metric/dashboard.
         self._enable_ai()
         self._mock_temporal(mock_sync)
         with patch("ee.api.subscription.slo_operation", wraps=slo_operation) as mock_slo:
@@ -1970,7 +1969,7 @@ class TestAISubscriptionAPI(APILicensedTest):
         assert response.status_code == status.HTTP_201_CREATED, response.json()
         assert mock_slo.call_args is not None, "slo_operation was not called on create"
         properties = mock_slo.call_args.kwargs["properties"]
-        assert properties["content_type"] == "ai_prompt"
+        assert properties["resource_type"] == "ai_prompt"
         assert properties["target_type"] == "email"
         assert properties["subscription_id"] == response.json()["id"]
 
@@ -1984,7 +1983,6 @@ class TestAISubscriptionAPI(APILicensedTest):
         insight = Insight.objects.create(team=self.team, created_by=self.user)
         insight_sub = Subscription.objects.create(
             team=self.team,
-            content_type=Subscription.ContentType.INSIGHT,
             insight=insight,
             target_type="email",
             target_value="insight@posthog.com",
@@ -2076,16 +2074,16 @@ class TestAISubscriptionAPI(APILicensedTest):
         assert update_resp.status_code == status.HTTP_200_OK, update_resp.json()
         assert update_resp.json()["prompt"] == "Show me new error events"
 
-    def test_content_type_is_immutable_after_create(self, mock_is_cloud, mock_flag, mock_sync):
-        # Switching kind would leave stale `insight_id`/`prompt` populated for the
-        # previous kind; the delivery path can't reason about that.
+    def test_resource_type_is_derived_and_read_only(self, mock_is_cloud, mock_flag, mock_sync):
+        # resource_type is derived from the populated target and read-only — a client can
+        # neither set it on create nor change it on update.
         self._enable_ai()
         self._mock_temporal(mock_sync)
         insight = Insight.objects.create(team=self.team, short_id="aiins", name="x")
         create_resp = self.client.post(
             f"/api/projects/{self.team.id}/subscriptions",
             {
-                "content_type": "insight",
+                # resource_type omitted on purpose — derived from the insight target.
                 "insight": insight.id,
                 "target_type": "email",
                 "target_value": "x@posthog.com",
@@ -2096,13 +2094,15 @@ class TestAISubscriptionAPI(APILicensedTest):
             },
         )
         assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.json()
+        assert create_resp.json()["resource_type"] == "insight"
         sub_id = create_resp.json()["id"]
+        # A read-only resource_type in the body is ignored.
         patch_resp = self.client.patch(
             f"/api/projects/{self.team.id}/subscriptions/{sub_id}",
-            {"content_type": "ai_prompt", "prompt": "anything"},
+            {"resource_type": "ai_prompt"},
         )
-        assert patch_resp.status_code == status.HTTP_400_BAD_REQUEST, patch_resp.json()
-        assert "content_type cannot be changed" in str(patch_resp.json()), patch_resp.json()
+        assert patch_resp.status_code == status.HTTP_200_OK, patch_resp.json()
+        assert patch_resp.json()["resource_type"] == "insight"
 
     def test_re_enabling_ai_sub_with_invalid_prompt_is_rejected(self, mock_is_cloud, mock_flag, mock_sync):
         # An auto-disabled AI sub re-enabled via plain PATCH {enabled:true} would

@@ -43,15 +43,15 @@ from posthog.security.url_validation import is_url_allowed
 from posthog.slo.context import SloSpec, slo_operation
 from posthog.slo.types import SloArea, SloOperation
 from posthog.temporal.common.client import sync_connect
-from posthog.temporal.subscriptions.types import ProcessSubscriptionWorkflowInputs, SubscriptionTriggerType
-from posthog.utils import str_to_bool
-
-from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
-from ee.tasks.subscriptions.ai_subscription.spec_generator import (
+from posthog.temporal.subscriptions.ai_subscription.spec_generator import (
     PROMPT_MAX_LENGTH as AI_PROMPT_MAX_LENGTH,
     PromptRejectedError,
     sanitize_prompt,
 )
+from posthog.temporal.subscriptions.types import ProcessSubscriptionWorkflowInputs, SubscriptionTriggerType
+from posthog.utils import str_to_bool
+
+from ee.billing.quota_limiting import QuotaLimitingCaches, QuotaResource, is_team_limited
 from ee.tasks.subscriptions.auto_disable import validate_re_enable
 from ee.tasks.subscriptions.subscription_utils import DEFAULT_MAX_ASSET_COUNT
 
@@ -83,8 +83,6 @@ def _invalidate_summary_quota_cache(organization_id) -> None:
 
 
 def _ai_create_gate_reason(organization) -> Optional[str]:
-    """Human-readable reason why creating an AI subscription should be rejected, or
-    `None` if all gates pass — cloud, org AI-data-processing consent, and the feature flag."""
     if not settings.DEBUG and not is_cloud():
         return "AI subscriptions are only available in PostHog Cloud."
     if not organization.is_ai_data_processing_approved:
@@ -140,12 +138,22 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     )
     insight_short_id = serializers.SerializerMethodField()
     resource_name = serializers.SerializerMethodField()
+    resource_type = serializers.ChoiceField(
+        choices=Subscription.ResourceType.choices,
+        read_only=True,
+        help_text=(
+            "What the subscription delivers: 'insight' (snapshot of one insight), "
+            "'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). "
+            "Read-only — derived from the populated target (insight → insight, "
+            "dashboard → dashboard, prompt → ai_prompt)."
+        ),
+    )
 
     class Meta:
         model = Subscription
         fields = [
             "id",
-            "content_type",
+            "resource_type",
             "dashboard",
             "insight",
             "insight_short_id",
@@ -183,17 +191,10 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             "resource_name",
         ]
         extra_kwargs = {
-            "content_type": {
-                "help_text": (
-                    "What the subscription delivers: 'insight' (snapshot of one insight), "
-                    "'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). "
-                    "Cannot be changed after creation."
-                ),
-            },
             "prompt": {
                 "help_text": (
                     "Free-text prompt that drives the AI-generated report. Required when "
-                    "content_type is 'ai_prompt'. Max 4000 characters."
+                    "resource_type is 'ai_prompt'. Max 4000 characters."
                 ),
             },
             "dashboard": {"help_text": "Dashboard ID to subscribe to (mutually exclusive with insight on create)."},
@@ -231,27 +232,21 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         info = obj.resource_info
         return info.name if info else None
 
-    def _resolve_content_type(self, attrs: dict, existing: Optional[Subscription]) -> str:
-        # `content_type` is pinned at create and immutable after — switching kind mid-life
-        # would strand fields from the previous kind (`insight_id` on an AI sub, `prompt` on
-        # an insight sub) that the delivery path can't reason about.
-        if existing is not None and "content_type" in attrs and attrs["content_type"] != existing.content_type:
-            raise ValidationError(
-                {"content_type": ["content_type cannot be changed after the subscription is created."]}
-            )
+    def _infer_resource_type(self, attrs: dict, existing: Optional[Subscription]) -> str:
+        # resource_type is derived from the populated target — never set by the client — so a
+        # kind can't be switched mid-life (which would strand fields from the previous kind that
+        # the delivery path can't reason about). On update it stays pinned to the existing kind.
         if existing is not None:
-            return existing.content_type
-        # Honour an explicit `content_type`; otherwise infer from the populated FK so callers
-        # that omit it (the original dashboard/insight API contract predates this field) keep
-        # working. Persist the inferred value so `create()` stores the right discriminator —
-        # the model default is INSIGHT, which would mis-classify a dashboard subscription.
-        if "content_type" in attrs:
-            return attrs["content_type"]
-        content_type = (
-            Subscription.ContentType.DASHBOARD if attrs.get("dashboard") else Subscription.ContentType.INSIGHT
-        )
-        attrs["content_type"] = content_type
-        return content_type
+            return existing.resource_type
+        # A present (non-null) prompt marks AI intent, so a malformed AI payload — a stray
+        # insight/dashboard alongside it, or an all-whitespace prompt the CharField trims to
+        # "" — still routes to the AI validator and reports against `prompt`. Valid payloads
+        # only ever populate one target, so this agrees with `derive_resource_type`.
+        if attrs.get("prompt") is not None:
+            return Subscription.ResourceType.AI_PROMPT
+        if attrs.get("dashboard"):
+            return Subscription.ResourceType.DASHBOARD
+        return Subscription.ResourceType.INSIGHT
 
     def _validate_insight_content(self, attrs: dict, existing: Optional[Subscription]) -> None:
         if not (attrs.get("insight") or (existing and existing.insight_id)):
@@ -289,7 +284,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             Subscription.SubscriptionTarget.SLACK,
         ):
             raise ValidationError({"target_type": ["AI subscriptions only support email or slack delivery."]})
-        # Cloud / consent / feature-flag gates fire on create only. `content_type` is pinned,
+        # Cloud / consent / feature-flag gates fire on create only. `resource_type` is derived,
         # so an existing AI sub can't be created by mutation; existing AI subs stay editable
         # (owners can still disable/delete) and the delivery path is the authoritative cost gate.
         if existing is None:
@@ -312,17 +307,17 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         if attrs.get("insight") and attrs["insight"].team.id != self.context["team_id"]:
             raise ValidationError({"insight": ["This insight does not belong to your team."]})
 
-        content_type = self._resolve_content_type(attrs, existing)
-        validate_for_content_type = {
-            Subscription.ContentType.INSIGHT: self._validate_insight_content,
-            Subscription.ContentType.DASHBOARD: self._validate_dashboard_content,
-            Subscription.ContentType.AI_PROMPT: self._validate_ai_content,
-        }.get(content_type)
-        # Fail soft on an unexpected content_type (e.g. a stale DB row) — a 400 is
+        resource_type = self._infer_resource_type(attrs, existing)
+        validate_for_resource_type = {
+            Subscription.ResourceType.INSIGHT: self._validate_insight_content,
+            Subscription.ResourceType.DASHBOARD: self._validate_dashboard_content,
+            Subscription.ResourceType.AI_PROMPT: self._validate_ai_content,
+        }.get(resource_type)
+        # Fail soft on an unexpected resource_type (e.g. a stale DB row) — a 400 is
         # diagnosable, an unhandled KeyError surfaces as a 500.
-        if validate_for_content_type is None:
-            raise ValidationError({"content_type": [f"Unsupported content_type: {content_type}."]})
-        validate_for_content_type(attrs, existing)
+        if validate_for_resource_type is None:
+            raise ValidationError({"resource_type": [f"Unsupported resource_type: {resource_type}."]})
+        validate_for_resource_type(attrs, existing)
 
         self._validate_dashboard_export_subscription(attrs)
 
@@ -347,7 +342,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             # AI subs auto-disable on PromptRejectedError (deleted creator, prompt now
             # fails sanitization). The delivery path will just re-disable on the next
             # tick unless the underlying cause is fixed by this PATCH.
-            if content_type == Subscription.ContentType.AI_PROMPT:
+            if resource_type == Subscription.ResourceType.AI_PROMPT:
                 prompt_after = attrs.get("prompt") if "prompt" in attrs else (existing.prompt if existing else None)
                 created_by_after = existing.created_by if existing else None
                 if created_by_after is None:
@@ -630,8 +625,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                 "byweekday": instance.byweekday,
                 "bysetpos": instance.bysetpos,
                 "count": instance.count,
-                "content_type": instance.content_type,
-                "resource_type": "dashboard" if instance.dashboard_id else "insight" if instance.insight_id else None,
+                "resource_type": instance.resource_type,
                 "dashboard_export_insights_count": len(dashboard_export_insight_ids),
                 "summary_enabled": instance.summary_enabled,
                 "has_summary_prompt_guide": bool(instance.summary_prompt_guide),
@@ -683,12 +677,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
                     "subscription_id": instance.id,
                     "target_type": instance.target_type,
                     "frequency": instance.frequency,
-                    "content_type": instance.content_type,
-                    "resource_type": "dashboard"
-                    if instance.dashboard_id
-                    else "insight"
-                    if instance.insight_id
-                    else None,
+                    "resource_type": instance.resource_type,
                 },
             ):
                 instance = super().update(instance, validated_data)
@@ -827,7 +816,7 @@ class SubscriptionViewSet(TeamAndOrgViewSetMixin, ForbidDestroyModel, viewsets.M
             elif resource_type == "dashboard":
                 queryset = queryset.filter(dashboard_id__isnull=False)
             elif resource_type == "ai_prompt":
-                queryset = queryset.filter(content_type=Subscription.ContentType.AI_PROMPT)
+                queryset = queryset.filter(prompt__isnull=False).exclude(prompt="")
 
             target_type_filter = request_params.get("target_type")
             if target_type_filter:

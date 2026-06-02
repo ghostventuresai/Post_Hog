@@ -93,7 +93,7 @@ export function SubscriptionListItem({
             <div className="flex justify-between flex-auto items-center p-2">
                 <div>
                     <div className={`font-medium ${enabled ? 'text-link' : 'text-muted'}`}>{subscription.title}</div>
-                    {subscription.content_type === 'ai_prompt' && subscription.prompt ? (
+                    {subscription.resource_type === 'ai_prompt' && subscription.prompt ? (
                         <div className="text-sm text-text-3000 italic">
                             {`"${
                                 subscription.prompt.length > PROMPT_PREVIEW_MAX_CHARS

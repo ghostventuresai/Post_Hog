@@ -140,7 +140,7 @@ export interface AiSubscriptionGate {
     /** Org cleared every gate (consent + cloud/debug + flag) needed to author an AI report. */
     aiAllowed: boolean
     /** Show the "What to send" (insight vs AI) toggle — new parent-anchored subs, feature on. */
-    showContentTypeToggle: boolean
+    showResourceTypeToggle: boolean
     /** The AI option in the toggle is selectable (vs greyed with a consent reason). */
     aiOptionEnabled: boolean
     /** Insight-flow hint: feature exists but consent is missing. */
@@ -164,12 +164,12 @@ export interface AiSubscriptionGate {
 export function getAiSubscriptionGate(inputs: AiSubscriptionGateInputs): AiSubscriptionGate {
     const { isAiPrompt, isParentless, isEditing, aiConsentApproved, isCloud, isDebug, aiFlagEnabled } = inputs
     const aiAllowed = aiConsentApproved && (isCloud || isDebug) && aiFlagEnabled
-    const showContentTypeToggle = !isParentless && !isEditing && aiFlagEnabled
+    const showResourceTypeToggle = !isParentless && !isEditing && aiFlagEnabled
     return {
         aiAllowed,
-        showContentTypeToggle,
+        showResourceTypeToggle,
         aiOptionEnabled: aiAllowed,
-        showConsentHint: showContentTypeToggle && !aiAllowed,
+        showConsentHint: showResourceTypeToggle && !aiAllowed,
         showAiFormConsentBanner: isAiPrompt && !isEditing && aiFlagEnabled && !aiAllowed,
         submitBlocked: isAiPrompt && !isEditing && !aiAllowed,
     }

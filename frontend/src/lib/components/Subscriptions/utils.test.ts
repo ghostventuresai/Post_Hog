@@ -72,14 +72,14 @@ describe('getAiSubscriptionGate', () => {
         [
             'flag off hides every AI affordance',
             { aiFlagEnabled: false },
-            { aiAllowed: false, showContentTypeToggle: false, showConsentHint: false, showAiFormConsentBanner: false },
+            { aiAllowed: false, showResourceTypeToggle: false, showConsentHint: false, showAiFormConsentBanner: false },
         ],
         [
             'flag on + consent + cloud fully enables AI',
             {},
             {
                 aiAllowed: true,
-                showContentTypeToggle: true,
+                showResourceTypeToggle: true,
                 aiOptionEnabled: true,
                 showConsentHint: false,
                 submitBlocked: false,
@@ -88,17 +88,17 @@ describe('getAiSubscriptionGate', () => {
         [
             'flag on + no consent greys AI and shows the consent hint (insight flow)',
             { aiConsentApproved: false },
-            { aiAllowed: false, showContentTypeToggle: true, aiOptionEnabled: false, showConsentHint: true },
+            { aiAllowed: false, showResourceTypeToggle: true, aiOptionEnabled: false, showConsentHint: true },
         ],
         [
             'top-level AI form blocks submit and shows the banner when consent is missing',
             { isParentless: true, isAiPrompt: true, aiConsentApproved: false },
-            { showContentTypeToggle: false, showAiFormConsentBanner: true, submitBlocked: true },
+            { showResourceTypeToggle: false, showAiFormConsentBanner: true, submitBlocked: true },
         ],
         [
             'editing an AI sub never blocks, even without consent',
             { isEditing: true, isAiPrompt: true, aiConsentApproved: false },
-            { showAiFormConsentBanner: false, submitBlocked: false, showContentTypeToggle: false },
+            { showAiFormConsentBanner: false, submitBlocked: false, showResourceTypeToggle: false },
         ],
         ['debug mode satisfies the cloud requirement locally', { isCloud: false, isDebug: true }, { aiAllowed: true }],
         [

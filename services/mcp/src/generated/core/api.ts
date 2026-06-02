@@ -283,9 +283,9 @@ export const SubscriptionsListQueryParams = /* @__PURE__ */ zod.object({
     offset: zod.number().optional().describe('The initial index from which to return the results.'),
     ordering: zod.string().optional().describe('Which field to use when ordering the results.'),
     resource_type: zod
-        .enum(['dashboard', 'insight'])
+        .enum(['ai_prompt', 'dashboard', 'insight'])
         .optional()
-        .describe('Filter by subscription resource: insight vs dashboard export.'),
+        .describe('Filter by subscription resource: insight, dashboard export, or AI report.'),
     search: zod.string().optional().describe('A search term.'),
     target_type: zod
         .enum(['email', 'slack', 'webhook'])
@@ -329,6 +329,12 @@ export const SubscriptionsCreateBody = /* @__PURE__ */ zod
             .optional()
             .describe(
                 'List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6.'
+            ),
+        prompt: zod
+            .string()
+            .nullish()
+            .describe(
+                "Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
@@ -453,6 +459,12 @@ export const SubscriptionsPartialUpdateBody = /* @__PURE__ */ zod
             .optional()
             .describe(
                 'List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6.'
+            ),
+        prompt: zod
+            .string()
+            .nullish()
+            .describe(
+                "Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])

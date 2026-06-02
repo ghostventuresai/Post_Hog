@@ -24,13 +24,6 @@ export const subscriptionsCreateBodySummaryPromptGuideMax = 500
 
 export const SubscriptionsCreateBody = /* @__PURE__ */ zod
     .object({
-        content_type: zod
-            .enum(['insight', 'dashboard', 'ai_prompt'])
-            .describe('\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt')
-            .optional()
-            .describe(
-                "What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Cannot be changed after creation.\n\n\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt"
-            ),
         dashboard: zod
             .number()
             .nullish()
@@ -49,7 +42,7 @@ export const SubscriptionsCreateBody = /* @__PURE__ */ zod
             .string()
             .nullish()
             .describe(
-                "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
+                "Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
@@ -143,13 +136,6 @@ export const subscriptionsUpdateBodySummaryPromptGuideMax = 500
 
 export const SubscriptionsUpdateBody = /* @__PURE__ */ zod
     .object({
-        content_type: zod
-            .enum(['insight', 'dashboard', 'ai_prompt'])
-            .describe('\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt')
-            .optional()
-            .describe(
-                "What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Cannot be changed after creation.\n\n\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt"
-            ),
         dashboard: zod
             .number()
             .nullish()
@@ -168,7 +154,7 @@ export const SubscriptionsUpdateBody = /* @__PURE__ */ zod
             .string()
             .nullish()
             .describe(
-                "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
+                "Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])
@@ -262,13 +248,6 @@ export const subscriptionsPartialUpdateBodySummaryPromptGuideMax = 500
 
 export const SubscriptionsPartialUpdateBody = /* @__PURE__ */ zod
     .object({
-        content_type: zod
-            .enum(['insight', 'dashboard', 'ai_prompt'])
-            .describe('\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt')
-            .optional()
-            .describe(
-                "What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Cannot be changed after creation.\n\n\* `insight` - Insight\n\* `dashboard` - Dashboard\n\* `ai_prompt` - Ai Prompt"
-            ),
         dashboard: zod
             .number()
             .nullish()
@@ -287,7 +266,7 @@ export const SubscriptionsPartialUpdateBody = /* @__PURE__ */ zod
             .string()
             .nullish()
             .describe(
-                "Free-text prompt that drives the AI-generated report. Required when content_type is 'ai_prompt'. Max 4000 characters."
+                "Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters."
             ),
         target_type: zod
             .enum(['email', 'slack', 'webhook'])

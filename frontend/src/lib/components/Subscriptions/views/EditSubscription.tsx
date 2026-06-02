@@ -173,7 +173,7 @@ function EditSubscriptionForm({
     const aiSubscriptionsEnabled = useFeatureFlag('SUBSCRIPTION_AI_PROMPT')
 
     const emailDisabled = !preflight?.email_service_available
-    const isAiPrompt = subscription?.content_type === 'ai_prompt'
+    const isAiPrompt = subscription?.resource_type === 'ai_prompt'
     // Parent-less = reached from the top-level /subscriptions page, not the kebab
     // modal on an insight/dashboard. There's nothing to snapshot here, so AI report
     // is the only valid content type — hide the snapshot/AI toggle entirely.
@@ -317,8 +317,8 @@ function EditSubscriptionForm({
                             </LemonField>
                         )}
 
-                        {aiGate.showContentTypeToggle && (
-                            <LemonField name="content_type" label="What to send">
+                        {aiGate.showResourceTypeToggle && (
+                            <LemonField name="resource_type" label="What to send">
                                 {({ value, onChange }) => (
                                     <LemonSegmentedButton
                                         value={value}
