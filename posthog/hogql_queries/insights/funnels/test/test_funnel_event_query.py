@@ -427,3 +427,51 @@ class TestFunnelEventQuery(ClickhouseTestMixin, APIBaseTest):
         funnel_event_query = FunnelEventQuery(context=context).to_query()
         select = format_query(funnel_event_query)
         self.assertIn(f"ifNull(toString(session.{breakdown_property}), '')", select)
+        
+    @parameterized.expand(
+        [
+            (
+                "enabled",
+                [{"regex": r"\/product\/\d+", "alias": "/product/:id"}],
+                True,
+                True,
+                "/product/:id",
+            ),
+            (
+                "disabled",
+                [{"regex": r"\/product\/\d+", "alias": "/product/:id"}],
+                False,
+                False,
+                "/product/:id",
+            ),
+            (
+                "no_filters_configured",
+                [],
+                True,
+                False,
+                "/product/:id",
+            ),
+        ]
+    )
+    def test_funnel_breakdown_path_cleaning(
+        self, _name, path_cleaning_filters, path_cleaning_enabled, expect_cleaning, alias
+    ):
+        self.team.path_cleaning_filters = path_cleaning_filters
+        self.team.save()
+
+        query = FunnelsQuery(
+            series=[EventsNode(event="$pageview"), EventsNode(event="purchase")],
+            breakdownFilter=BreakdownFilter(
+                breakdown="$pathname",
+                breakdown_type=BreakdownType.event,
+                breakdown_path_cleaning=path_cleaning_enabled,
+            ),
+        )
+        context = FunnelQueryContext(query=query, team=self.team)
+        sql = format_query(FunnelEventQuery(context=context).to_query())
+
+        if expect_cleaning:
+            self.assertIn("replaceRegexpAll", sql)
+            self.assertIn(alias, sql)
+        else:
+            self.assertNotIn("replaceRegexpAll", sql)
