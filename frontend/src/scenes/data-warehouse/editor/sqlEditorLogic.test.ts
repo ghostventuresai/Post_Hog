@@ -2,6 +2,7 @@ import { router } from 'kea-router'
 import { expectLogic, partial } from 'kea-test-utils'
 
 import { databaseTableListLogic } from 'scenes/data-management/database/databaseTableListLogic'
+import { consumeInsightStale } from 'scenes/insights/staleInsights'
 import { sceneLogic } from 'scenes/sceneLogic'
 import { teamLogic } from 'scenes/teamLogic'
 import { urls } from 'scenes/urls'
@@ -200,6 +201,10 @@ describe('sqlEditorLogic', () => {
             },
             patch: {
                 '/api/user_home_settings/@me/': [200],
+                '/api/environments/:team_id/insights/:id/': (req) => {
+                    const body = req.body as Partial<QueryBasedInsightModel>
+                    return [200, { ...MOCK_INSIGHT, ...body, result: null }]
+                },
             },
             delete: {
                 '/api/environments/:team_id/query/:id/': [204],
@@ -824,6 +829,33 @@ describe('sqlEditorLogic', () => {
 
             expect(logic.values.activeTab?.name).toEqual('Untitled')
             expect(logic.values.activeTab?.description).toEqual('')
+        })
+    })
+
+    describe('updateInsight stale flag', () => {
+        it('marks the insight stale so the insight view forces a fresh recompute', async () => {
+            logic = sqlEditorLogic({
+                tabId: TAB_ID,
+                monaco: createMockMonaco(),
+                editor: createMockEditor(),
+            })
+            logic.mount()
+            editorRootLogic = editorSceneLogic({ tabId: TAB_ID })
+            editorRootLogic.mount()
+
+            router.actions.push(urls.sqlEditor(), { open_insight: MOCK_INSIGHT_SHORT_ID })
+            await expectLogic(logic)
+                .toDispatchActions(['editInsight', 'createTab', 'updateTab'])
+                .toMatchValues({ editingInsight: partial({ short_id: MOCK_INSIGHT_SHORT_ID }) })
+
+            logic.actions.updateInsight()
+            await expectLogic(logic).toFinishAllListeners()
+
+            // The PATCH changed the query, so the server's cached result is stale. The editor
+            // must flag the insight so its view forces a recompute instead of rendering the
+            // pre-edit cached result returned by refresh=async. consume returns true once.
+            expect(consumeInsightStale(MOCK_INSIGHT_SHORT_ID)).toBe(true)
+            expect(consumeInsightStale(MOCK_INSIGHT_SHORT_ID)).toBe(false)
         })
     })
 

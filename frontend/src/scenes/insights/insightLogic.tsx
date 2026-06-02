@@ -42,6 +42,8 @@ import { dashboardsModel } from '~/models/dashboardsModel'
 import { groupsModel } from '~/models/groupsModel'
 import { insightsModel } from '~/models/insightsModel'
 import { tagsModel } from '~/models/tagsModel'
+import { dataNodeLogic } from '~/queries/nodes/DataNode/dataNodeLogic'
+import { insightVizDataNodeKey } from '~/queries/nodes/InsightViz/InsightViz'
 import { DashboardFilter, HogQLVariable, Node, TileFilters } from '~/queries/schema/schema-general'
 import {
     convertDataTableNodeToDataVisualizationNode,
@@ -53,6 +55,7 @@ import {
     isStickinessQuery,
     isTrendsQuery,
     isValidQueryForExperiment,
+    shouldQueryBeAsync,
 } from '~/queries/utils'
 import {
     AccessControlLevel,
@@ -67,6 +70,7 @@ import {
 import { teamLogic } from '../teamLogic'
 import { insightDataLogic } from './insightDataLogic'
 import type { insightLogicType } from './insightLogicType'
+import { consumeInsightStale } from './staleInsights'
 import { getInsightId } from './utils'
 import { insightsApi } from './utils/api'
 
@@ -541,6 +545,24 @@ export const insightLogic: LogicWrapper<insightLogicType> = kea<insightLogicType
         ],
     }),
     listeners(({ actions, values, props }) => ({
+        loadInsightSuccess: ({ insight }) => {
+            // If the query was just edited elsewhere (e.g. the SQL editor), the server's cached
+            // result is stale. Force the insight's data node to recompute the current query so the
+            // view shows fresh results without a manual reload. The data node loads independently
+            // of this insight GET, so forcing the GET isn't enough — we force the node directly,
+            // the same way cohortEditLogic refreshes its data after a save.
+            //
+            // The data node is reliably mounted by now: the GET takes a network round-trip plus a
+            // 100ms breakpoint, while the component tree (which mounts the node) renders on scene
+            // entry. If it somehow isn't, the flag stays consumed and the next load won't force —
+            // acceptable since the recompute is a freshness nicety, not correctness.
+            if (insight.short_id && insight.query && consumeInsightStale(insight.short_id)) {
+                const source = isNodeWithSource(insight.query) ? insight.query.source : insight.query
+                dataNodeLogic
+                    .findMounted({ key: insightVizDataNodeKey(props) })
+                    ?.actions.loadData(shouldQueryBeAsync(source) ? 'force_async' : 'force_blocking', undefined, source)
+            }
+        },
         saveInsight: async ({ redirectToViewMode, folder }) => {
             const insightNumericId =
                 values.insight.id || (values.insight.short_id ? await getInsightId(values.insight.short_id) : undefined)
