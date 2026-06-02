@@ -32,6 +32,7 @@ from .temporal.process_task.utils import (
     RunSource,
     RunState,
     RuntimeAdapter,
+    SandboxRuntime,
     get_reasoning_effort_error,
     parse_run_state,
     resolve_user_github_integration_for_task,
@@ -951,6 +952,7 @@ class TaskRunCreateRequestSerializer(serializers.Serializer):
     RUN_SOURCE_CHOICES = [source.value for source in RunSource]
     RUNTIME_ADAPTER_CHOICES = [adapter.value for adapter in RuntimeAdapter]
     REASONING_EFFORT_CHOICES = [effort.value for effort in PUBLIC_REASONING_EFFORTS]
+    SANDBOX_RUNTIME_CHOICES = [runtime.value for runtime in SandboxRuntime]
 
     mode = serializers.ChoiceField(
         choices=["interactive", "background"],
@@ -1044,6 +1046,13 @@ class TaskRunCreateRequestSerializer(serializers.Serializer):
             "Codex runtimes accept 'auto', 'read-only', and 'full-access'."
         ),
     )
+    sandbox_runtime = serializers.ChoiceField(
+        choices=SANDBOX_RUNTIME_CHOICES,
+        required=False,
+        default=None,
+        allow_null=True,
+        help_text="Optional override for the sandbox runtime. Leave unset for the default.",
+    )
 
     def validate(self, attrs):
         errors: dict[str, str] = {}
@@ -1107,6 +1116,7 @@ class TaskRunBootstrapCreateRequestSerializer(serializers.Serializer):
     RUN_SOURCE_CHOICES = [source.value for source in RunSource]
     RUNTIME_ADAPTER_CHOICES = [adapter.value for adapter in RuntimeAdapter]
     REASONING_EFFORT_CHOICES = [effort.value for effort in PUBLIC_REASONING_EFFORTS]
+    SANDBOX_RUNTIME_CHOICES = [runtime.value for runtime in SandboxRuntime]
 
     environment = serializers.ChoiceField(
         choices=[environment.value for environment in TaskRun.Environment],
@@ -1184,6 +1194,13 @@ class TaskRunBootstrapCreateRequestSerializer(serializers.Serializer):
             "presets like 'plan'. Codex runtimes accept native Codex modes like 'auto' and "
             "'read-only'."
         ),
+    )
+    sandbox_runtime = serializers.ChoiceField(
+        choices=SANDBOX_RUNTIME_CHOICES,
+        required=False,
+        default=None,
+        allow_null=True,
+        help_text="Optional override for the sandbox runtime. Leave unset for the default.",
     )
 
     def validate(self, attrs):

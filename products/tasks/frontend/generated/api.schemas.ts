@@ -532,6 +532,15 @@ export const ClaudeTaskRunCreateSchemaInitialPermissionModeEnumApi = {
 } as const
 
 /**
+ * * `posthog` - posthog
+ */
+export type SandboxRuntimeEnumApi = (typeof SandboxRuntimeEnumApi)[keyof typeof SandboxRuntimeEnumApi]
+
+export const SandboxRuntimeEnumApi = {
+    Posthog: 'posthog',
+} as const
+
+/**
  * Request body for creating a new task run
  */
 export interface ClaudeTaskRunCreateSchemaApi {
@@ -590,6 +599,10 @@ export interface ClaudeTaskRunCreateSchemaApi {
   * `bypassPermissions` - bypassPermissions
   * `auto` - auto */
     initial_permission_mode?: ClaudeTaskRunCreateSchemaInitialPermissionModeEnumApi
+    /** Optional override for the sandbox runtime. Leave unset for the default.
+
+  * `posthog` - posthog */
+    sandbox_runtime?: SandboxRuntimeEnumApi | null
 }
 
 /**
@@ -672,6 +685,10 @@ export interface CodexTaskRunCreateSchemaApi {
   * `read-only` - read-only
   * `full-access` - full-access */
     initial_permission_mode?: CodexTaskRunCreateSchemaInitialPermissionModeEnumApi
+    /** Optional override for the sandbox runtime. Leave unset for the default.
+
+  * `posthog` - posthog */
+    sandbox_runtime?: SandboxRuntimeEnumApi | null
 }
 
 export interface TaskRunResumeRequestSchemaApi {
@@ -1081,6 +1098,10 @@ export interface TaskRunBootstrapCreateRequestApi {
   * `read-only` - read-only
   * `full-access` - full-access */
     initial_permission_mode?: TaskRunBootstrapCreateRequestInitialPermissionModeEnumApi
+    /** Optional override for the sandbox runtime. Leave unset for the default.
+
+  * `posthog` - posthog */
+    sandbox_runtime?: SandboxRuntimeEnumApi | null
 }
 
 /**

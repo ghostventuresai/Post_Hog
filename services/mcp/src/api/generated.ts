@@ -10434,6 +10434,16 @@ export namespace Schemas {
     } as const;
 
     /**
+     * * `posthog` - posthog
+     */
+    export type SandboxRuntimeEnum = typeof SandboxRuntimeEnum[keyof typeof SandboxRuntimeEnum];
+
+
+    export const SandboxRuntimeEnum = {
+      Posthog: 'posthog',
+    } as const;
+
+    /**
      * Request body for creating a new task run
      */
     export interface ClaudeTaskRunCreateSchema {
@@ -10492,6 +10502,10 @@ export namespace Schemas {
       * `bypassPermissions` - bypassPermissions
       * `auto` - auto */
       initial_permission_mode?: ClaudeTaskRunCreateSchemaInitialPermissionModeEnum;
+      /** Optional override for the sandbox runtime. Leave unset for the default.
+
+      * `posthog` - posthog */
+      sandbox_runtime?: SandboxRuntimeEnum | null;
     }
 
     export type ClickhouseEventProperties = { [key: string]: unknown };
@@ -10821,6 +10835,10 @@ export namespace Schemas {
       * `read-only` - read-only
       * `full-access` - full-access */
       initial_permission_mode?: CodexTaskRunCreateSchemaInitialPermissionModeEnum;
+      /** Optional override for the sandbox runtime. Leave unset for the default.
+
+      * `posthog` - posthog */
+      sandbox_runtime?: SandboxRuntimeEnum | null;
     }
 
     export type PropertyGroupOperator = typeof PropertyGroupOperator[keyof typeof PropertyGroupOperator];
@@ -38603,6 +38621,10 @@ export namespace Schemas {
       * `read-only` - read-only
       * `full-access` - full-access */
       initial_permission_mode?: TaskRunBootstrapCreateRequestInitialPermissionModeEnum;
+      /** Optional override for the sandbox runtime. Leave unset for the default.
+
+      * `posthog` - posthog */
+      sandbox_runtime?: SandboxRuntimeEnum | null;
     }
 
     /**
