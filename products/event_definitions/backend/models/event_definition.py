@@ -12,6 +12,7 @@ DEFAULT_EVENT_INFO_NAMES: frozenset[str] = frozenset({"$pageview", "$screen"})
 
 class SchemaEnforcementMode(models.TextChoices):
     ALLOW = "allow", "Allow"
+    ENFORCE = "enforce", "Enforce"
     REJECT = "reject", "Reject"
 
 
@@ -41,6 +42,8 @@ class EventDefinition(UUIDTModel):
         default=SchemaEnforcementMode.ALLOW,
     )
 
+    schema_version = models.PositiveIntegerField(default=1)
+
     # DB column kept as `promoted_property` to avoid a Postgres column rename.
     # Safe because the feature is flag-gated (`promoted-event-properties-edit`) and minimally used.
     primary_property = models.CharField(max_length=400, null=True, blank=True, db_column="promoted_property")
@@ -58,7 +61,7 @@ class EventDefinition(UUIDTModel):
             models.Index(
                 fields=["team_id"],
                 name="posthog_eventdef_enforce_idx",
-                condition=models.Q(enforcement_mode="reject"),
+                condition=models.Q(enforcement_mode__in=["reject", "enforce"]),
             ),
             models.Index(fields=["team_id", "name"], name="posthog_eventdef_team_name_idx"),
         ]

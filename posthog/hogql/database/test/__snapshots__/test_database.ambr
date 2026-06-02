@@ -935,6 +935,16 @@
                   "table": "sessions",
                   "type": "lazy_table"
               },
+              "validated_schema_version": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "validated_schema_version",
+                  "id": null,
+                  "name": "validated_schema_version",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "integer"
+              },
               "elements_chain_href": {
                   "chain": null,
                   "fields": null,
@@ -8940,6 +8950,16 @@
                   "schema_valid": true,
                   "table": "sessions",
                   "type": "lazy_table"
+              },
+              "validated_schema_version": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "validated_schema_version",
+                  "id": null,
+                  "name": "validated_schema_version",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "integer"
               },
               "elements_chain_href": {
                   "chain": null,

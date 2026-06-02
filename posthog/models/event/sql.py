@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS {table_name} {on_cluster_clause}
     group3_created_at DateTime64,
     group4_created_at DateTime64,
     person_mode Enum8('full' = 0, 'propertyless' = 1, 'force_upgrade' = 2),
-    historical_migration Bool
+    historical_migration Bool,
+    validated_schema_version Int32
     {dynamically_materialized_columns}
     {materialized_columns}
     {extra_fields}
@@ -183,7 +184,7 @@ MATERIALIZE INDEX `minmax_inserted_at`
 # this is an added safety mechanism given we control payloads to this topic
 
 
-def KAFKA_EVENTS_TABLE_JSON_SQL():
+def KAFKA_EVENTS_TABLE_JSON_SQL(on_cluster=True):
     return (
         EVENTS_TABLE_BASE_SQL
         + """
@@ -191,7 +192,7 @@ def KAFKA_EVENTS_TABLE_JSON_SQL():
 """
     ).format(
         table_name="kafka_events_json",
-        on_cluster_clause=ON_CLUSTER_CLAUSE(),
+        on_cluster_clause=ON_CLUSTER_CLAUSE(on_cluster),
         engine=kafka_engine(topic=KAFKA_EVENTS_JSON, group=CONSUMER_GROUP_EVENTS_JSON),
         extra_fields="",
         dynamically_materialized_columns=EVENTS_TABLE_DYNAMICALLY_MATERIALIZED_COLUMNS(),
@@ -247,6 +248,7 @@ group3_created_at,
 group4_created_at,
 person_mode,
 historical_migration,
+validated_schema_version,
 {dynamically_materialized_columns},
 _timestamp,
 _offset,
