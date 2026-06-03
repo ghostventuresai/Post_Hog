@@ -34,6 +34,7 @@ from posthog.temporal.data_imports.sources.stripe.constants import (
     CUSTOMER_RESOURCE_NAME as STRIPE_CUSTOMER_RESOURCE_NAME,
 )
 from posthog.temporal.data_imports.sources.stripe.settings import ENDPOINTS as STRIPE_ENDPOINTS
+from posthog.temporal.data_imports.util import NonRetryableException
 from posthog.temporal.data_imports.workflow_activities.calculate_table_size import calculate_table_size_activity
 from posthog.temporal.data_imports.workflow_activities.check_billing_limits import check_billing_limits_activity
 from posthog.temporal.data_imports.workflow_activities.create_job_model import (
@@ -317,6 +318,57 @@ def test_sync_new_schemas_activity_self_destructs_when_source_unavailable(
             activity_environment.run(sync_new_schemas_activity, inputs)
 
     mock_delete_schedule.assert_called_once_with(source_id)
+
+
+@pytest.mark.parametrize(
+    "error_msg,expect_non_retryable",
+    [
+        (
+            "(2003, \"Can't connect to MySQL server on 'z4qx4zrttx.eu-west-1.aws.clickhouse.cloud' ([Errno -2] Name or service not known)\")",
+            True,
+        ),
+        ("Access denied for user 'root'@'%'", True),
+        ("Could not establish session to SSH gateway", True),
+        ("connection reset by peer", False),
+    ],
+)
+@pytest.mark.django_db(transaction=True)
+def test_sync_new_schemas_activity_classifies_source_errors(
+    activity_environment, team, error_msg, expect_non_retryable, **kwargs
+):
+    new_source = ExternalDataSource.objects.create(
+        source_id=str(uuid.uuid4()),
+        connection_id=str(uuid.uuid4()),
+        destination_id=str(uuid.uuid4()),
+        team=team,
+        status="running",
+        source_type="MySQL",
+        job_inputs={
+            "host": "z4qx4zrttx.eu-west-1.aws.clickhouse.cloud",
+            "port": "3306",
+            "database": "db",
+            "user": "u",
+            "password": "p",
+            "schema": "public",
+            "using_ssl": "true",
+        },
+    )
+
+    inputs = SyncNewSchemasActivityInputs(source_id=str(new_source.pk), team_id=team.id)
+
+    with mock.patch(
+        "posthog.temporal.data_imports.sources.mysql.source.MySQLSource.get_schemas",
+        side_effect=Exception(error_msg),
+    ):
+        if expect_non_retryable:
+            with pytest.raises(NonRetryableException) as non_retryable_exc:
+                activity_environment.run(sync_new_schemas_activity, inputs)
+            assert isinstance(non_retryable_exc.value.__cause__, Exception)
+            assert error_msg in str(non_retryable_exc.value.__cause__)
+        else:
+            with pytest.raises(Exception, match=error_msg) as retryable_exc:
+                activity_environment.run(sync_new_schemas_activity, inputs)
+            assert not isinstance(retryable_exc.value, NonRetryableException)
 
 
 @pytest.mark.django_db(transaction=True)
