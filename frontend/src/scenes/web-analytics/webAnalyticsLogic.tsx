@@ -2466,8 +2466,15 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
         actions.loadShouldShowGeoIPQueries()
     }),
 
-    tabAwareActionToUrl(({ values }) => {
-        const stateToUrl = (): string => {
+    tabAwareActionToUrl(({ values, cache }) => {
+        const stateToUrl = (): string | undefined => {
+            // Skip URL writes while we are applying state from an incoming URL change.
+            // Otherwise this listener turns the dispatched setX action right back into a
+            // router.replace, which re-enters every mounted urlToAction handler and can
+            // recurse with sibling scene logics until the JS stack overflows.
+            if (cache.applyingUrl) {
+                return undefined
+            }
             const urlParams = new URLSearchParams(router.values.location.search)
 
             const {
@@ -2613,7 +2620,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
         }
     }),
 
-    tabAwareUrlToAction(({ actions, values }) => {
+    tabAwareUrlToAction(({ actions, values, cache }) => {
         const toAction = (
             { productTab = ProductTab.ANALYTICS }: { productTab?: ProductTab },
             {
@@ -2756,12 +2763,27 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             }
         }
 
+        // Mark the logic as "currently applying state from the URL" while toAction runs so
+        // that the stateToUrl listener bails out of router.replace. Without this, every
+        // setX dispatched below would re-write the URL and re-trigger this handler plus any
+        // sibling scene's urlToAction, recursing until the JS stack overflows.
+        const withApplyingUrl = <T extends (...args: any[]) => void>(fn: T): T => {
+            return ((...args: Parameters<T>): void => {
+                cache.applyingUrl = true
+                try {
+                    fn(...args)
+                } finally {
+                    cache.applyingUrl = false
+                }
+            }) as T
+        }
+
         return {
-            '/web': toAction,
-            '/web/bots': (_, searchParams) => {
+            '/web': withApplyingUrl(toAction),
+            '/web/bots': withApplyingUrl((_, searchParams) => {
                 toAction({ productTab: ProductTab.BOT_ANALYTICS }, searchParams)
-            },
-            '/web/:productTab': toAction,
+            }),
+            '/web/:productTab': withApplyingUrl(toAction),
         }
     }),
 
