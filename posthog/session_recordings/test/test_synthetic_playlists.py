@@ -14,8 +14,10 @@ from posthog.models.sharing_configuration import SharingConfiguration
 from posthog.models.utils import uuid7
 from posthog.session_recordings.models.session_recording_event import SessionRecordingViewed
 from posthog.session_recordings.synthetic_playlists import (
+    ExportedPlaylistSource,
     FrustrationSignalsPlaylistSource,
     NewUrlsSyntheticPlaylistSource,
+    SharedPlaylistSource,
 )
 
 from products.exports.backend.models.exported_asset import ExportedAsset
@@ -159,6 +161,46 @@ class TestSyntheticPlaylists(APIBaseTest):
         playlist = self._get_synthetic_playlist("synthetic-exported")
 
         assert playlist["recordings_counts"]["collection"]["count"] == 2
+
+    def test_exported_playlist_dedupes_session_ids(self) -> None:
+        # Two exports for the same recording — should appear once in the synthetic playlist.
+        ExportedAsset.objects.create(
+            team=self.team,
+            export_format=ExportedAsset.ExportFormat.GIF,
+            export_context={"session_recording_id": "exported-session-1"},
+            created_by=self.user,
+        )
+        ExportedAsset.objects.create(
+            team=self.team,
+            export_format=ExportedAsset.ExportFormat.PNG,
+            export_context={"session_recording_id": "exported-session-1"},
+            created_by=self.user,
+        )
+
+        source = ExportedPlaylistSource()
+        session_ids = source.get_session_ids(self.team, self.user)
+        assert session_ids == ["exported-session-1"]
+        assert source.count_session_ids(self.team, self.user) == 1
+
+    @parameterized.expand(
+        [
+            ("exported", ExportedPlaylistSource),
+            ("shared", SharedPlaylistSource),
+        ]
+    )
+    def test_synthetic_playlist_handles_db_errors_gracefully(
+        self, _name: str, source_cls: type[ExportedPlaylistSource] | type[SharedPlaylistSource]
+    ) -> None:
+        from django.db import OperationalError
+
+        source = source_cls()
+        with patch.object(
+            source_cls, "_fetch_session_ids", side_effect=OperationalError("server closed the connection unexpectedly")
+        ):
+            # Both methods must degrade to empty/zero instead of bubbling the DB error,
+            # so the Replay list endpoint stays available even when these queries fail.
+            assert source.count_session_ids(self.team, self.user) == 0
+            assert source.get_session_ids(self.team, self.user) == []
 
     @parameterized.expand(
         [
