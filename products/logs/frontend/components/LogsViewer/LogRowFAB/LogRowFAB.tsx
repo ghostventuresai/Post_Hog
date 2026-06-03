@@ -19,6 +19,7 @@ import { cn } from 'lib/utils/css-classes'
 import { LogContextSelector } from 'products/logs/frontend/components/LogsViewer/LogContextSelector/LogContextSelector'
 import { logDetailsModalLogic } from 'products/logs/frontend/components/LogsViewer/LogDetailsModal'
 import { logsViewerLogic } from 'products/logs/frontend/components/LogsViewer/logsViewerLogic'
+import { ViewTraceButton } from 'products/logs/frontend/components/LogsViewer/ViewTraceButton/ViewTraceButton'
 import { useCellScrollControls } from 'products/logs/frontend/components/VirtualizedLogsList/useCellScroll'
 import { ParsedLogMessage } from 'products/logs/frontend/types'
 import { getSessionIdFromLogAttributes } from 'products/logs/frontend/utils'
@@ -124,6 +125,7 @@ export function LogRowFAB({
                     data-attr="logs-viewer-copy-link"
                 />
                 <LogContextSelector log={log} noPadding />
+                <ViewTraceButton log={log} size="xsmall" noPadding className="text-muted" />
                 {sessionId && (
                     <ViewRecordingButton
                         sessionId={sessionId}
