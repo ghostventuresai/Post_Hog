@@ -72,7 +72,7 @@ const DetailedViewCards = (): JSX.Element => {
                 title="SDK health"
                 description="Click to view"
                 icon={<IconCode className="size-6" />}
-                to={urls.sdkDoctor()}
+                to={urls.sdkHealth()}
             />
             {pipelineStatusEnabled && (
                 <HealthCard
