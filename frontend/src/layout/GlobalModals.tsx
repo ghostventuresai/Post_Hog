@@ -36,7 +36,7 @@ export const globalModalsLogic = kea<globalModalsLogicType>([
     actions({
         showCreateOrganizationModal: true,
         hideCreateOrganizationModal: true,
-        showCreateProjectModal: true,
+        showCreateProjectModal: (initialName?: string) => ({ initialName: initialName ?? '' }),
         hideCreateProjectModal: true,
     }),
     reducers({
@@ -54,6 +54,13 @@ export const globalModalsLogic = kea<globalModalsLogicType>([
                 hideCreateProjectModal: () => false,
             },
         ],
+        createProjectModalInitialName: [
+            '',
+            {
+                showCreateProjectModal: (_, { initialName }) => initialName,
+                hideCreateProjectModal: () => '',
+            },
+        ],
     }),
     bindModalToUrl({
         urlKey: 'create-organization',
@@ -64,7 +71,8 @@ export const globalModalsLogic = kea<globalModalsLogicType>([
 ])
 
 export function GlobalModals(): JSX.Element {
-    const { isCreateOrganizationModalShown, isCreateProjectModalShown } = useValues(globalModalsLogic)
+    const { isCreateOrganizationModalShown, isCreateProjectModalShown, createProjectModalInitialName } =
+        useValues(globalModalsLogic)
     const { hideCreateOrganizationModal, hideCreateProjectModal } = useActions(globalModalsLogic)
     const { isInviteModalShown } = useValues(inviteLogic)
     const { hideInviteModal } = useActions(inviteLogic)
@@ -78,7 +86,11 @@ export function GlobalModals(): JSX.Element {
         <>
             <InviteModal isOpen={isInviteModalShown} onClose={hideInviteModal} />
             <CreateOrganizationModal isVisible={isCreateOrganizationModalShown} onClose={hideCreateOrganizationModal} />
-            <CreateProjectModal isVisible={isCreateProjectModalShown} onClose={hideCreateProjectModal} />
+            <CreateProjectModal
+                isVisible={isCreateProjectModalShown}
+                onClose={hideCreateProjectModal}
+                initialName={createProjectModalInitialName}
+            />
             <UpgradeModal />
             <TimeSensitiveAuthenticationModal />
             <SessionPlayerModal />
