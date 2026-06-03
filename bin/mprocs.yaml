@@ -219,6 +219,92 @@ procs:
             layer: Processing
             tech: Rust
 
+    agent-ingress:
+        shell: |-
+            bin/wait-for-docker && \
+            PORT=${AGENT_INGRESS_PORT:-3030} \
+            pnpm --filter @posthog/agent-ingress start:dev
+        capability: agent_runtime
+        ready_pattern: 'listening'
+        groups:
+            layer: Product services
+            tech: Node
+
+    agent-runner:
+        shell: 'bin/wait-for-docker && pnpm --filter @posthog/agent-runner start:dev'
+        capability: agent_runtime
+        ready_pattern: 'starting worker loop'
+        groups:
+            layer: Processing
+            tech: Node
+        env:
+            # Local LLM analytics — same target the ai-gateway uses. Project
+            # token writes to the dev team's project; without this the runner
+            # falls back to NoopAnalyticsSink and `$ai_*` events vanish.
+            POSTHOG_ANALYTICS_API_KEY: 'phc_localposthogprojecttoken'
+            POSTHOG_ANALYTICS_HOST: 'http://localhost:8010'
+            # ai-gateway routing — every model call goes through the
+            # external Go gateway (github.com/PostHog/ai-gateway), brought
+            # up by the `ai-gateway` mprocs entry below via docker compose
+            # in the sibling repo at ~/Development/ai-gateway, port 8080.
+            # The runner resolves the owning team's `phc_` per session so
+            # POSTHOG_AI_GATEWAY_KEY isn't needed as a default bearer. Flip
+            # to 'false' to fall back to the direct-provider path
+            # (ANTHROPIC_API_KEY / OPENAI_API_KEY) — useful if the docker
+            # gateway is down and you don't want it autostarted.
+            # Setup: see docs/agent-platform/docs/local-dev.md
+            # ("Local ai-gateway") for the sibling-clone + .env + ledger
+            # topup; design: docs/agent-platform/plans/ai-gateway-integration.md.
+            AGENT_USE_AI_GATEWAY: 'true'
+            POSTHOG_AI_GATEWAY_URL: 'http://localhost:8080/v1'
+            # S3-backed memory store. MinIO from the PostHog dev stack —
+            # bucket `posthog` is pre-created by docker-compose.base.yml. The
+            # runner writes via `@posthog/memory-*` tools; the janitor reads
+            # the same bucket via /memory/* HTTP endpoints. Both ENDPOINT
+            # and BUCKET must be set or the memory tools surface
+            # `memory_store_unavailable` to the agent.
+            AGENT_MEMORY_S3_ENDPOINT: 'http://localhost:19000'
+            AGENT_MEMORY_S3_BUCKET: 'posthog'
+            AGENT_MEMORY_S3_PREFIX: 'agent_memory'
+            AGENT_MEMORY_S3_ACCESS_KEY_ID: 'object_storage_root_user'
+            AGENT_MEMORY_S3_SECRET_ACCESS_KEY: 'object_storage_root_password'
+
+    agent-janitor:
+        shell: |-
+            bin/wait-for-docker && \
+            PORT=${AGENT_JANITOR_PORT:-3031} \
+            pnpm --filter @posthog/agent-janitor start:dev
+        capability: agent_runtime
+        ready_pattern: 'listening'
+        groups:
+            layer: Processing
+            tech: Node
+        env:
+            # Lights up GET /applications/:id/wallet — proxies the agent
+            # owner team's gateway balance for the agent console UI.
+            POSTHOG_AI_GATEWAY_URL: 'http://localhost:8080/v1'
+            # S3-backed memory store — same bucket the runner writes. Lights
+            # up the /memory/team/:team_id/agent/:application_id/* routes the
+            # Django AgentMemoryViewSet proxies through to.
+            AGENT_MEMORY_S3_ENDPOINT: 'http://localhost:19000'
+            AGENT_MEMORY_S3_BUCKET: 'posthog'
+            AGENT_MEMORY_S3_PREFIX: 'agent_memory'
+            AGENT_MEMORY_S3_ACCESS_KEY_ID: 'object_storage_root_user'
+            AGENT_MEMORY_S3_SECRET_ACCESS_KEY: 'object_storage_root_password'
+
+    agent-console:
+        # Next.js standalone console at http://localhost:3040 — proxies the
+        # PostHog Django API on /api/projects/... for agent CRUD + memory.
+        # Optional: ask_skip lets the wizard skip it without prompting if
+        # you don't care about the console UI for this session.
+        shell: 'pnpm --filter @posthog/agent-console dev'
+        capability: agent_runtime
+        ready_pattern: 'Ready in'
+        ask_skip: true
+        groups:
+            layer: Application
+            tech: Frontend
+
     cymbal:
         shell: |-
             bin/wait-for-docker && \
@@ -408,18 +494,22 @@ procs:
         capability: personhog
         ready_pattern: 'Metrics server listening on *'
 
-    llm-gateway:
-        shell: 'bin/wait-for-docker && bin/start-llm-gateway'
-        capability: llm_gateway
-        ready_pattern: 'Application startup complete'
+    ai-gateway:
+        # The external Go ai-gateway (github.com/PostHog/ai-gateway), brought
+        # up via docker compose in the sibling repo. The agent-runner above
+        # is wired to point at http://localhost:8080/v1 via
+        # POSTHOG_AI_GATEWAY_URL and AGENT_USE_AI_GATEWAY=true. Skip this
+        # entry (ask_skip: true) if you don't have the sibling clone — the
+        # runner falls back to the direct-provider path automatically when
+        # AGENT_USE_AI_GATEWAY is 'false'. See bin/start-ai-gateway for
+        # the full setup (sibling clone path, .env, anonymous-team topup).
+        shell: 'bin/wait-for-docker && bin/start-ai-gateway'
+        capability: ai_gateway
+        ready_pattern: 'listening on'
+        ask_skip: true
         groups:
             layer: Product services
-            tech: Python
-        env:
-            LLM_GATEWAY_DEBUG: 'true'
-            LLM_GATEWAY_TEAM_RATE_LIMIT_MULTIPLIERS: '{"1": 10}'
-            LLM_GATEWAY_POSTHOG_PROJECT_TOKEN: 'phc_localposthogprojecttoken'
-            LLM_GATEWAY_POSTHOG_HOST: 'http://localhost:8010'
+            tech: Go
 
     mcp:
         shell: 'bin/start-mcp-server'
@@ -477,6 +567,14 @@ procs:
     migrate-cyclotron:
         shell: 'bin/wait-for-docker && bin/migrate --scope=cyclotron'
         capability: cyclotron
+        ready_pattern: 'All migrations completed successfully'
+        groups:
+            layer: Infrastructure
+            tech: Migrations
+
+    migrate-agent-runtime:
+        shell: 'bin/wait-for-docker && bin/migrate --scope=agent_runtime'
+        capability: agent_runtime
         ready_pattern: 'All migrations completed successfully'
         groups:
             layer: Infrastructure

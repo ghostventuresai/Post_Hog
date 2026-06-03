@@ -32,6 +32,160 @@ export namespace Schemas {
     } as const;
 
     /**
+     * * `A` - absorbed
+    * `B` - internal_overage
+    * `C` - external_prepay
+     */
+    export type ProfileEnum = typeof ProfileEnum[keyof typeof ProfileEnum];
+
+
+    export const ProfileEnum = {
+      A: 'A',
+      B: 'B',
+      C: 'C',
+    } as const;
+
+    export interface AIGatewayAccount {
+      /** Billing profile: A=absorbed, B=internal overage, C=external prepay.
+
+      * `A` - absorbed
+      * `B` - internal_overage
+      * `C` - external_prepay */
+      profile: ProfileEnum;
+      /** USD overage allowance above the prepaid balance (decimal string). */
+      overage_allowance_usd: string;
+      /** Billing period identifier — e.g. 'monthly'. */
+      period: string;
+      /** RFC3339 timestamp the billing period rolls over from. */
+      period_anchor: string;
+      /**
+         * Optional rate card identifier.
+         * @nullable
+         */
+      rate_card_id?: string | null;
+    }
+
+    export interface AIGatewayKillSwitch {
+      /** Whether the rolling-hour kill switch has fired. */
+      tripped: boolean;
+      /**
+         * USD spend threshold that trips the switch (decimal string).
+         * @nullable
+         */
+      threshold_usd?: string | null;
+      /**
+         * RFC3339 timestamp the switch last tripped.
+         * @nullable
+         */
+      tripped_at?: string | null;
+    }
+
+    /**
+     * * `debit` - debit
+    * `topup` - topup
+    * `refund` - refund
+    * `adjustment` - adjustment
+     */
+    export type TransactionTypeEnum = typeof TransactionTypeEnum[keyof typeof TransactionTypeEnum];
+
+
+    export const TransactionTypeEnum = {
+      Debit: 'debit',
+      Topup: 'topup',
+      Refund: 'refund',
+      Adjustment: 'adjustment',
+    } as const;
+
+    export interface AIGatewayLedgerEntry {
+      /** Ledger entry uuid. */
+      id: string;
+      /** Kind of ledger movement.
+
+      * `debit` - debit
+      * `topup` - topup
+      * `refund` - refund
+      * `adjustment` - adjustment */
+      transaction_type: TransactionTypeEnum;
+      /** Source bucket (funding | prepaid | revenue | adjustment). */
+      source: string;
+      /** Destination bucket. */
+      destination: string;
+      /** USD amount of the movement (decimal string). */
+      amount_usd: string;
+      /**
+         * List price for a usage debit before any discount.
+         * @nullable
+         */
+      list_cost_usd?: string | null;
+      /**
+         * Idempotency key. Runner format: 'agent:<session_id>:<turn>'.
+         * @nullable
+         */
+      reference_id?: string | null;
+      /**
+         * Provider-prefixed model id.
+         * @nullable
+         */
+      model?: string | null;
+      /**
+         * Provider key (anthropic | openai | ...).
+         * @nullable
+         */
+      provider?: string | null;
+      /**
+         * Input token count.
+         * @nullable
+         */
+      input_tokens?: number | null;
+      /**
+         * Output token count.
+         * @nullable
+         */
+      output_tokens?: number | null;
+      /**
+         * End-user identifier from X-PostHog-Distinct-Id.
+         * @nullable
+         */
+      distinct_id?: string | null;
+      /** RFC3339 timestamp the entry was settled. */
+      created_at: string;
+    }
+
+    export interface AIGatewayLedgerList {
+      /** Ledger entries in newest-first order. */
+      results: AIGatewayLedgerEntry[];
+      /**
+         * Opaque cursor for the next page. Absent when there are no more rows.
+         * @nullable
+         */
+      next_cursor?: string | null;
+    }
+
+    export interface AIGatewayWallet {
+      /** PostHog team id this wallet belongs to. */
+      team_id: number;
+      /** USD available to spend right now: balance minus pending holds (decimal string). */
+      available_usd: string;
+      /** USD reserved by in-flight session holds (decimal string). */
+      pending_usd: string;
+      /** Raw ledger balance in USD before subtracting holds (decimal string). */
+      balance_usd: string;
+      /** balance_usd plus the account's overage_allowance (decimal string). */
+      spendable_usd: string;
+      /** ISO currency code. Always 'USD' at v0. */
+      currency: string;
+      /** Account policy: profile, overage, period. */
+      account: AIGatewayAccount;
+      /**
+         * Rolling-hour spend that feeds the kill switch. Omitted when billing has not computed it yet.
+         * @nullable
+         */
+      rolling_hour_usd?: string | null;
+      /** Kill-switch state — tripped/threshold/tripped_at. */
+      kill_switch: AIGatewayKillSwitch;
+    }
+
+    /**
      * * `read_write` - read_write
     * `read` - read
     * `none` - none
@@ -6898,6 +7052,553 @@ export namespace Schemas {
       uploads: UploadTarget[];
     }
 
+    export interface AgentAggregateStats {
+      /** Sessions currently in a live state (queued / running). */
+      liveCount: number;
+      /** Sessions created within the `since` window across all states. */
+      sessionsInWindowCount: number;
+      /** Sum of `usage_total.cost_total` across sessions in the window. */
+      spendInWindowUsd: number;
+      /**
+         * ISO timestamp of the most recent session update — null when there are no sessions.
+         * @nullable
+         */
+      lastActivityAt: string | null;
+      /** Sessions in `failed` state created within the window. */
+      failedInWindowCount: number;
+    }
+
+    export interface AgentApplication {
+      readonly id: string;
+      readonly team: number;
+      /** @maxLength 255 */
+      name: string;
+      /** @maxLength 63 */
+      slug: string;
+      description?: string;
+      /** @nullable */
+      readonly live_revision: string | null;
+      archived?: boolean;
+      /** @nullable */
+      readonly archived_at: string | null;
+      /** @nullable */
+      readonly created_by: number | null;
+      readonly created_at: string;
+      readonly updated_at: string;
+    }
+
+    /**
+     * * `queued` - queued
+    * `approving` - approving
+    * `dispatched` - dispatched
+    * `dispatched_failed` - dispatched_failed
+    * `rejected` - rejected
+    * `expired` - expired
+     */
+    export type AgentApprovalRequestStateEnum = typeof AgentApprovalRequestStateEnum[keyof typeof AgentApprovalRequestStateEnum];
+
+
+    export const AgentApprovalRequestStateEnum = {
+      Queued: 'queued',
+      Approving: 'approving',
+      Dispatched: 'dispatched',
+      DispatchedFailed: 'dispatched_failed',
+      Rejected: 'rejected',
+      Expired: 'expired',
+    } as const;
+
+    /**
+     * Arguments the model proposed. Frozen at intercept time.
+     */
+    export type AgentApprovalRequestProposedArgs = { [key: string]: unknown };
+
+    /**
+     * Approver-edited arguments. Present iff `approval_policy.allow_edit` was true and the approver supplied edits.
+     * @nullable
+     */
+    export type AgentApprovalRequestDecidedArgs = { [key: string]: unknown } | null;
+
+    /**
+     * Snapshot of the assistant message that emitted the call (text + thinking blocks) — what the approver sees as the model's reasoning.
+     */
+    export type AgentApprovalRequestAssistantMessage = { [key: string]: unknown };
+
+    /**
+     * Resolved approver policy (approvers, allow_edit, allow_agent_approver) at request time.
+     */
+    export type AgentApprovalRequestApproverScope = { [key: string]: unknown };
+
+    /**
+     * `{result: ...}` on a successful approved dispatch, `{error: "..."}` when the tool threw. Null until the runner has finalised.
+     * @nullable
+     */
+    export type AgentApprovalRequestDispatchOutcome = { [key: string]: unknown } | null;
+
+    export interface AgentApprovalRequest {
+      /** Approval request UUID — stable, used in /approvals/<id>/decide. */
+      id: string;
+      /** UUID of the session that proposed the gated call. */
+      session_id: string;
+      /** UUID of the parent agent application. */
+      application_id: string;
+      /** Team that owns the agent. */
+      team_id: number;
+      /** Revision the gated call was proposed against. */
+      revision_id: string;
+      /** Turn number within the session that emitted the call. */
+      turn: number;
+      /** pi-ai ToolCall.id from the original assistant message; matched into the synthetic tool_result. */
+      tool_call_id: string;
+      /** Tool id the model invoked (e.g. `@posthog/team-delete`). */
+      tool_name: string;
+      /** Arguments the model proposed. Frozen at intercept time. */
+      proposed_args: AgentApprovalRequestProposedArgs;
+      /**
+         * Approver-edited arguments. Present iff `approval_policy.allow_edit` was true and the approver supplied edits.
+         * @nullable
+         */
+      decided_args: AgentApprovalRequestDecidedArgs;
+      /** Snapshot of the assistant message that emitted the call (text + thinking blocks) — what the approver sees as the model's reasoning. */
+      assistant_message: AgentApprovalRequestAssistantMessage;
+      /** Resolved approver policy (approvers, allow_edit, allow_agent_approver) at request time. */
+      approver_scope: AgentApprovalRequestApproverScope;
+      /** Lifecycle state. `queued` = awaiting an approver; `approving` = decision landed and tool dispatch is in flight; `dispatched`/`dispatched_failed` = approved + tool ran; `rejected` = approver said no; `expired` = TTL elapsed.
+
+      * `queued` - queued
+      * `approving` - approving
+      * `dispatched` - dispatched
+      * `dispatched_failed` - dispatched_failed
+      * `rejected` - rejected
+      * `expired` - expired */
+      state: AgentApprovalRequestStateEnum;
+      /**
+         * UUID of the user who decided. Null while queued or expired.
+         * @nullable
+         */
+      decision_by: string | null;
+      /**
+         * ISO timestamp of the decision. Null while queued.
+         * @nullable
+         */
+      decision_at: string | null;
+      /**
+         * Free-form reason supplied by the approver. Optional.
+         * @nullable
+         */
+      decision_reason: string | null;
+      /**
+         * `{result: ...}` on a successful approved dispatch, `{error: "..."}` when the tool threw. Null until the runner has finalised.
+         * @nullable
+         */
+      dispatch_outcome: AgentApprovalRequestDispatchOutcome;
+      /** When the model proposed the gated call. */
+      created_at: string;
+      /** When the queued request auto-rejects if no decision arrives. */
+      expires_at: string;
+    }
+
+    export interface AgentApplicationApprovalsListResponse {
+      /** Approval requests for this application, newest first. */
+      results: AgentApprovalRequest[];
+    }
+
+    export interface AgentApplicationEnvKeyStatus {
+      key: string;
+      /** True if the key is present in the env block. The value itself is never returned. */
+      is_set: boolean;
+    }
+
+    export interface AgentApplicationEnvKeysResponse {
+      /** Names of env variables currently set on the application. Values are never returned. */
+      keys: string[];
+    }
+
+    export interface AgentApplicationPreviewTokenResponse {
+      /** HS256 JWT bound to (app, rev) with a short TTL. Attach as the `x-agent-preview-token` header (POST/DELETE) or `preview_token` query param (GET, including EventSource) when calling ingress directly. */
+      token: string;
+      /** Token TTL in seconds from issue. Clients should refresh before this elapses. */
+      expires_in: number;
+      /** Slug to use in the ingress URL — `<application_slug>-<revision_uuid_hex>`. Identifies the exact revision in the path-routing prefix. */
+      ingress_slug: string;
+    }
+
+    export interface LogEntry {
+      log_source_id: string;
+      instance_id: string;
+      timestamp: string;
+      level: string;
+      message: string;
+    }
+
+    export interface AgentApplicationSessionLogsResponse {
+      results: LogEntry[];
+    }
+
+    export interface AgentSessionUsageTotal {
+      tokens_in: number;
+      tokens_out: number;
+      cache_read: number;
+      cache_write: number;
+      cost_input: number;
+      cost_output: number;
+      cost_cache_read: number;
+      cost_cache_write: number;
+      cost_total: number;
+    }
+
+    /**
+     * * `anonymous` - anonymous
+    * `service` - service
+    * `internal` - internal
+    * `shared_secret` - shared_secret
+    * `slack` - slack
+     */
+    export type AgentSessionPrincipalKindEnum = typeof AgentSessionPrincipalKindEnum[keyof typeof AgentSessionPrincipalKindEnum];
+
+
+    export const AgentSessionPrincipalKindEnum = {
+      Anonymous: 'anonymous',
+      Service: 'service',
+      Internal: 'internal',
+      SharedSecret: 'shared_secret',
+      Slack: 'slack',
+    } as const;
+
+    export interface AgentSessionPrincipal {
+      /** What kind of principal authenticated the session start.
+
+      * `anonymous` - anonymous
+      * `service` - service
+      * `internal` - internal
+      * `shared_secret` - shared_secret
+      * `slack` - slack */
+      kind: AgentSessionPrincipalKindEnum;
+      /** Stable identifier for the principal (PAT id, slack user id, etc). Absent for anonymous sessions. */
+      id?: string;
+      /** Team the principal belongs to. Absent for anonymous sessions. */
+      team_id?: number;
+    }
+
+    /**
+     * * `queued` - queued
+    * `running` - running
+    * `completed` - completed
+    * `closed` - closed
+    * `cancelled` - cancelled
+    * `failed` - failed
+     */
+    export type AgentSessionStateEnum = typeof AgentSessionStateEnum[keyof typeof AgentSessionStateEnum];
+
+
+    export const AgentSessionStateEnum = {
+      Queued: 'queued',
+      Running: 'running',
+      Completed: 'completed',
+      Closed: 'closed',
+      Cancelled: 'cancelled',
+      Failed: 'failed',
+    } as const;
+
+    /**
+     * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+     * @nullable
+     */
+    export type AgentSessionSummaryTriggerMetadata = { [key: string]: unknown } | null;
+
+    export interface AgentSessionSummary {
+      usage_total: AgentSessionUsageTotal;
+      principal: AgentSessionPrincipal | null;
+      id: string;
+      application_id: string;
+      revision_id: string;
+      state: AgentSessionStateEnum;
+      /** @nullable */
+      external_key: string | null;
+      /**
+         * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+         * @nullable
+         */
+      trigger_metadata?: AgentSessionSummaryTriggerMetadata;
+      /** Count of messages in the conversation — the full transcript ships on the detail endpoint. */
+      turns: number;
+      /**
+         * Last assistant text (~120 chars). Null for sessions with no assistant turns yet.
+         * @nullable
+         */
+      preview: string | null;
+      retry_count: number;
+      created_at: string;
+      updated_at: string;
+    }
+
+    export interface AgentApplicationSessionsListResponse {
+      results: AgentSessionSummary[];
+      /** Total matching sessions before pagination. */
+      count: number;
+    }
+
+    /**
+     * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+     * @nullable
+     */
+    export type AgentApplicationSessionsRetrieveResponseTriggerMetadata = { [key: string]: unknown } | null;
+
+    export type AgentConversationUserMessageRole = typeof AgentConversationUserMessageRole[keyof typeof AgentConversationUserMessageRole];
+
+
+    export const AgentConversationUserMessageRole = {
+      User: 'user',
+    } as const;
+
+    export interface AgentConversationUserMessage {
+      role: AgentConversationUserMessageRole;
+      /** String shorthand, or array of {type:'text'|'image', ...} parts. */
+      content: unknown;
+      /** Epoch milliseconds. */
+      timestamp: number;
+    }
+
+    export type AgentConversationAssistantMessageRole = typeof AgentConversationAssistantMessageRole[keyof typeof AgentConversationAssistantMessageRole];
+
+
+    export const AgentConversationAssistantMessageRole = {
+      Assistant: 'assistant',
+    } as const;
+
+    /**
+     * * `stop` - stop
+    * `length` - length
+    * `toolUse` - toolUse
+    * `error` - error
+    * `aborted` - aborted
+     */
+    export type StopReasonEnum = typeof StopReasonEnum[keyof typeof StopReasonEnum];
+
+
+    export const StopReasonEnum = {
+      Stop: 'stop',
+      Length: 'length',
+      ToolUse: 'toolUse',
+      Error: 'error',
+      Aborted: 'aborted',
+    } as const;
+
+    export type AgentConversationAssistantMessageUsage = { [key: string]: unknown };
+
+    export interface AgentConversationAssistantMessage {
+      role: AgentConversationAssistantMessageRole;
+      /** Array of text/thinking/toolCall parts. */
+      content: unknown[];
+      /** Epoch milliseconds. */
+      timestamp: number;
+      api?: string;
+      provider?: string;
+      model?: string;
+      usage?: AgentConversationAssistantMessageUsage;
+      stopReason?: StopReasonEnum;
+      errorMessage?: string;
+    }
+
+    export type AgentConversationToolResultMessageRole = typeof AgentConversationToolResultMessageRole[keyof typeof AgentConversationToolResultMessageRole];
+
+
+    export const AgentConversationToolResultMessageRole = {
+      ToolResult: 'toolResult',
+    } as const;
+
+    export interface AgentConversationToolResultMessage {
+      role: AgentConversationToolResultMessageRole;
+      toolCallId: string;
+      toolName: string;
+      /** Array of {type:'text'|'image', ...} parts. */
+      content: unknown[];
+      isError: boolean;
+      /** Epoch milliseconds. */
+      timestamp: number;
+    }
+
+    export type AgentConversationMessage = AgentConversationUserMessage | AgentConversationAssistantMessage | AgentConversationToolResultMessage;
+
+    export interface AgentApplicationSessionsRetrieveResponse {
+      usage_total: AgentSessionUsageTotal;
+      principal: AgentSessionPrincipal | null;
+      id: string;
+      application_id: string;
+      revision_id: string;
+      team_id: number;
+      /** @nullable */
+      external_key: string | null;
+      /**
+         * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+         * @nullable
+         */
+      trigger_metadata?: AgentApplicationSessionsRetrieveResponseTriggerMetadata;
+      state: AgentSessionStateEnum;
+      /** Full transcript, or the trailing `last_n` messages if `?last_n=` was supplied. */
+      conversation: AgentConversationMessage[];
+      /** Messages that arrived while a turn was in flight; drained into `conversation` at the start of the next turn. */
+      pending_inputs: AgentConversationMessage[];
+      /** Times the janitor has re-queued this session after a stuck-running detection. */
+      retry_count: number;
+      created_at: string;
+      updated_at: string;
+      /** True when `?last_n=` was supplied AND the full conversation exceeded it. */
+      conversation_trimmed: boolean;
+      /** Total messages in the untrimmed conversation. Present only when `conversation_trimmed=true`. */
+      conversation_total_turns?: number;
+    }
+
+    export interface AgentApprovalsDecideResponse {
+      /** Always `true` on a successful decision. */
+      ok: boolean;
+      /** The approval row's new state — `approving` for approve, `rejected` for reject. */
+      state: string;
+    }
+
+    /**
+     * * `assistant` - assistant
+     */
+    export type AgentConversationAssistantMessageRoleEnum = typeof AgentConversationAssistantMessageRoleEnum[keyof typeof AgentConversationAssistantMessageRoleEnum];
+
+
+    export const AgentConversationAssistantMessageRoleEnum = {
+      Assistant: 'assistant',
+    } as const;
+
+    /**
+     * * `toolResult` - toolResult
+     */
+    export type AgentConversationToolResultMessageRoleEnum = typeof AgentConversationToolResultMessageRoleEnum[keyof typeof AgentConversationToolResultMessageRoleEnum];
+
+
+    export const AgentConversationToolResultMessageRoleEnum = {
+      ToolResult: 'toolResult',
+    } as const;
+
+    /**
+     * * `user` - user
+     */
+    export type AgentConversationUserMessageRoleEnum = typeof AgentConversationUserMessageRoleEnum[keyof typeof AgentConversationUserMessageRoleEnum];
+
+
+    export const AgentConversationUserMessageRoleEnum = {
+      User: 'user',
+    } as const;
+
+    /**
+     * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+     * @nullable
+     */
+    export type AgentFleetLiveSessionSummaryTriggerMetadata = { [key: string]: unknown } | null;
+
+    export interface AgentFleetLiveSessionSummary {
+      usage_total: AgentSessionUsageTotal;
+      principal: AgentSessionPrincipal | null;
+      id: string;
+      application_id: string;
+      revision_id: string;
+      team_id: number;
+      state: AgentSessionStateEnum;
+      /** @nullable */
+      external_key: string | null;
+      /**
+         * Trigger-specific metadata stamped at session creation. Shape varies by trigger kind; cron firings carry `{ kind: 'cron', cron_name, schedule, fired_at, manual? }`. Render this on session-detail so the operator can tell at a glance that a session was fired by which cron / when.
+         * @nullable
+         */
+      trigger_metadata?: AgentFleetLiveSessionSummaryTriggerMetadata;
+      /** Messages in the conversation so far. */
+      turns: number;
+      /**
+         * Last assistant text (~120 chars). Null when no assistant turns yet.
+         * @nullable
+         */
+      preview: string | null;
+      created_at: string;
+      updated_at: string;
+    }
+
+    export interface AgentFleetLiveSessionsResponse {
+      results: AgentFleetLiveSessionSummary[];
+    }
+
+    export interface AgentMemoryFile {
+      /** Full markdown body. */
+      content: string;
+    }
+
+    export interface AgentMemoryHeader {
+      /** Relative path within the agent's memory, e.g. 'incidents/db.md'. */
+      path: string;
+      /** One-line summary from the file's frontmatter. */
+      description: string;
+      /** Frontmatter tags (lowercase a-z 0-9 _ - only). */
+      tags: string[];
+      /**
+         * ISO-8601 timestamp stamped on create. Null for files written before this field was introduced.
+         * @nullable
+         */
+      created_at: string | null;
+      /**
+         * ISO-8601 timestamp stamped on every write.
+         * @nullable
+         */
+      updated_at: string | null;
+    }
+
+    export interface AgentMemoryListResponse {
+      /** Number of entries returned. */
+      count: number;
+      /** Headers (frontmatter only) — no file bodies. Use the read endpoint for the body. */
+      entries: AgentMemoryHeader[];
+    }
+
+    export interface AgentMemorySearchResult {
+      path: string;
+      description: string;
+      tags: string[];
+      /** BM25 relevance score. */
+      score: number;
+      /**
+         * Body snippet around the earliest match. Null when only the header matched.
+         * @nullable
+         */
+      snippet: string | null;
+    }
+
+    export interface AgentMemorySearchResponse {
+      /** The original search cue, echoed back. */
+      cue: string;
+      count: number;
+      results: AgentMemorySearchResult[];
+    }
+
+    /**
+     * Folder tree rooted at the agent's memory prefix. Each node is {name, type: 'folder'|'file', path?, description?, tags?, children?}.
+     */
+    export type AgentMemoryTreeResponseRoot = { [key: string]: unknown };
+
+    export interface AgentMemoryTreeResponse {
+      /** Folder tree rooted at the agent's memory prefix. Each node is {name, type: 'folder'|'file', path?, description?, tags?, children?}. */
+      root: AgentMemoryTreeResponseRoot;
+    }
+
+    /**
+     * Body shape for AgentMemoryViewSet.write_file (create).
+     */
+    export interface AgentMemoryWriteRequest {
+      /** Where to store the file. Lowercase a-z 0-9 _ - / only, must end in .md. */
+      path: string;
+      /**
+         * One-line summary, max 280 chars. Surfaces in list/search results.
+         * @maxLength 280
+         */
+      description: string;
+      /** Full markdown body. */
+      content: string;
+      /** Optional flat tags for search ranking. Lowercase a-z 0-9 _ - only. */
+      tags?: string[];
+    }
+
     /**
      * * `product_analytics` - product_analytics
     * `sql` - sql
@@ -6929,6 +7630,257 @@ export namespace Schemas {
       Sandbox: 'sandbox',
       UserInterview: 'user_interview',
     } as const;
+
+    export type AgentNativeToolEntrySchema = { [key: string]: unknown };
+
+    export interface AgentNativeToolEntry {
+      id: string;
+      schema: AgentNativeToolEntrySchema;
+    }
+
+    export interface AgentNativeToolsListResponse {
+      tools: AgentNativeToolEntry[];
+    }
+
+    export type AgentRevisionSpecTriggersItem = {
+      type: 'slack';
+      config: {
+      channel_id?: string;
+      mention_only: boolean;
+      trusted_workspaces: string[] | '*';
+    };
+    } | {
+      type: 'webhook';
+      config: {
+      path: string;
+      secret?: string;
+    };
+    } | {
+      type: 'cron';
+      config: {
+      /** @minLength 1 */
+      name: string;
+      /** @minLength 1 */
+      schedule: string;
+      timezone?: string;
+      /**
+         * @minLength 1
+         * @maxLength 4096
+         */
+      prompt: string;
+      external_key?: string;
+      catch_up?: 'all' | 'most_recent' | 'skip';
+      /**
+         * @minimum 1
+         * @maximum 604800
+         */
+      max_catch_up_age_seconds?: number;
+    };
+    } | {
+      type: 'chat';
+      config: {
+      require_auth: boolean;
+    };
+    } | {
+      type: 'mcp';
+      config: { [key: string]: unknown };
+    };
+
+    export type AgentRevisionSpecToolsItem = {
+      kind: 'native';
+      id: string;
+    } | {
+      kind: 'custom';
+      id: string;
+      path: string;
+    } | {
+      kind: 'custom_template';
+      from_template: string;
+      alias: string;
+      /** @minimum 0 */
+      version?: number;
+    } | {
+      kind: 'client';
+      /** @minLength 1 */
+      id: string;
+      /** @minLength 1 */
+      description: string;
+      args_schema?: { [key: string]: unknown };
+      required?: boolean;
+      /**
+         * @minimum 1
+         * @maximum 60000
+         */
+      timeout_ms?: number;
+    };
+
+    export type AgentRevisionSpecMcpsItem = {
+      kind: 'agent';
+      slug: string;
+    } | {
+      kind: 'external';
+      url: string;
+      auth?: {
+      integration?: string;
+    };
+      allowlist?: string[];
+    };
+
+    export type AgentRevisionSpecSkillsItem = {
+      id: string;
+      path: string;
+      description?: string;
+      from_template?: string;
+      alias?: string;
+      /** @minimum 0 */
+      version?: number;
+    };
+
+    export type AgentRevisionSpecLimits = {
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_turns: number;
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_tool_calls: number;
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_wall_seconds: number;
+    };
+
+    export type AgentRevisionSpecAuthModesItem = {
+      type: 'public';
+    } | {
+      type: 'oauth';
+      /** @minLength 1 */
+      issuer: string;
+      scopes?: string[];
+    } | {
+      type: 'pat';
+    } | {
+      type: 'jwt';
+      /** @minLength 1 */
+      issuer_secret_ref: string;
+    } | {
+      type: 'shared_secret';
+      /** @minLength 1 */
+      header: string;
+    } | {
+      type: 'posthog_internal';
+    };
+
+    export type AgentRevisionSpecAuth = {
+      modes?: AgentRevisionSpecAuthModesItem[];
+    };
+
+    export type AgentRevisionSpecReasoning = typeof AgentRevisionSpecReasoning[keyof typeof AgentRevisionSpecReasoning];
+
+
+    export const AgentRevisionSpecReasoning = {
+      Minimal: 'minimal',
+      Low: 'low',
+      Medium: 'medium',
+      High: 'high',
+      Xhigh: 'xhigh',
+    } as const;
+
+    export type AgentRevisionSpec = {
+      /** @minLength 1 */
+      model: string;
+      triggers: AgentRevisionSpecTriggersItem[];
+      tools: AgentRevisionSpecToolsItem[];
+      mcps: AgentRevisionSpecMcpsItem[];
+      skills: AgentRevisionSpecSkillsItem[];
+      integrations: string[];
+      secrets: string[];
+      limits: AgentRevisionSpecLimits;
+      entrypoint: string;
+      auth: AgentRevisionSpecAuth;
+      reasoning?: AgentRevisionSpecReasoning;
+    };
+
+    /**
+     * * `draft` - draft
+    * `ready` - ready
+    * `live` - live
+    * `archived` - archived
+     */
+    export type AgentRevisionStateEnum = typeof AgentRevisionStateEnum[keyof typeof AgentRevisionStateEnum];
+
+
+    export const AgentRevisionStateEnum = {
+      Draft: 'draft',
+      Ready: 'ready',
+      Live: 'live',
+      Archived: 'archived',
+    } as const;
+
+    export interface AgentRevision {
+      readonly id: string;
+      readonly application: string;
+      /** @nullable */
+      parent_revision?: string | null;
+      readonly state: AgentRevisionStateEnum;
+      bundle_uri?: string;
+      /** @nullable */
+      readonly bundle_sha256: string | null;
+      spec?: AgentRevisionSpec;
+      /** @nullable */
+      readonly created_by: number | null;
+      readonly created_at: string;
+      readonly updated_at: string;
+    }
+
+    export interface AgentRevisionCronFireRequest {
+      /** `name` of the cron trigger in `spec.triggers[]` to fire. */
+      cron_name: string;
+      /**
+         * Stable client-supplied id so repeated clicks of the same UI 'Fire now' button resolve to the same session id rather than firing twice. The janitor keys dedupe off `cron-manual:<rev>:<name>:<request_id>`. Omit to fire unconditionally — every call generates a fresh UUID.
+         * @nullable
+         */
+      request_id?: string | null;
+    }
+
+    export interface AgentRevisionCronFireResponse {
+      ok: boolean;
+      /** ID of the session the cron firing created (or returned, on dedupe). */
+      session_id: string;
+      /** ISO-8601 timestamp the firing was attributed to. */
+      fired_at: string;
+      /** Composed dedupe key — `cron-manual:<rev>:<name>:<request_id>`. Returned so the UI can correlate. */
+      idempotency_key: string;
+      /** The request id the firing used (echoed back, or freshly minted). */
+      request_id: string;
+    }
+
+    export interface AgentRevisionSystemPromptResponse {
+      /** UUID of the revision the prompt was rendered for. */
+      revision_id: string;
+      /** Active framework preamble version. Bumps when the platform's `# Platform guidance` content changes meaningfully (decision rules, sections renamed, behavioural defaults flipped). Authors can pin to a specific version via `spec.framework_prompt.version_pin`. */
+      framework_prompt_version: number;
+      /** Fully-assembled system prompt the runner would pass to pi-ai for a session against this revision. Concatenates the platform framework preamble, the bundle's `agent.md` (or `spec.entrypoint`), and the skills index. Inspect before promotion to confirm the model will see what you expect — see docs/agent-platform/plans/framework-system-prompt.md §4. */
+      system_prompt: string;
+    }
+
+    export interface AgentRevisionValidationError {
+      code: string;
+      message: string;
+      pointer: string;
+    }
+
+    export interface AgentRevisionValidateResponse {
+      ok: boolean;
+      revision_id: string;
+      revision_state: string;
+      errors: AgentRevisionValidationError[];
+      resolved_natives: string[];
+    }
 
     export interface AggregatedSpanRow {
       avg_duration_nano: number;
@@ -10563,6 +11515,14 @@ export namespace Schemas {
       readonly elements_chain: string;
     }
 
+    /**
+     * Body shape for POST /revisions/<id>/clone_from/ — copy every file
+    from `source_revision_id` into this (draft) revision.
+     */
+    export interface CloneFromRequest {
+      source_revision_id: string;
+    }
+
     export interface DiffCluster {
       x: number;
       y: number;
@@ -11771,6 +12731,121 @@ export namespace Schemas {
       access_key: string;
       /** @maxLength 500 */
       access_secret: string;
+    }
+
+    export interface CustomToolTemplateCreate {
+      /**
+         * Slug-shaped name unique per team.
+         * @maxLength 128
+         */
+      name: string;
+      /**
+         * One-line description.
+         * @maxLength 4096
+         */
+      description?: string;
+      /** TypeScript source. */
+      source?: string;
+      /** Bundler output. The publisher (UI or MCP) computes this client-side. */
+      compiled_js?: string;
+      /** TypeBox / JSON Schema for tool args. */
+      args_schema?: unknown;
+      /** Optional TypeBox / JSON Schema for the return value. */
+      returns_schema?: unknown;
+      /** Names of secrets the tool reads via `ctx.secret(...)`. */
+      requires_secrets?: string[];
+    }
+
+    export interface CustomToolTemplateDetail {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      readonly version: number;
+      readonly is_latest: boolean;
+      readonly requires_secrets: readonly string[];
+      /** Number of frozen agent revisions pinning this template (any version). */
+      readonly usage_count: number;
+      /** Publisher. Null for canonical PostHog-owned templates. */
+      readonly created_by: UserBasic;
+      readonly updated_at: string;
+      /** TypeScript source the bundler compiles to `compiled_js`. */
+      source: string;
+      /** Last bundle output. Copied into `bundle/tools/<alias>/compiled.js` at freeze. */
+      compiled_js: string;
+      /** TypeBox / JSON Schema for tool args. */
+      args_schema: unknown;
+      /** Optional TypeBox / JSON Schema for the return value (informational). */
+      returns_schema?: unknown;
+    }
+
+    export interface CustomToolTemplateDuplicate {
+      /**
+         * Slug for the duplicate.
+         * @maxLength 128
+         */
+      name: string;
+      /**
+         * Description for the new template.
+         * @maxLength 4096
+         */
+      description?: string;
+    }
+
+    /**
+     * Structured edit applied to source.
+     */
+    export interface CustomToolTemplateEdit {
+      /** Text to locate (must match exactly once). */
+      old: string;
+      /** Replacement text. */
+      new: string;
+    }
+
+    export interface CustomToolTemplatePublish {
+      /**
+         * Overrides the prior description. Omit to keep the prior value.
+         * @maxLength 4096
+         */
+      description?: string;
+      /** Full new TypeScript source. Mutually exclusive with `edits`. */
+      source?: string;
+      /** Structured edits against the current source. */
+      edits?: CustomToolTemplateEdit[];
+      /** Updated bundle output. Required when `source` or `edits` are supplied. */
+      compiled_js?: string;
+      /** Overrides args_schema. Omit to keep prior value. */
+      args_schema?: unknown;
+      /** Overrides returns_schema. Omit to keep prior value. */
+      returns_schema?: unknown;
+      /** Overrides requires_secrets. Omit to keep prior value. */
+      requires_secrets?: string[];
+    }
+
+    export interface CustomToolTemplateSummary {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      readonly version: number;
+      readonly is_latest: boolean;
+      readonly requires_secrets: readonly string[];
+      /** Number of frozen agent revisions pinning this template (any version). */
+      readonly usage_count: number;
+      /** Publisher. Null for canonical PostHog-owned templates. */
+      readonly created_by: UserBasic;
+      readonly updated_at: string;
+    }
+
+    export interface CustomToolTemplateUsage {
+      /** Slug of the agent whose revision pins this tool. */
+      agent_slug: string;
+      /** Display name of the agent. */
+      agent_name: string;
+      /** Frozen revision id. */
+      revision_id: string;
+      /** First 8 chars of the revision id, for display. */
+      revision_short_id: string;
+      /** Tool version pinned at freeze. */
+      pinned_version: number;
     }
 
     export interface CustomerJourney {
@@ -13146,6 +14221,40 @@ export namespace Schemas {
     export interface DayItem {
       label: string;
       value: string | number;
+    }
+
+    /**
+     * Approver-edited tool arguments. Only honoured when the tool's `approval_policy.allow_edit` is `true`; otherwise the janitor returns 422.
+     */
+    export type DecideApprovalRequestEditedArgs = { [key: string]: unknown };
+
+    /**
+     * * `approve` - approve
+    * `reject` - reject
+     */
+    export type DecisionEnum = typeof DecisionEnum[keyof typeof DecisionEnum];
+
+
+    export const DecisionEnum = {
+      Approve: 'approve',
+      Reject: 'reject',
+    } as const;
+
+    /**
+     * Body shape for POST /agent_applications/<id>/approvals/<approval_id>/decide/.
+
+    See docs/agent-platform/plans/approval-gated-tools.md.
+     */
+    export interface DecideApprovalRequest {
+      /** The approver's decision. `approve` runs the tool platform-side with the (possibly edited) args; `reject` records a terminal rejection and wakes the session with a synthetic rejected tool_result.
+
+      * `approve` - approve
+      * `reject` - reject */
+      decision: DecisionEnum;
+      /** Approver-edited tool arguments. Only honoured when the tool's `approval_policy.allow_edit` is `true`; otherwise the janitor returns 422. */
+      edited_args?: DecideApprovalRequestEditedArgs;
+      /** Free-form approver note. Surfaces in the session's synthetic tool_result so the model can communicate the reason back to the user. */
+      reason?: string;
     }
 
     /**
@@ -21995,6 +23104,17 @@ export namespace Schemas {
     } as const;
 
     /**
+     * Body shape for POST /revisions/clone_from/ — atomically create a new
+    draft revision under `application_id` and clone its initial bundle from
+    `source_revision_id`. Convenience for the "edit live" flow so the MCP
+    doesn't have to do create-then-clone-from in two calls.
+     */
+    export interface NewDraftRevisionRequest {
+      application_id: string;
+      source_revision_id: string;
+    }
+
+    /**
      * * `table` - Table
     * `view` - View
     * `matview` - Mat View
@@ -22719,6 +23839,24 @@ export namespace Schemas {
       /** @nullable */
       previous?: string | null;
       results: ActivityLog[];
+    }
+
+    export interface PaginatedAgentApplicationList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: AgentApplication[];
+    }
+
+    export interface PaginatedAgentRevisionList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: AgentRevision[];
     }
 
     export interface PaginatedAlertList {
@@ -26751,6 +27889,214 @@ export namespace Schemas {
     export interface PatchedAddPersonsToStaticCohortRequest {
       /** List of person UUIDs to add to the cohort */
       person_ids?: string[];
+    }
+
+    export interface PatchedAgentApplication {
+      readonly id?: string;
+      readonly team?: number;
+      /** @maxLength 255 */
+      name?: string;
+      /** @maxLength 63 */
+      slug?: string;
+      description?: string;
+      /** @nullable */
+      readonly live_revision?: string | null;
+      archived?: boolean;
+      /** @nullable */
+      readonly archived_at?: string | null;
+      /** @nullable */
+      readonly created_by?: number | null;
+      readonly created_at?: string;
+      readonly updated_at?: string;
+    }
+
+    /**
+     * Body shape for AgentMemoryViewSet.update_file. Omitted fields preserve the existing value.
+     */
+    export interface PatchedAgentMemoryUpdateRequest {
+      /** @maxLength 280 */
+      description?: string;
+      content?: string;
+      tags?: string[];
+    }
+
+    export type PatchedAgentRevisionSpecTriggersItem = {
+      type: 'slack';
+      config: {
+      channel_id?: string;
+      mention_only: boolean;
+      trusted_workspaces: string[] | '*';
+    };
+    } | {
+      type: 'webhook';
+      config: {
+      path: string;
+      secret?: string;
+    };
+    } | {
+      type: 'cron';
+      config: {
+      /** @minLength 1 */
+      name: string;
+      /** @minLength 1 */
+      schedule: string;
+      timezone?: string;
+      /**
+         * @minLength 1
+         * @maxLength 4096
+         */
+      prompt: string;
+      external_key?: string;
+      catch_up?: 'all' | 'most_recent' | 'skip';
+      /**
+         * @minimum 1
+         * @maximum 604800
+         */
+      max_catch_up_age_seconds?: number;
+    };
+    } | {
+      type: 'chat';
+      config: {
+      require_auth: boolean;
+    };
+    } | {
+      type: 'mcp';
+      config: { [key: string]: unknown };
+    };
+
+    export type PatchedAgentRevisionSpecToolsItem = {
+      kind: 'native';
+      id: string;
+    } | {
+      kind: 'custom';
+      id: string;
+      path: string;
+    } | {
+      kind: 'custom_template';
+      from_template: string;
+      alias: string;
+      /** @minimum 0 */
+      version?: number;
+    } | {
+      kind: 'client';
+      /** @minLength 1 */
+      id: string;
+      /** @minLength 1 */
+      description: string;
+      args_schema?: { [key: string]: unknown };
+      required?: boolean;
+      /**
+         * @minimum 1
+         * @maximum 60000
+         */
+      timeout_ms?: number;
+    };
+
+    export type PatchedAgentRevisionSpecMcpsItem = {
+      kind: 'agent';
+      slug: string;
+    } | {
+      kind: 'external';
+      url: string;
+      auth?: {
+      integration?: string;
+    };
+      allowlist?: string[];
+    };
+
+    export type PatchedAgentRevisionSpecSkillsItem = {
+      id: string;
+      path: string;
+      description?: string;
+      from_template?: string;
+      alias?: string;
+      /** @minimum 0 */
+      version?: number;
+    };
+
+    export type PatchedAgentRevisionSpecLimits = {
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_turns: number;
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_tool_calls: number;
+      /**
+         * @maximum 2147483647
+         * @exclusiveMinimum 0
+         */
+      max_wall_seconds: number;
+    };
+
+    export type PatchedAgentRevisionSpecAuthModesItem = {
+      type: 'public';
+    } | {
+      type: 'oauth';
+      /** @minLength 1 */
+      issuer: string;
+      scopes?: string[];
+    } | {
+      type: 'pat';
+    } | {
+      type: 'jwt';
+      /** @minLength 1 */
+      issuer_secret_ref: string;
+    } | {
+      type: 'shared_secret';
+      /** @minLength 1 */
+      header: string;
+    } | {
+      type: 'posthog_internal';
+    };
+
+    export type PatchedAgentRevisionSpecAuth = {
+      modes?: PatchedAgentRevisionSpecAuthModesItem[];
+    };
+
+    export type PatchedAgentRevisionSpecReasoning = typeof PatchedAgentRevisionSpecReasoning[keyof typeof PatchedAgentRevisionSpecReasoning];
+
+
+    export const PatchedAgentRevisionSpecReasoning = {
+      Minimal: 'minimal',
+      Low: 'low',
+      Medium: 'medium',
+      High: 'high',
+      Xhigh: 'xhigh',
+    } as const;
+
+    export type PatchedAgentRevisionSpec = {
+      /** @minLength 1 */
+      model: string;
+      triggers: PatchedAgentRevisionSpecTriggersItem[];
+      tools: PatchedAgentRevisionSpecToolsItem[];
+      mcps: PatchedAgentRevisionSpecMcpsItem[];
+      skills: PatchedAgentRevisionSpecSkillsItem[];
+      integrations: string[];
+      secrets: string[];
+      limits: PatchedAgentRevisionSpecLimits;
+      entrypoint: string;
+      auth: PatchedAgentRevisionSpecAuth;
+      reasoning?: PatchedAgentRevisionSpecReasoning;
+    };
+
+    export interface PatchedAgentRevision {
+      readonly id?: string;
+      readonly application?: string;
+      /** @nullable */
+      parent_revision?: string | null;
+      readonly state?: AgentRevisionStateEnum;
+      bundle_uri?: string;
+      /** @nullable */
+      readonly bundle_sha256?: string | null;
+      spec?: PatchedAgentRevisionSpec;
+      /** @nullable */
+      readonly created_by?: number | null;
+      readonly created_at?: string;
+      readonly updated_at?: string;
     }
 
     export interface PatchedAlert {
@@ -36848,6 +38194,29 @@ export namespace Schemas {
     }
 
     /**
+     * Body shape for AgentApplicationViewSet.env_keys_set — single secret upsert.
+
+    The view merges `{KEY: value}` into the existing encrypted env block
+    without touching other keys, so callers can set or rotate one secret
+    without needing to read the whole block back.
+     */
+    export interface SetEnvKeyRequest {
+      value: string;
+    }
+
+    export type SetEnvRequestEnv = {[key: string]: string};
+
+    /**
+     * Body shape for AgentApplicationViewSet.set_env.
+
+    `env` is a JSON object of string→string. The view encrypts it via the
+    same Fernet schedule the worker uses to decrypt.
+     */
+    export interface SetEnvRequest {
+      env: SetEnvRequestEnv;
+    }
+
+    /**
      * * `trace` - trace
     * `debug` - debug
     * `info` - info
@@ -37055,6 +38424,212 @@ export namespace Schemas {
       slack_notification_min_priority?: AutonomyPriorityEnum | BlankEnum | null;
       readonly created_at: string;
       readonly updated_at: string;
+    }
+
+    export interface SkillTemplateFile {
+      readonly id: string;
+      /**
+         * Relative path inside the skill folder; may include subfolders (e.g. `references/api.md`, `scripts/run.py`, `assets/x/y.json`). Becomes `bundle/skills/<alias>/<path>` at freeze. No `..` traversal or absolute paths.
+         * @maxLength 512
+         */
+      path: string;
+      /** File body. Plain text or markdown — companion files are not interpreted by the runner. */
+      content: string;
+      /**
+         * MIME type hint. Read-only at runtime; aids the registry UI's file viewer.
+         * @maxLength 128
+         */
+      content_type?: string;
+    }
+
+    /**
+     * Initial-create payload — produces v1.
+     */
+    export interface SkillTemplateCreate {
+      /**
+         * Slug-shaped name unique per team (max 64 chars, per the Agent Skills spec). `@posthog/<slug>` is reserved for canonical templates.
+         * @maxLength 64
+         */
+      name: string;
+      /**
+         * Required description (1–1024 chars, per the Agent Skills spec) — what the skill does and when to use it. Shown in the list view + system-prompt skill index.
+         * @maxLength 1024
+         */
+      description: string;
+      /** Initial SKILL.md markdown body. Any leading YAML frontmatter is stripped at freeze — frontmatter is assembled from the structured fields. */
+      body?: string;
+      /**
+         * Agent Skills `license` frontmatter — license name or a reference to a bundled license file.
+         * @maxLength 256
+         */
+      license?: string;
+      /**
+         * Agent Skills `compatibility` frontmatter — environment requirements (intended product, packages, network access). Max 500 chars.
+         * @maxLength 500
+         */
+      compatibility?: string;
+      /** Optional companion files (scripts/, references/, assets/ — arbitrarily nested) at creation time. */
+      files?: SkillTemplateFile[];
+      /** Agent Skills `metadata` map (string → string) for non-promoted keys like author or version. */
+      metadata?: unknown;
+      /** Optional list of tool ids the skill expects to reach for. Emitted as the spec's space-separated `allowed-tools` frontmatter at freeze. */
+      allowed_tools?: unknown;
+    }
+
+    /**
+     * Detail shape: adds body + files. Used by the registry detail page.
+     */
+    export interface SkillTemplateDetail {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      readonly version: number;
+      readonly is_latest: boolean;
+      /** Number of companion files attached to the current version. */
+      readonly file_count: number;
+      /** Number of frozen agent revisions pinning this template (any version). */
+      readonly usage_count: number;
+      /** Agent Skills `license` frontmatter — license name or a reference to a bundled license file. Blank if unset. */
+      license: string;
+      /** Agent Skills `compatibility` frontmatter — environment requirements (intended product, packages, network). Blank if unset. */
+      compatibility: string;
+      readonly metadata: unknown;
+      readonly allowed_tools: unknown;
+      /** Publisher. Null for canonical PostHog-owned templates. */
+      readonly created_by: UserBasic;
+      readonly updated_at: string;
+      /** Markdown body. The `SKILL.md` equivalent. */
+      body: string;
+      /** Companion files attached to this version. */
+      readonly files: readonly SkillTemplateFile[];
+    }
+
+    export interface SkillTemplateDuplicate {
+      /**
+         * Slug for the new duplicate (max 64 chars). Must not collide with an existing template.
+         * @maxLength 64
+         */
+      name: string;
+      /**
+         * Description for the new template (1–1024 chars, non-empty). Omit to keep the source's description.
+         * @maxLength 1024
+         */
+      description?: string;
+    }
+
+    /**
+     * A single find/replace edit applied to body or a file's content.
+     */
+    export interface SkillTemplateEdit {
+      /** Text to locate (must match exactly once). */
+      old: string;
+      /** Replacement text. */
+      new: string;
+      /**
+         * Apply this edit to a companion file instead of the body. Null/omitted = body edit.
+         * @nullable
+         */
+      file_path?: string | null;
+    }
+
+    export interface SkillTemplateFileRename {
+      /**
+         * Existing file path inside the skill folder (subfolders allowed).
+         * @maxLength 512
+         */
+      from_path: string;
+      /**
+         * New path (subfolders allowed); may move the file between subfolders. Must not collide with another file.
+         * @maxLength 512
+         */
+      to_path: string;
+    }
+
+    export interface SkillTemplateFileWrite {
+      /**
+         * Relative path inside the skill folder; may include subfolders (e.g. `references/api.md`, `scripts/run.py`). No `..` traversal or absolute paths.
+         * @maxLength 512
+         */
+      path: string;
+      /** File body. */
+      content: string;
+      /**
+         * MIME type hint.
+         * @maxLength 128
+         */
+      content_type?: string;
+    }
+
+    /**
+     * Publish a new version.
+
+    Supply EITHER `body` (full overwrite) OR `edits` (structured
+    find/replace). The viewset rejects requests carrying both.
+     */
+    export interface SkillTemplatePublish {
+      /**
+         * Overrides the prior description (1–1024 chars, non-empty). Omit to keep the prior value.
+         * @maxLength 1024
+         */
+      description?: string;
+      /** Full new body. Mutually exclusive with `edits`. */
+      body?: string;
+      /** Structured edits. Each `old` must match exactly once in the current body / file. */
+      edits?: SkillTemplateEdit[];
+      /**
+         * Overrides the `license` frontmatter. Omit to keep the prior value.
+         * @maxLength 256
+         */
+      license?: string;
+      /**
+         * Overrides the `compatibility` frontmatter (max 500 chars). Omit to keep the prior value.
+         * @maxLength 500
+         */
+      compatibility?: string;
+      /** Overrides the metadata map. Omit to keep the prior value. */
+      metadata?: unknown;
+      /** Overrides allowed_tools. Omit to keep the prior value. */
+      allowed_tools?: unknown;
+    }
+
+    /**
+     * List shape — no body / file contents (keeps the index page fast).
+     */
+    export interface SkillTemplateSummary {
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      readonly version: number;
+      readonly is_latest: boolean;
+      /** Number of companion files attached to the current version. */
+      readonly file_count: number;
+      /** Number of frozen agent revisions pinning this template (any version). */
+      readonly usage_count: number;
+      /** Agent Skills `license` frontmatter — license name or a reference to a bundled license file. Blank if unset. */
+      license: string;
+      /** Agent Skills `compatibility` frontmatter — environment requirements (intended product, packages, network). Blank if unset. */
+      compatibility: string;
+      readonly metadata: unknown;
+      readonly allowed_tools: unknown;
+      /** Publisher. Null for canonical PostHog-owned templates. */
+      readonly created_by: UserBasic;
+      readonly updated_at: string;
+    }
+
+    /**
+     * Read shape returned by `…/usages/`. Sourced from the join table.
+     */
+    export interface SkillTemplateUsage {
+      /** Slug of the agent whose revision pins this template. */
+      agent_slug: string;
+      /** Display name of the agent. */
+      agent_name: string;
+      /** Frozen revision id. */
+      revision_id: string;
+      /** First 8 chars of the revision id, for display. */
+      revision_short_id: string;
+      /** Template version pinned at freeze. */
+      pinned_version: number;
     }
 
     export interface SlackChannel {
@@ -38623,6 +40198,20 @@ export namespace Schemas {
       readonly available_setup_task_ids: readonly AvailableSetupTaskIdsEnum[];
     }
 
+    /**
+     * Read shape used by `…/versions/` on both template families.
+     */
+    export interface TemplateVersionEntry {
+      /** Version number. */
+      version: number;
+      /** True for the current row in this version's name lineage. */
+      is_latest: boolean;
+      /** Publisher. Null for canonical. */
+      created_by: UserBasic | null;
+      /** When this version was published. */
+      updated_at: string;
+    }
+
     export type TestHogRequestConditionsItem = { [key: string]: unknown };
 
     export interface TestHogRequest {
@@ -39250,6 +40839,39 @@ export namespace Schemas {
     export interface WidgetCatalogResponse {
       /** Registered dashboard widget types available when dashboard-widgets is enabled. */
       results: WidgetCatalogEntry[];
+    }
+
+    export type WriteBundleRequestFiles = {[key: string]: string};
+
+    /**
+     * * `replace` - replace
+    * `merge` - merge
+     */
+    export type WriteBundleRequestModeEnum = typeof WriteBundleRequestModeEnum[keyof typeof WriteBundleRequestModeEnum];
+
+
+    export const WriteBundleRequestModeEnum = {
+      Replace: 'replace',
+      Merge: 'merge',
+    } as const;
+
+    /**
+     * Body shape for PUT /revisions/<id>/bundle/ — the bulk upload.
+
+    `files` is a `{path: utf-8 content}` map. `mode='replace'` wipes the
+    existing bundle before writing the new set; `'merge'` upserts.
+     */
+    export interface WriteBundleRequest {
+      files: WriteBundleRequestFiles;
+      mode?: WriteBundleRequestModeEnum;
+    }
+
+    /**
+     * Body shape for PUT /revisions/<id>/file/. `path` lives in the query
+    string (matches the janitor wire format); `content` is the new file body.
+     */
+    export interface WriteFileRequest {
+      content: string;
     }
 
     export interface _CompareFilter {
@@ -44471,6 +46093,8 @@ export namespace Schemas {
     * `ProductTour` - ProductTour
     * `Ticket` - Ticket
     * `InstanceSetting` - InstanceSetting
+    * `AgentApplication` - AgentApplication
+    * `AgentRevision` - AgentRevision
      * @minLength 1
      */
     scope?: ActivityLogListScope;
@@ -44549,6 +46173,8 @@ export namespace Schemas {
       ProductTour: 'ProductTour',
       Ticket: 'Ticket',
       InstanceSetting: 'InstanceSetting',
+      AgentApplication: 'AgentApplication',
+      AgentRevision: 'AgentRevision',
     } as const;
 
     /**
@@ -44613,6 +46239,8 @@ export namespace Schemas {
     * `ProductTour` - ProductTour
     * `Ticket` - Ticket
     * `InstanceSetting` - InstanceSetting
+    * `AgentApplication` - AgentApplication
+    * `AgentRevision` - AgentRevision
      */
     export type ActivityLogListScopesItem = typeof ActivityLogListScopesItem[keyof typeof ActivityLogListScopesItem];
 
@@ -44679,6 +46307,8 @@ export namespace Schemas {
       ProductTour: 'ProductTour',
       Ticket: 'Ticket',
       InstanceSetting: 'InstanceSetting',
+      AgentApplication: 'AgentApplication',
+      AgentRevision: 'AgentRevision',
     } as const;
 
     export type AdvancedActivityLogsListParams = {
@@ -44752,6 +46382,292 @@ export namespace Schemas {
      */
     was_impersonated?: boolean | null;
     };
+
+    export type AgentApplicationsListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
+    };
+
+    export type AgentMemoryListFilesParams = {
+    /**
+     * Optional path prefix to scope the list, e.g. 'incidents/'.
+     */
+    prefix?: string;
+    };
+
+    export type AgentMemoryGetFileParams = {
+    /**
+     * Memory path returned by the list endpoint, e.g. 'incidents/db.md'.
+     */
+    path: string;
+    };
+
+    export type AgentMemoryUpdateFileParams = {
+    /**
+     * Memory path to update.
+     */
+    path: string;
+    };
+
+    export type AgentMemoryDeleteFileParams = {
+    /**
+     * Memory path to delete.
+     */
+    path: string;
+    };
+
+    export type AgentMemorySearchParams = {
+    /**
+     * Max results (default 10, max 100).
+     */
+    limit?: number;
+    /**
+     * Optional path prefix to scope the search.
+     */
+    prefix?: string;
+    /**
+     * Search cue — plain natural language is fine.
+     */
+    q: string;
+    };
+
+    export type AgentApplicationsRevisionsListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
+    };
+
+    export type AgentApplicationsRevisionsFileRetrieveParams = {
+    /**
+     * Bundle-relative file path, e.g. `agent.md` or `skills/research.md`.
+     */
+    path: string;
+    };
+
+    export type AgentApplicationsRevisionsFileUpdateParams = {
+    /**
+     * Bundle-relative file path, e.g. `agent.md` or `skills/research.md`.
+     */
+    path: string;
+    };
+
+    export type AgentApplicationsRevisionsFileDestroyParams = {
+    /**
+     * Bundle-relative file path, e.g. `agent.md` or `skills/research.md`.
+     */
+    path: string;
+    };
+
+    export type AgentApplicationsApprovalsListParams = {
+    limit?: number;
+    offset?: number;
+    /**
+     * Filter by approval state. Comma-separated list accepted. Valid values: queued, approving, dispatched, dispatched_failed, rejected, expired. Defaults to all states.
+     */
+    state?: string;
+    };
+
+    export type AgentApplicationsPreviewProxyGetParams = {
+    format?: AgentApplicationsPreviewProxyGetFormat;
+    /**
+     * Target draft revision. Must belong to this application and not be live.
+     */
+    revision_id: string;
+    };
+
+    export type AgentApplicationsPreviewProxyGetFormat = typeof AgentApplicationsPreviewProxyGetFormat[keyof typeof AgentApplicationsPreviewProxyGetFormat];
+
+
+    export const AgentApplicationsPreviewProxyGetFormat = {
+      Json: 'json',
+      Sse: 'sse',
+    } as const;
+
+    export type AgentApplicationsPreviewProxyParams = {
+    format?: AgentApplicationsPreviewProxyFormat;
+    /**
+     * Target draft revision. Must belong to this application and not be live.
+     */
+    revision_id: string;
+    };
+
+    export type AgentApplicationsPreviewProxyFormat = typeof AgentApplicationsPreviewProxyFormat[keyof typeof AgentApplicationsPreviewProxyFormat];
+
+
+    export const AgentApplicationsPreviewProxyFormat = {
+      Json: 'json',
+      Sse: 'sse',
+    } as const;
+
+    export type AgentApplicationsPreviewTokenParams = {
+    /**
+     * Target draft revision. Must belong to this application and not be live.
+     */
+    revision_id: string;
+    };
+
+    export type AgentApplicationsSessionsListParams = {
+    /**
+     * ISO datetime — return sessions with created_at >= this.
+     */
+    created_after?: string;
+    /**
+     * ISO datetime — return sessions with created_at <= this.
+     */
+    created_before?: string;
+    limit?: number;
+    offset?: number;
+    /**
+     * Only return sessions started against this specific revision.
+     */
+    revision_id?: string;
+    /**
+     * Filter by session state. Comma-separated list accepted (e.g. `completed,failed`). Valid values: queued, running, completed, closed, cancelled, failed.
+     */
+    state?: string;
+    };
+
+    export type AgentApplicationsSessionsRetrieveParams = {
+    /**
+     * If set, return only the most recent N messages from the conversation. `usage_total` is still computed over the full session — only the transcript is trimmed. The response includes `conversation_trimmed: true` and `conversation_total_turns` so the caller knows how much was hidden.
+     */
+    last_n?: number;
+    };
+
+    export type AgentApplicationsSessionLogsParams = {
+    /**
+     * Only return entries after this ISO 8601 timestamp.
+     */
+    after?: string;
+    /**
+     * Only return entries before this ISO 8601 timestamp.
+     */
+    before?: string;
+    /**
+     * Filter logs to a specific execution instance.
+     * @minLength 1
+     */
+    instance_id?: string;
+    /**
+     * Comma-separated log levels to include, e.g. 'WARN,ERROR'. Valid levels: DEBUG, LOG, INFO, WARN, ERROR.
+     * @minLength 1
+     */
+    level?: string;
+    /**
+     * Maximum number of log entries to return (1-500, default 50).
+     * @minimum 1
+     * @maximum 500
+     */
+    limit?: number;
+    /**
+     * Case-insensitive substring search across log messages.
+     * @minLength 1
+     */
+    search?: string;
+    };
+
+    export type AgentApplicationsStatsParams = {
+    /**
+     * ISO datetime — counts spend + session totals from this point forward. Defaults to 24h ago.
+     */
+    since?: string;
+    };
+
+    export type AgentCustomToolTemplatesListParams = {
+    /**
+     * Optional substring filter against name + description.
+     */
+    search?: string;
+    };
+
+    export type AgentCustomToolTemplatesNameRetrieveParams = {
+    /**
+     * Fetch a specific version.
+     */
+    version?: number;
+    };
+
+    export type AgentCustomToolTemplatesNameUsagesListParams = {
+    /**
+     * Filter to a specific pinned version.
+     */
+    pinned_version?: number;
+    };
+
+    export type AgentFleetLiveSessionsParams = {
+    /**
+     * Cap on returned sessions (default 100, max 500).
+     */
+    limit?: number;
+    };
+
+    export type AgentFleetStatsParams = {
+    /**
+     * ISO datetime — counts spend + session totals from this point forward. Defaults to 24h ago.
+     */
+    since?: string;
+    };
+
+    export type AgentSkillTemplatesListParams = {
+    /**
+     * Optional substring filter against name + description.
+     */
+    search?: string;
+    };
+
+    export type AgentSkillTemplatesNameRetrieveParams = {
+    /**
+     * Fetch a specific version. Omit for the current `is_latest=true` row.
+     */
+    version?: number;
+    };
+
+    export type AgentSkillTemplatesNameUsagesListParams = {
+    /**
+     * Filter to revisions stuck on a specific version (`/?pinned_version=3`).
+     */
+    pinned_version?: number;
+    };
+
+    export type AiGatewayLedgerListParams = {
+    /**
+     * Opaque keyset cursor returned by a prior request.
+     */
+    cursor?: string;
+    /**
+     * Page size (default 50, max 200).
+     */
+    limit?: number;
+    /**
+     * Filter to entries whose reference_id starts with this prefix. Use 'agent:<session_id>:' to scope to one session.
+     */
+    reference_id_prefix?: string;
+    /**
+     * Filter to entries of a single transaction type.
+     */
+    transaction_type?: AiGatewayLedgerListTransactionType;
+    };
+
+    export type AiGatewayLedgerListTransactionType = typeof AiGatewayLedgerListTransactionType[keyof typeof AiGatewayLedgerListTransactionType];
+
+
+    export const AiGatewayLedgerListTransactionType = {
+      Adjustment: 'adjustment',
+      Debit: 'debit',
+      Refund: 'refund',
+      Topup: 'topup',
+    } as const;
 
     export type AlertsListParams = {
     /**

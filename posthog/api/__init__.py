@@ -34,6 +34,14 @@ import products.customer_analytics.backend.api.views as customer_analytics
 import products.data_warehouse.backend.api.fix_hogql as fix_hogql
 import products.mcp_store.backend.presentation.views as mcp_store
 import products.legal_documents.backend.presentation.views as legal_documents
+from products.agent_stack.backend.api import (
+    AgentApplicationViewSet,
+    AgentFleetViewSet,
+    AgentMemoryViewSet,
+    AgentNativeToolsViewSet,
+    AgentRevisionViewSet,
+)
+from products.agent_stack.backend.registry_api import AgentCustomToolTemplateViewSet, AgentSkillTemplateViewSet
 from products.ai_observability.backend.api import (
     AIObservabilityClusteringRunViewSet,
     AIObservabilityOfflineEvaluationsViewSet,
@@ -150,6 +158,8 @@ from ..session_recordings.session_recording_playlist_api import SessionRecording
 from ..taxonomy import property_definition_api
 from . import (
     advanced_activity_logs,
+    ai_gateway,
+    annotation,
     async_migration,
     authentication,
     cimd_verification_token,
@@ -1516,6 +1526,58 @@ projects_router.register(
     "project_visual_review_runs",
     ["project_id"],
 )
+
+projects_router.register(
+    r"ai_gateway",
+    ai_gateway.AIGatewayViewSet,
+    "project_ai_gateway",
+    ["project_id"],
+)
+
+agent_applications_router = projects_router.register(
+    r"agent_applications",
+    AgentApplicationViewSet,
+    "project_agent_applications",
+    ["project_id"],
+)
+agent_applications_router.register(
+    r"revisions",
+    AgentRevisionViewSet,
+    "project_agent_application_revisions",
+    ["project_id", "application_id"],
+)
+agent_applications_router.register(
+    r"memory",
+    AgentMemoryViewSet,
+    "project_agent_application_memory",
+    ["project_id", "application_id"],
+)
+projects_router.register(
+    r"agent_native_tools",
+    AgentNativeToolsViewSet,
+    "project_agent_native_tools",
+    ["project_id"],
+)
+projects_router.register(
+    r"agent_skill_templates",
+    AgentSkillTemplateViewSet,
+    "project_agent_skill_templates",
+    ["project_id"],
+)
+projects_router.register(
+    r"agent_custom_tool_templates",
+    AgentCustomToolTemplateViewSet,
+    "project_agent_custom_tool_templates",
+    ["project_id"],
+)
+projects_router.register(
+    r"agent_fleet",
+    AgentFleetViewSet,
+    "project_agent_fleet",
+    ["project_id"],
+)
+# Session reads go to the runtime DB via the janitor (GET /sessions/:id) —
+# Django's API doesn't expose them, see products/agent_stack/README.md.
 
 register_legacy_dual_route_team_nested_viewset(
     r"tracing/spans",

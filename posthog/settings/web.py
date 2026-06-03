@@ -75,6 +75,8 @@ PRODUCTS_APPS = [
     "products.access_control.backend.apps.AccessControlConfig",
     "products.warehouse_sources_queue.backend.apps.WarehouseSourcesQueueConfig",
     "products.business_knowledge.backend.apps.BusinessKnowledgeConfig",
+    "products.agent_stack.backend.apps.AgentStackConfig",
+    "products.deployments.backend.apps.DeploymentsConfig",
     "products.web_analytics.backend.apps.WebAnalyticsConfig",
     "products.warehouse_sources.backend.apps.WarehouseSourcesConfig",
     "products.data_tools.backend.apps.DataToolsConfig",
@@ -509,6 +511,7 @@ SPECTACULAR_SETTINGS = {
             "workflow_variable",
         ],
         "AssigneeTypeEnum": ["user", "role"],
+        "AgentSessionStateEnum": ["queued", "running", "completed", "closed", "cancelled", "failed"],
         "FileFormatEnum": ["Parquet", "JSONLines"],
         "ErrorTrackingIssueOrderByEnum": ["last_seen", "first_seen", "occurrences", "users", "sessions"],
         "ErrorTrackingIssueStatusEnum": ["archived", "active", "resolved", "pending_release", "suppressed", "all"],
@@ -819,3 +822,14 @@ ELEMENT_STATS_DEFAULT_LIMIT = get_from_env("ELEMENT_STATS_DEFAULT_LIMIT", 50_000
 
 # Sharing configuration settings
 SHARING_TOKEN_GRACE_PERIOD_SECONDS = 60 * 5  # 5 minutes
+
+# Agent janitor service — Django proxies session list/detail/cancel requests to this URL.
+AGENT_JANITOR_BASE_URL = os.getenv("AGENT_JANITOR_BASE_URL", "http://localhost:3031")
+AGENT_JANITOR_SHARED_KEY = os.getenv("AGENT_INTERNAL_API_SHARED_KEY", "dev-shared-key")
+
+# ai-gateway billing read plane — Django proxies wallet + ledger reads to this URL.
+# Defaults to the well-known dev secret baked into ai-gateway/bin/start so
+# `/billing` works out of the box. Prod MUST override both via env. Mismatched
+# secret → billing returns 401 → Django surfaces 502 to the caller.
+AI_GATEWAY_BILLING_URL = os.getenv("AI_GATEWAY_BILLING_URL", "http://localhost:8089")
+AI_GATEWAY_BILLING_INTERNAL_SECRET = os.getenv("AI_GATEWAY_BILLING_INTERNAL_SECRET", "dev-local-only-secret-change-me")

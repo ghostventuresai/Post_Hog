@@ -23,16 +23,17 @@ parse_args() {
 }
 
 show_usage() {
-    echo "Usage: $0 <all|persons|cyclotron|cyclotron-node|behavioral-cohorts|flags-read-store> [--fresh]"
-    echo "  all                - Run all migrations"
-    echo "  persons            - Run only persons migrations"
-    echo "  cyclotron          - Run only cyclotron migrations"
-    echo "  cyclotron-node     - Run only cyclotron node migrations"
-    echo "  behavioral-cohorts - Run only behavioral cohorts migrations"
-    echo "  flags-read-store   - Run only flags read store migrations"
+    echo "Usage: $0 <all|persons|cyclotron|cyclotron-node|behavioral-cohorts|flags-read-store|agent-runtime-queue> [--fresh]"
+    echo "  all                  - Run all migrations"
+    echo "  persons              - Run only persons migrations"
+    echo "  cyclotron            - Run only cyclotron migrations"
+    echo "  cyclotron-node       - Run only cyclotron node migrations"
+    echo "  behavioral-cohorts   - Run only behavioral cohorts migrations"
+    echo "  flags-read-store     - Run only flags read store migrations"
+    echo "  agent-runtime-queue  - Run only agent-runtime queue migrations"
     echo ""
     echo "Options:"
-    echo "  --fresh            - Drop and recreate database before migrating (for test environments)"
+    echo "  --fresh              - Drop and recreate database before migrating (for test environments)"
 }
 
 parse_args "$@"
@@ -188,6 +189,11 @@ run_flags_read_store_migrations() {
         log_json "info" "Migrations completed successfully" "completed" "$db_type"
     fi
 }
+
+# NOTE: agent-runtime-queue migrations moved to services/agent-migrations
+# (node-pg-migrate). The k8s migration job for the v2 agent platform now
+# runs `pnpm --filter @posthog/agent-migrations migrate` from a node image
+# instead of going through this sqlx entrypoint.
 
 case "$MIGRATION_TYPE" in
     persons)
