@@ -1,3 +1,4 @@
+import { Properties } from '~/plugin-scaffold'
 import { forSnapshot } from '~/tests/helpers/snapshots'
 
 import {
@@ -9,8 +10,14 @@ import {
 import { defaultConfig } from '../config/config'
 import { Hub, Team } from '../types'
 import { closeHub, createHub } from './db/hub'
-import { PostgresRouter } from './db/postgres'
+import { PostgresRouter, PostgresUse } from './db/postgres'
+import { captureTeamEvent } from './posthog'
 import { TeamManager } from './team-manager'
+
+jest.mock('./posthog', () => ({
+    ...jest.requireActual('./posthog'),
+    captureTeamEvent: jest.fn(),
+}))
 
 describe('TeamManager()', () => {
     let hub: Hub
@@ -58,6 +65,7 @@ describe('TeamManager()', () => {
                   "heatmaps_opt_in": null,
                   "id": 2,
                   "ingested_event": true,
+                  "ingested_production_event": false,
                   "logs_settings": null,
                   "name": "TEST PROJECT",
                   "organization_id": "<REPLACED-UUID-1>",
@@ -226,6 +234,111 @@ describe('TeamManager()', () => {
             ])
             const result = await teamManager.hasAvailableFeature(teamId, 'data_pipelines')
             expect(result).toBe(true)
+        })
+    })
+
+    describe('setTeamIngestedEvent()', () => {
+        const PRODUCTION_PROPERTIES: Properties = { $host: 'app.posthog.com', $lib: 'web', realm: 'cloud' }
+        const LOCALHOST_PROPERTIES: Properties = { $host: 'localhost:3000', $lib: 'web', realm: 'cloud' }
+        const SERVER_SIDE_PROPERTIES: Properties = { $lib: 'posthog-python', realm: 'hosted' } // no $host
+
+        const fetchFlags = async (
+            id: number
+        ): Promise<{ ingested_event: boolean; ingested_production_event: boolean }> => {
+            const result = await postgres.query<{ ingested_event: boolean; ingested_production_event: boolean }>(
+                PostgresUse.COMMON_READ,
+                'SELECT ingested_event, ingested_production_event FROM posthog_team WHERE id = $1',
+                [id],
+                'test-fetch-ingestion-flags'
+            )
+            return result.rows[0]
+        }
+
+        const teamWithFlags = async (flags: {
+            ingested_event: boolean
+            ingested_production_event: boolean
+        }): Promise<Team> => {
+            const newTeamId = await createTeam(postgres, organizationId, undefined, flags)
+            return (await teamManager.getTeam(newTeamId))!
+        }
+
+        beforeEach(() => {
+            jest.mocked(captureTeamEvent).mockClear()
+        })
+
+        it('fires both flags when a fresh team ingests a production event', async () => {
+            const team = await teamWithFlags({ ingested_event: false, ingested_production_event: false })
+
+            await teamManager.setTeamIngestedEvent(team, PRODUCTION_PROPERTIES)
+
+            expect(await fetchFlags(team.id)).toEqual({ ingested_event: true, ingested_production_event: true })
+            expect(captureTeamEvent).toHaveBeenCalledTimes(2)
+            expect(captureTeamEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ id: team.id }),
+                'first team event ingested',
+                { sdk: 'web', realm: 'cloud', host: 'app.posthog.com' },
+                expect.any(String)
+            )
+            expect(captureTeamEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ id: team.id }),
+                'first team production event ingested',
+                { sdk: 'web', realm: 'cloud', host: 'app.posthog.com' },
+                expect.any(String)
+            )
+        })
+
+        it('fires only the first-event flag for a localhost (dev) event', async () => {
+            const team = await teamWithFlags({ ingested_event: false, ingested_production_event: false })
+
+            await teamManager.setTeamIngestedEvent(team, LOCALHOST_PROPERTIES)
+
+            expect(await fetchFlags(team.id)).toEqual({ ingested_event: true, ingested_production_event: false })
+            expect(captureTeamEvent).toHaveBeenCalledTimes(1)
+            expect(captureTeamEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ id: team.id }),
+                'first team event ingested',
+                expect.any(Object),
+                expect.any(String)
+            )
+        })
+
+        it('fires only the first-event flag for a server-side event with no host signal', async () => {
+            const team = await teamWithFlags({ ingested_event: false, ingested_production_event: false })
+
+            await teamManager.setTeamIngestedEvent(team, SERVER_SIDE_PROPERTIES)
+
+            expect(await fetchFlags(team.id)).toEqual({ ingested_event: true, ingested_production_event: false })
+            expect(captureTeamEvent).toHaveBeenCalledTimes(1)
+            expect(captureTeamEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ id: team.id }),
+                'first team event ingested',
+                expect.any(Object),
+                expect.any(String)
+            )
+        })
+
+        it('fires the production flag late, for a team that already ingested its first (dev) event', async () => {
+            const team = await teamWithFlags({ ingested_event: true, ingested_production_event: false })
+
+            await teamManager.setTeamIngestedEvent(team, PRODUCTION_PROPERTIES)
+
+            expect(await fetchFlags(team.id)).toEqual({ ingested_event: true, ingested_production_event: true })
+            expect(captureTeamEvent).toHaveBeenCalledTimes(1)
+            expect(captureTeamEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ id: team.id }),
+                'first team production event ingested',
+                expect.any(Object),
+                expect.any(String)
+            )
+        })
+
+        it('is a no-op when both flags are already set', async () => {
+            const team = await teamWithFlags({ ingested_event: true, ingested_production_event: true })
+
+            await teamManager.setTeamIngestedEvent(team, PRODUCTION_PROPERTIES)
+
+            expect(await fetchFlags(team.id)).toEqual({ ingested_event: true, ingested_production_event: true })
+            expect(captureTeamEvent).not.toHaveBeenCalled()
         })
     })
 })

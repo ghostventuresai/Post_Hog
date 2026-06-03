@@ -2,8 +2,14 @@ import { Properties } from '~/plugin-scaffold'
 
 import { OrganizationAvailableFeature, ProjectId, Team } from '../types'
 import { PostgresRouter, PostgresUse } from './db/postgres'
+import { isProductionEventOrigin } from './event-origin'
 import { LazyLoader } from './lazy-loader'
 import { captureTeamEvent } from './posthog'
+
+// Write-once Team flags that mark a product-activation milestone. Constrained to a
+// literal union so the column can be safely interpolated into the UPDATE below
+// (there is no user input here, no injection vector).
+type TeamIngestionFlag = 'ingested_event' | 'ingested_production_event'
 
 type RawTeam = Omit<Team, 'available_features'> & {
     available_product_features: { key: string; name: string }[]
@@ -45,37 +51,61 @@ export class TeamManager {
     }
 
     public async setTeamIngestedEvent(team: Team, properties: Properties): Promise<void> {
+        // Two independent, at-most-once guards. A team that fired `first team event ingested`
+        // long ago (almost always from a developer's localhost during setup) still fires
+        // `first team production event ingested` later, when its first real production event
+        // lands. Both can fire on the same event if a team's very first event is production.
         if (!team.ingested_event) {
-            await this.postgres.query(
-                PostgresUse.COMMON_WRITE,
-                `UPDATE posthog_team SET ingested_event = $1 WHERE id = $2`,
-                [true, team.id],
-                'setTeamIngestedEvent'
+            await this.markTeamFlagAndCapture(team, 'ingested_event', 'first team event ingested', properties)
+        }
+
+        if (!team.ingested_production_event && isProductionEventOrigin(properties)) {
+            await this.markTeamFlagAndCapture(
+                team,
+                'ingested_production_event',
+                'first team production event ingested',
+                properties
             )
+        }
+    }
 
-            // Invalidate the cache for this team
-            this.lazyLoader.markForRefresh(String(team.id))
+    private async markTeamFlagAndCapture(
+        team: Team,
+        flag: TeamIngestionFlag,
+        event: string,
+        properties: Properties
+    ): Promise<void> {
+        // `flag` is a compile-time-constrained literal (not user input), so interpolating it
+        // is safe — there is no SQL injection vector.
+        await this.postgres.query(
+            PostgresUse.COMMON_WRITE,
+            `UPDATE posthog_team SET ${flag} = true WHERE id = $1`,
+            [team.id],
+            'markTeamFlagAndCapture'
+        )
 
-            const organizationMembers = await this.postgres.query(
-                PostgresUse.COMMON_WRITE,
-                'SELECT distinct_id FROM posthog_user JOIN posthog_organizationmembership ON posthog_user.id = posthog_organizationmembership.user_id WHERE organization_id = $1',
-                [team.organization_id],
-                'posthog_organizationmembership'
+        // Invalidate the cache for this team
+        this.lazyLoader.markForRefresh(String(team.id))
+
+        const organizationMembers = await this.postgres.query(
+            PostgresUse.COMMON_WRITE,
+            'SELECT distinct_id FROM posthog_user JOIN posthog_organizationmembership ON posthog_user.id = posthog_organizationmembership.user_id WHERE organization_id = $1',
+            [team.organization_id],
+            'posthog_organizationmembership'
+        )
+
+        const distinctIds: { distinct_id: string }[] = organizationMembers.rows
+        for (const { distinct_id } of distinctIds) {
+            captureTeamEvent(
+                team,
+                event,
+                {
+                    sdk: properties.$lib,
+                    realm: properties.realm,
+                    host: properties.$host,
+                },
+                distinct_id
             )
-
-            const distinctIds: { distinct_id: string }[] = organizationMembers.rows
-            for (const { distinct_id } of distinctIds) {
-                captureTeamEvent(
-                    team,
-                    'first team event ingested',
-                    {
-                        sdk: properties.$lib,
-                        realm: properties.realm,
-                        host: properties.$host,
-                    },
-                    distinct_id
-                )
-            }
         }
     }
 
@@ -114,6 +144,7 @@ export class TeamManager {
                 t.person_processing_opt_out,
                 t.heatmaps_opt_in,
                 t.ingested_event,
+                t.ingested_production_event,
                 t.person_display_name_properties,
                 t.cookieless_server_hash_mode,
                 t.timezone,
