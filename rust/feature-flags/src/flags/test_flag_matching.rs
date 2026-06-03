@@ -1,14 +1,17 @@
 #[cfg(test)]
 mod tests {
+    use common_geoip::MockGeoIpClient;
     use common_types::TeamId;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
     use uuid::Uuid;
 
     use crate::{
         api::types::{FlagValue, LegacyFlagsResponse},
         cohorts::cohort_cache_manager::CohortCacheManager,
+        flags::flag_request::FlagRequest,
         flags::{
             feature_flag_list::PreparedFlags,
             flag_group_type_mapping::GroupTypeCacheManager,
@@ -23,6 +26,7 @@ mod tests {
                 Holdout, MultivariateFlagOptions, MultivariateFlagVariant,
             },
         },
+        handler::properties,
         mock,
         properties::property_models::{OperatorType, PropertyFilter, PropertyType},
         utils::{
@@ -276,6 +280,74 @@ mod tests {
             get_fetch_calls_count(),
             0,
             "distinct_id-only filter should evaluate without a DB property fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_distinct_id_condition_matches_when_override_contains_distinct_id() {
+        let context = TestContext::new(None).await;
+        let cohort_cache = Arc::new(CohortCacheManager::new(
+            context.non_persons_reader.clone(),
+            None,
+            None,
+        ));
+        let team = context.insert_new_team(None).await.unwrap();
+        let distinct_id = "override_only_user".to_string();
+
+        let flag = mock!(FeatureFlag,
+            team_id: team.id,
+            filters: mock!(crate::properties::property_models::PropertyFilter,
+                key: "distinct_id".mock_into(),
+                value: Some(json!(distinct_id.clone())),
+                operator: Some(OperatorType::Exact),
+                prop_type: PropertyType::Person
+            ).mock_into()
+        );
+
+        let router = context.create_postgres_router();
+        let mut matcher = FeatureFlagMatcher::new(
+            distinct_id.clone(),
+            None, // device_id
+            team.id,
+            router,
+            cohort_cache,
+            empty_group_type_cache(),
+            None,
+        );
+
+        let geoip = MockGeoIpClient::default().into();
+        let request = FlagRequest {
+            distinct_id: Some(distinct_id.clone()),
+            geoip_disable: Some(true),
+            ..Default::default()
+        };
+        let overrides = properties::prepare_overrides(
+            &request,
+            Some(&distinct_id),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &geoip,
+        )
+        .unwrap();
+
+        let flags = flag_list_with_metadata(vec![flag.clone()]);
+        let result = matcher
+            .evaluate_all_feature_flags(
+                flags,
+                overrides.person_properties,
+                None,
+                None,
+                Uuid::new_v4(),
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.errors_while_computing_flags);
+        assert_eq!(
+            result.flags.get("test_flag").unwrap().to_value(),
+            FlagValue::Boolean(true),
+            "distinct_id conditions should match when request overrides contain distinct_id"
         );
     }
 

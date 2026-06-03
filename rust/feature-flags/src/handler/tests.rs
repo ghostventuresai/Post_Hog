@@ -20,6 +20,7 @@ use crate::{
             EvaluationMetadata, FeatureFlag, FeatureFlagList, FlagFilters, FlagPropertyGroup,
             HypercacheFlagsWrapper,
         },
+        flag_operations::flags_require_db_preparation,
         flag_service::FlagService,
     },
     handler::{
@@ -27,7 +28,7 @@ use crate::{
         FeatureFlagEvaluationContext,
     },
     mock,
-    properties::property_models::PropertyType,
+    properties::property_models::{OperatorType, PropertyType},
     utils::{
         mock::MockInto,
         test_utils::{
@@ -48,7 +49,11 @@ use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{collections::HashMap, net::IpAddr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+    sync::Arc,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Default)]
@@ -97,6 +102,7 @@ fn test_geoip_enabled_with_person_properties() {
 
     let result = properties::get_person_property_overrides(
         false,
+        None,
         Some(person_props),
         &IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), // Google's public DNS, should be in the US
         &geoip_service,
@@ -115,6 +121,7 @@ fn test_geoip_enabled_without_person_properties() {
 
     let result = properties::get_person_property_overrides(
         false,
+        None,
         None,
         &IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), // Google's public DNS, should be in the US
         &geoip_service,
@@ -135,6 +142,7 @@ fn test_geoip_disabled_with_person_properties() {
 
     let result = properties::get_person_property_overrides(
         true,
+        None,
         Some(person_props),
         &IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
         &geoip_service,
@@ -153,6 +161,7 @@ fn test_geoip_disabled_without_person_properties() {
     let result = properties::get_person_property_overrides(
         true,
         None,
+        None,
         &IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
         &geoip_service,
     );
@@ -161,11 +170,70 @@ fn test_geoip_disabled_without_person_properties() {
 }
 
 #[test]
+fn test_distinct_id_override_skips_db_preparation_for_distinct_id_flag() {
+    let geoip_service = create_test_geoip_service();
+    let distinct_id = "request_only_user";
+    let overrides = properties::get_person_property_overrides(
+        true,
+        Some(distinct_id),
+        None,
+        &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        &geoip_service,
+    )
+    .expect("top-level distinct_id should create person overrides");
+
+    let flag = mock!(FeatureFlag,
+        filters: mock!(crate::properties::property_models::PropertyFilter,
+            key: "distinct_id".mock_into(),
+            value: Some(json!(distinct_id)),
+            operator: Some(OperatorType::Exact),
+            prop_type: PropertyType::Person
+        ).mock_into()
+    );
+    let flags = vec![&flag];
+
+    let flags_requiring_db = flags_require_db_preparation(&flags, &overrides, &HashSet::new());
+
+    assert!(
+        flags_requiring_db.is_empty(),
+        "request-time distinct_id overrides should keep distinct_id flags on the local path"
+    );
+}
+
+#[test]
+fn test_prepare_overrides_uses_resolved_distinct_id() {
+    let geoip_service = create_test_geoip_service();
+    let request = crate::flags::flag_request::FlagRequest {
+        distinct_id: Some("raw_request_user".to_string()),
+        geoip_disable: Some(true),
+        ..Default::default()
+    };
+
+    let overrides = properties::prepare_overrides(
+        &request,
+        Some("resolved_matcher_user"),
+        &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        &geoip_service,
+    )
+    .expect("overrides should prepare successfully");
+
+    assert_eq!(
+        overrides
+            .person_properties
+            .expect("resolved distinct_id should create person overrides")
+            .get("distinct_id"),
+        Some(&json!("resolved_matcher_user")),
+        "prepare_overrides should expose the resolved matcher distinct_id, not the raw request value"
+    );
+}
+
+#[test]
 fn test_geoip_enabled_local_ip() {
     let geoip_service = create_test_geoip_service();
 
     let result = properties::get_person_property_overrides(
         true,
+        None,
         None,
         &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         &geoip_service,
@@ -393,6 +461,7 @@ fn test_get_person_property_overrides_ipv4() {
     let geoip_service = create_test_geoip_service();
     let result = properties::get_person_property_overrides(
         false,
+        None,
         Some(HashMap::new()),
         &IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
         &geoip_service,
@@ -407,6 +476,7 @@ fn test_get_person_property_overrides_ipv6() {
     let geoip_service = create_test_geoip_service();
     let result = properties::get_person_property_overrides(
         false,
+        None,
         Some(HashMap::new()),
         &IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888)),
         &geoip_service,
