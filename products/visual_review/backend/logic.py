@@ -617,6 +617,7 @@ def create_run(
     removed_identifiers: list[str] | None = None,
     purpose: str = RunPurpose.REVIEW,
     metadata: dict | None = None,
+    is_partial: bool = False,
 ) -> tuple[Run, list[dict]]:
     """
     Create a new run with its snapshots.
@@ -627,6 +628,10 @@ def create_run(
     baseline_hashes, unchanged_count, removed_identifiers are deprecated —
     the backend fetches baselines from GitHub and computes everything.
     Params kept for backward compat with older CLI versions.
+
+    is_partial tags the run as a subset (e.g. PR-selective storybook); the
+    classifier then leaves baseline identifiers we didn't touch alone instead
+    of marking them as removed.
     """
     repo = get_repo(repo_id, team_id)
 
@@ -640,6 +645,7 @@ def create_run(
         snapshots,
         purpose,
         metadata,
+        is_partial,
     )
 
 
@@ -654,6 +660,7 @@ def _create_run_inner(
     snapshots,
     purpose,
     metadata,
+    is_partial: bool = False,
 ) -> tuple[Run, list[dict]]:
     # Supersede ALL old runs before inserting the new one. The unique
     # partial index on (repo, branch, run_type) WHERE superseded_by IS NULL
@@ -683,6 +690,7 @@ def _create_run_inner(
         purpose=purpose,
         total_snapshots=len(snapshots),
         metadata=metadata or {},
+        is_partial=is_partial,
     )
 
     # Fix up the sentinel pointers to reference the actual new run

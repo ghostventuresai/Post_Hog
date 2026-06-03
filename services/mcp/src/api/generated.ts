@@ -11699,6 +11699,7 @@ export namespace Schemas {
       removed_identifiers?: string[];
       purpose?: string;
       metadata?: CreateRunInputMetadata;
+      is_partial?: boolean;
     }
 
     export interface CreateRunResult {
