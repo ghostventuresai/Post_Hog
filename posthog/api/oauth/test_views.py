@@ -29,6 +29,7 @@ from posthog.models.oauth import (
     OAuthRefreshToken,
 )
 from posthog.models.team.team import Team
+from posthog.scopes import UNPRIVILEGED_SCOPES
 
 
 def generate_rsa_key() -> str:
@@ -2286,6 +2287,32 @@ class TestOAuthAPI(APIBaseTest):
         location = response.get("Location")
         assert location
         self.assertIn("error=invalid_scope", location)
+
+    @parameterized.expand(
+        [
+            # ceiling set, requested scope outside it (has_ceiling=True branch)
+            ("ceiling_set", ["experiment:read"], "experiment:write", ["experiment:write"], ["experiment:read"]),
+            # empty ceiling, privileged scope excluded by the broad default (has_ceiling=False branch)
+            ("empty_ceiling_privileged", [], "llm_gateway:read", ["llm_gateway:read"], sorted(UNPRIVILEGED_SCOPES)),
+        ]
+    )
+    def test_authorize_rejection_emits_ceiling_log(self, _name, ceiling, scope, expected_requested, expected_ceiling):
+        if ceiling:
+            self._set_ceiling(*ceiling)
+        with patch("posthog.api.oauth.views.logger") as mock_logger:
+            response = self.client.get(f"{self.base_authorization_url}&scope={scope}")
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        rejection_calls = [
+            call
+            for call in mock_logger.warning.call_args_list
+            if call.args and call.args[0] == "oauth_scope_ceiling_rejected"
+        ]
+        self.assertEqual(len(rejection_calls), 1)
+        kwargs = rejection_calls[0].kwargs
+        self.assertEqual(kwargs["client_id"], "test_confidential_client_id")
+        self.assertEqual(kwargs["is_first_party"], self.confidential_application.is_first_party)
+        self.assertEqual(kwargs["requested"], expected_requested)
+        self.assertEqual(kwargs["ceiling"], expected_ceiling)
 
     def test_authorize_accepts_scope_within_app_ceiling(self):
         self._set_ceiling("experiment:read", "dashboard:read")
