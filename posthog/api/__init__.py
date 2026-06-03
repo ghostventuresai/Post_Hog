@@ -24,6 +24,7 @@ import products.conversations.backend.api as conversations
 import products.live_debugger.backend.api as live_debugger
 import products.web_analytics.backend.api as web_analytics_api
 import products.surveys.backend.api.survey as survey
+import products.tasks.backend.code_home_api as code_home
 import products.revenue_analytics.backend.api as revenue_analytics
 import products.business_knowledge.backend.api as business_knowledge
 import products.marketing_analytics.backend.api as marketing_analytics
@@ -370,6 +371,10 @@ projects_router.register(
     "project_sandbox_environments",
     ["team_id"],
 )
+
+# PostHog Code Home: per-user workflow config + classified workstream snapshot
+projects_router.register(r"code_workflow", code_home.CodeWorkflowViewSet, "project_code_workflow", ["team_id"])
+projects_router.register(r"code_home", code_home.CodeHomeViewSet, "project_code_home", ["team_id"])
 
 # PostHog Code invites (not project-scoped)
 router.register(r"code/invites", tasks.CodeInviteViewSet, "code_invites")
