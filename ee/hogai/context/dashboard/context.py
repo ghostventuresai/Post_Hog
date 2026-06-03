@@ -4,6 +4,7 @@ from typing import Generic
 
 from pydantic import BaseModel
 
+from posthog.exceptions_capture import capture_exception
 from posthog.models import Team
 
 from ee.hogai.context.insight.context import InsightContext
@@ -94,9 +95,19 @@ class DashboardContext:
                 insights="",
             )
 
-        # Run all insights in parallel with semaphore control
+        # return_exceptions=True keeps one failing insight from dropping the whole dashboard.
         insight_tasks = [self._execute_insight_with_semaphore(insight) for insight in self.insights]
-        insight_results = await asyncio.gather(*insight_tasks)
+        insight_results = await asyncio.gather(*insight_tasks, return_exceptions=True)
+
+        formatted_insights: list[str] = []
+        for insight, result in zip(self.insights, insight_results):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, BaseException):
+                capture_exception(result)
+                formatted_insights.append(f'Insight "{insight.name or "Insight"}": Error preparing insight context.')
+            else:
+                formatted_insights.append(result)
 
         return format_prompt_string(
             prompt_template,
@@ -104,7 +115,7 @@ class DashboardContext:
             dashboard_id=self.dashboard_id,
             dashboard_url=self.dashboard_url,
             description=self.description,
-            insights="\n\n".join(insight_results),
+            insights="\n\n".join(formatted_insights),
         )
 
     async def format_schema(self, prompt_template: str = DASHBOARD_RESULT_TEMPLATE) -> str:
