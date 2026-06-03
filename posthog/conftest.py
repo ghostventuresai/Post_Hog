@@ -463,6 +463,188 @@ def _runs_on_internal_pr() -> bool:
     return value.lower() in {"1", "true"}
 
 
+@pytest.fixture(autouse=True)
+def enforce_detail_object_permissions(monkeypatch, request):
+    """
+    Runtime IDOR guards.
+
+    1. Detail action permissions: every @action(detail=True) that returns
+       2xx for an authenticated user on a viewset inheriting
+       ``AccessControlViewSetMixin`` MUST have called
+       ``AccessControlPermission.has_object_permission()``.
+
+       Exceptions:
+       - Viewsets that override ``dangerously_get_permissions`` (outside of
+         ``TeamAndOrgViewSetMixin``) are assumed to handle permissions themselves.
+       - Actions that declare their own ``permission_classes`` without
+         ``AccessControlPermission`` are skipped.
+
+    2. Cross-tenant FK on write: any DRF serializer save that occurs inside
+       an API request is checked. For every foreign key on the saved
+       instance that was touched by user-provided ``validated_data``, the
+       target's ``team_id`` (if any) MUST match the saved instance's
+       ``team_id``. Catches the pattern of accepting an FK id (via
+       ``PrimaryKeyRelatedField(queryset=Model.objects.all())`` or a plain
+       ``IntegerField`` named ``*_id``) that points to another tenant.
+
+    Opt out per-test with @pytest.mark.skip_access_control_permission_check.
+    """
+    if "skip_access_control_permission_check" in request.keywords:
+        return
+
+    from django.core.exceptions import FieldDoesNotExist
+    from django.db.models import ForeignKey, Model
+
+    from rest_framework import serializers as drf_serializers
+    from rest_framework.views import APIView
+
+    from posthog.api.routing import TeamAndOrgViewSetMixin
+    from posthog.permissions import AccessControlPermission
+
+    from ee.api.rbac.access_control import AccessControlViewSetMixin
+
+    original_dispatch = APIView.dispatch
+    original_has_object_permission = AccessControlPermission.has_object_permission
+    original_save = drf_serializers.BaseSerializer.save
+
+    # Counter so nested dispatches (request inside request via test client) still leave the check enabled
+    dispatch_depth = [0]
+    # Per-(model, fk_name) cache: True if related model has a team_id field
+    fk_target_has_team_id_cache: dict[tuple[type, str], bool] = {}
+    # AssertionErrors stashed during save() to be re-raised after dispatch unwinds
+    # (DRF's dispatch catches Exception from the view handler and converts to 500,
+    # so we cannot reliably raise from inside the handler.)
+    pending_violations: list[AssertionError] = []
+
+    def tracked_has_object_permission(self, req, view, obj):
+        view._access_control_hop_called = True
+        return original_has_object_permission(self, req, view, obj)
+
+    def _related_model_has_team_id(model: type, fk_name: str) -> bool:
+        key = (model, fk_name)
+        cached = fk_target_has_team_id_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            model._meta.get_field("team_id")
+            result = True
+        except (FieldDoesNotExist, AttributeError):
+            result = False
+        fk_target_has_team_id_cache[key] = result
+        return result
+
+    def _check_cross_tenant_fk(instance, serializer, save_kwargs):
+        if not isinstance(instance, Model):
+            return
+        own_team_id = getattr(instance, "team_id", None)
+        if own_team_id is None:
+            return
+
+        validated_data = getattr(serializer, "validated_data", None)
+        if not isinstance(validated_data, dict):
+            return
+        touched: set[str] = {str(k) for k in validated_data.keys()} | {str(k) for k in save_kwargs.keys()}
+        if not touched:
+            return
+
+        for field in instance._meta.get_fields():
+            if not isinstance(field, ForeignKey):
+                continue
+            if field.attname not in touched and field.name not in touched:
+                continue
+            fk_id = getattr(instance, field.attname, None)
+            if fk_id is None:
+                continue
+            related_model = field.related_model
+            if related_model is None:
+                continue
+            if not _related_model_has_team_id(related_model, field.name):
+                continue
+            related_team_id = related_model.objects.filter(pk=fk_id).values_list("team_id", flat=True).first()
+            if related_team_id is None or related_team_id == own_team_id:
+                continue
+            raise AssertionError(
+                f"Cross-tenant FK IDOR detected on save: "
+                f"{instance.__class__.__name__}.{field.name} -> "
+                f"{related_model.__name__}#{fk_id} has team_id={related_team_id}, "
+                f"but {instance.__class__.__name__}#{instance.pk}.team_id={own_team_id}.\n"
+                f"\n"
+                f"A foreign key from another team was accepted on write. To fix:\n"
+                f"  - Use TeamScopedPrimaryKeyRelatedField from posthog.api.scoped_related_fields, or\n"
+                f"  - Add validate_<field>() on the serializer asserting the target belongs to the current team.\n"
+                f"\n"
+                f"To bypass this check (after review):\n"
+                f"  - Mark the test with @pytest.mark.skip_access_control_permission_check"
+            )
+
+    def tracked_save(self, **kwargs):
+        instance = original_save(self, **kwargs)
+        if dispatch_depth[0] > 0:
+            try:
+                _check_cross_tenant_fk(instance, self, kwargs)
+            except AssertionError as err:
+                pending_violations.append(err)
+                raise
+        return instance
+
+    def patched_dispatch(self, http_request, *args, **kwargs):
+        self._access_control_hop_called = False
+        is_top_level = dispatch_depth[0] == 0
+        if is_top_level:
+            pending_violations.clear()
+        dispatch_depth[0] += 1
+        try:
+            response = original_dispatch(self, http_request, *args, **kwargs)
+        finally:
+            dispatch_depth[0] -= 1
+
+        if is_top_level and pending_violations:
+            err = pending_violations[0]
+            pending_violations.clear()
+            raise err
+
+        if not isinstance(self, AccessControlViewSetMixin):
+            return response
+
+        if any(
+            "dangerously_get_permissions" in cls.__dict__
+            for cls in type(self).__mro__
+            if cls is not TeamAndOrgViewSetMixin
+        ):
+            return response
+
+        action_name = getattr(self, "action", "") or ""
+        action_fn = getattr(self, action_name, None) if action_name else None
+        action_kwargs = getattr(action_fn, "kwargs", {}) or {}
+        if "permission_classes" in action_kwargs and AccessControlPermission not in action_kwargs["permission_classes"]:
+            return response
+
+        drf_request = getattr(self, "request", None)
+        is_auth = bool(getattr(getattr(drf_request, "user", None), "is_authenticated", False))
+        is_detail = getattr(self, "detail", False) is True
+        should_assert = is_detail and is_auth and 200 <= response.status_code < 300
+
+        if should_assert and not getattr(self, "_access_control_hop_called", False):
+            view_name = self.__class__.__name__
+            action = getattr(self, "action", "?")
+            raise AssertionError(
+                f"{view_name}.{action} returned 2xx on a detail action without "
+                f"AccessControlPermission.has_object_permission() being called.\n"
+                f"\n"
+                f"This means object-level access control is bypassed. To fix:\n"
+                f"  - Ensure the action calls self.get_object() (which triggers check_object_permissions), or\n"
+                f"  - Call self.check_object_permissions(request, obj) explicitly.\n"
+                f"\n"
+                f"To bypass this check (after review):\n"
+                f"  - Mark the test with @pytest.mark.skip_access_control_permission_check"
+            )
+        return response
+
+    monkeypatch.setattr(AccessControlPermission, "has_object_permission", tracked_has_object_permission)
+    monkeypatch.setattr(APIView, "dispatch", patched_dispatch)
+    monkeypatch.setattr(drf_serializers.BaseSerializer, "save", tracked_save)
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     if "requires_secrets" in item.keywords and not _runs_on_internal_pr():
         pytest.skip("Skipping test that requires internal secrets on external PRs")
