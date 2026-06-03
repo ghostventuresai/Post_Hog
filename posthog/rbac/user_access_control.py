@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast, get_args
 from django.db.models import Case, CharField, Exists, Model, OuterRef, Q, QuerySet, Value, When
 from django.db.models.functions import Cast
 
+import posthoganalytics
 from opentelemetry import trace
 from rest_framework import serializers
 
@@ -432,7 +434,7 @@ class UserAccessControl:
 
         return {"team_id": self._team.id, "resource": resource, "resource_id": None}  # type: ignore
 
-    def _access_controls_filters_for_queryset(self, resource: APIScopeObject) -> dict:
+    def access_controls_filters_for_queryset(self, resource: APIScopeObject) -> dict:
         """
         Used to filter out IDs from a queryset based on access controls where the specific resource is denied access
         """
@@ -517,7 +519,7 @@ class UserAccessControl:
         if resource_id:
             filter_groups.append(self._access_controls_filters_for_object(resource, resource_id=resource_id))
         else:
-            filter_groups.append(self._access_controls_filters_for_queryset(resource))
+            filter_groups.append(self.access_controls_filters_for_queryset(resource))
 
         q = Q()
         for filters in filter_groups:
@@ -814,7 +816,7 @@ class UserAccessControl:
             return False
 
         # Get all object-level access controls for this resource type
-        filters = self._access_controls_filters_for_queryset(resource)
+        filters = self.access_controls_filters_for_queryset(resource)
         access_controls = self._get_access_controls(filters)
 
         # These are already pre-loaded so filter what's in memory
@@ -867,6 +869,51 @@ class UserAccessControl:
     # Filtering querysets
     # ------------------------------------------------------------
 
+    @cached_property
+    def blocked_resource_ids_by_scope(self) -> dict[APIScopeObject, set[str]]:
+        """
+        Per-resource object IDs the user is denied access to. Empty for org admins.
+        Explicit (member/role) rules win over defaults. Mirrors filter_queryset_by_access_level.
+        Used by the HogQL printer guard and the HogQL cache-key fingerprint.
+        One query: pulls every per-object row this user is subject to across all resources.
+        """
+        if not EE_AVAILABLE or not self._team:
+            return {}
+        if not posthoganalytics.feature_enabled(
+            "hogql-object-access-control",
+            str(self._team.uuid),
+            groups={"organization": str(self._team.organization_id), "project": str(self._team.id)},
+            group_properties={
+                "organization": {"id": str(self._team.organization_id)},
+                "project": {"id": str(self._team.id)},
+            },
+            send_feature_flag_events=False,
+        ):
+            return {}
+
+        org_membership = self._organization_membership
+        if org_membership and org_membership.level >= OrganizationMembership.Level.ADMIN:
+            return {}
+
+        rows = list(
+            AccessControl.objects.filter(self._filter_options({"team_id": self._team.id, "resource_id__isnull": False}))
+        )
+        if not rows:
+            return {}
+
+        by_key: dict[tuple[APIScopeObject, str], list[_AccessControl]] = defaultdict(list)
+        for ac in rows:
+            by_key[(ac.resource, ac.resource_id)].append(ac)
+
+        # TODO: refactor filter_queryset_by_access_level to share the same logic
+        result: dict[APIScopeObject, set[str]] = defaultdict(set)
+        for (resource, resource_id), acs in by_key.items():
+            explicit = [ac for ac in acs if ac.role_id or ac.organization_member_id]
+            winning_tier = explicit or acs
+            if all(ac.access_level == NO_ACCESS_LEVEL for ac in winning_tier):
+                result[resource].add(resource_id)
+        return dict(result)
+
     def filter_queryset_by_access_level(self, queryset: QuerySet, include_all_if_admin: bool = False) -> QuerySet:
         # Filter queryset based on access controls, handling cases where user has "none" resource access
         # but may have specific object access
@@ -889,7 +936,7 @@ class UserAccessControl:
 
         model_has_creator = hasattr(model, "created_by")
 
-        filters = self._access_controls_filters_for_queryset(resource)
+        filters = self.access_controls_filters_for_queryset(resource)
         access_controls = self._get_access_controls(filters)
 
         blocked_resource_ids: set[str] = set()

@@ -44,6 +44,7 @@ from posthog.hogql_queries.insights.trends.trends_query_runner import TrendsQuer
 from posthog.hogql_queries.query_runner import (
     ExecutionMode,
     QueryRunner,
+    QueryRunnerWithHogQLContext,
     get_query_runner,
     shared_insights_execution_mode,
 )
@@ -82,10 +83,10 @@ class TestQueryRunner(BaseTest):
         super().tearDown()
         cache.clear()
 
-    def setup_test_query_runner_class(self):
+    def setup_test_query_runner_class(self, base: type[QueryRunner] = QueryRunner):
         """Setup required methods and attributes of the abstract base class."""
 
-        class TestQueryRunner(QueryRunner):
+        class TestQueryRunner(base):  # type: ignore[misc, valid-type]
             query: TheTestQuery
             cached_response: TheTestCachedBasicQueryResponse
 
@@ -325,6 +326,51 @@ class TestQueryRunner(BaseTest):
 
         cache_key = runner.get_cache_key()
         assert cache_key == "cache_42_473689ec17cc982383519776503e498bd0e44f16e6b6f0073412599254a69aba"
+
+    def test_cache_payload_omits_object_restrictions_when_unrestricted(self):
+        TestQueryRunner = self.setup_test_query_runner_class()
+        runner = TestQueryRunner(query={"some_attr": "bla"}, team=self.team, user=self.user)
+
+        assert "restricted_objects" not in runner.get_cache_payload()
+
+    @mock.patch("posthoganalytics.feature_enabled", new=mock.Mock(return_value=True))
+    def test_cache_key_differs_when_user_is_restricted_from_object(self):
+        """
+        Cache-poisoning guard: a restricted user's cache key must differ from an
+        unrestricted user's. Only HogQL runners can touch ``system.*`` tables, so we
+        exercise the override on ``QueryRunnerWithHogQLContext`` directly — the base
+        ``QueryRunner._get_object_access_restrictions`` returns ``None``.
+        """
+        from posthog.constants import AvailableFeature
+        from posthog.models import OrganizationMembership
+
+        from ee.models import AccessControl
+
+        self.organization.available_product_features = [
+            {"key": AvailableFeature.ADVANCED_PERMISSIONS, "name": AvailableFeature.ADVANCED_PERMISSIONS},
+        ]
+        self.organization.save()
+
+        membership = OrganizationMembership.objects.get(user=self.user, organization=self.organization)
+        membership.level = OrganizationMembership.Level.MEMBER
+        membership.save()
+
+        # ``QueryRunnerWithHogQLContext`` is abstract via its ``QueryRunner`` chain;
+        # ``setup_test_query_runner_class`` clears ``__abstractmethods__`` on the subclass it
+        # returns, so the abstract-class check here is a false positive.
+        TestHogQLRunner = self.setup_test_query_runner_class(base=QueryRunnerWithHogQLContext)  # type: ignore[type-abstract]
+
+        baseline_runner = TestHogQLRunner(query={"some_attr": "bla"}, team=self.team, user=self.user)
+        baseline_key = baseline_runner.get_cache_key()
+        assert "restricted_objects" not in baseline_runner.get_cache_payload()
+
+        AccessControl.objects.create(team=self.team, resource="dashboard", resource_id="42", access_level="none")
+
+        restricted_runner = TestHogQLRunner(query={"some_attr": "bla"}, team=self.team, user=self.user)
+        restricted_payload = restricted_runner.get_cache_payload()
+
+        assert restricted_payload["restricted_objects"] == {"dashboard": ["42"]}
+        assert restricted_runner.get_cache_key() != baseline_key
 
     @mock.patch("django.db.transaction.on_commit")
     def test_cache_response(self, mock_on_commit):

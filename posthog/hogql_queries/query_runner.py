@@ -1158,6 +1158,9 @@ class QueryRunner(ABC, Generic[Q, R, CR]):
     # query service means programmatic access and /query endpoint
     is_query_service: bool = False
     workload: Workload
+    # Set by QueryRunnerWithHogQLContext when the runner actually needs a database.
+    # Declared here so base-class methods can read self.database without AttributeError.
+    database: Optional[Database] = None
 
     def __init__(
         self,
@@ -1846,6 +1849,12 @@ class QueryRunner(ABC, Generic[Q, R, CR]):
         if restricted:
             payload["restricted_properties"] = restricted
 
+        # Same for object-level restrictions on system.* tables — without this, a
+        # restricted user could read another user's unfiltered cached result.
+        restricted_objects = self._get_object_access_restrictions()
+        if restricted_objects:
+            payload["restricted_objects"] = restricted_objects
+
         return payload
 
     def _get_property_access_restrictions(self) -> list[tuple[str, int]] | None:
@@ -1861,6 +1870,21 @@ class QueryRunner(ABC, Generic[Q, R, CR]):
         if not restricted:
             return None
         return sorted(restricted)
+
+    def _get_object_access_restrictions(self) -> dict[str, list[str]] | None:
+        """Returns a sorted {resource: [ids]} mapping of restricted resource IDs for the current user, or None if no restrictions.
+
+        Reuses the ``UserAccessControl`` from ``Database.create_for`` when present so
+        HogQL runners don't re-query ``_organization_membership`` and ``ee_accesscontrol``.
+        Non-HogQL runners can't query ``system.*`` tables, so skipping the fingerprint
+        for them avoids needless cache misses.
+        """
+        if self.user is None or self.database is None or self.database.user_access_control is None:
+            return None
+        blocked = self.database.user_access_control.blocked_resource_ids_by_scope
+        if not blocked:
+            return None
+        return {resource: sorted(ids) for resource, ids in sorted(blocked.items())}
 
     def get_cache_key(self) -> str:
         return generate_cache_key(self.team.pk, f"query_{bytes.decode(to_json(self.get_cache_payload()))}")

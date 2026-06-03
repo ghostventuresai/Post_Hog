@@ -1,10 +1,12 @@
 from posthog.test.base import BaseTest
 from unittest.mock import Mock, patch
 
+from posthog.hogql import ast
 from posthog.hogql.context import HogQLContext
 from posthog.hogql.database.database import Database
 from posthog.hogql.database.schema.system import SystemTables
 from posthog.hogql.printer import prepare_ast_for_printing, print_prepared_ast
+from posthog.hogql.printer.access_control import build_access_control_guard
 
 from posthog.models import OrganizationMembership
 
@@ -79,6 +81,110 @@ class TestAccessControlSystemTables(BaseTest):
         # Unscoped tables remain
         assert "cohorts" in system_node.children
         assert "teams" in system_node.children
+
+
+class TestAccessControlGuard(BaseTest):
+    """Test object-level access control guard generation."""
+
+    def _get_dashboards_table(self, database: Database):
+        from posthog.hogql.database.postgres_table import PostgresTable
+
+        system_node = database.tables.children.get("system")
+        assert system_node is not None
+        dashboards_node = system_node.children.get("dashboards")
+        assert dashboards_node is not None
+        table = dashboards_node.get()
+        assert isinstance(table, PostgresTable)
+        return table
+
+    def test_build_access_control_guard_returns_none_for_admin(self):
+        """Org admins should not have an access control guard."""
+        membership = OrganizationMembership.objects.get(user=self.user, organization=self.organization)
+        membership.level = OrganizationMembership.Level.ADMIN
+        membership.save()
+
+        context = HogQLContext(team_id=self.team.pk, team=self.team, user=self.user)
+        database = Database.create_for(team=self.team, user=self.user)
+        context.database = database
+
+        table = self._get_dashboards_table(database)
+        table_type = ast.TableType(table=table)
+
+        guard = build_access_control_guard(table, table_type, context)
+        assert guard is None
+
+    def test_build_access_control_guard_returns_none_without_user(self):
+        """Without user context, no guard should be generated."""
+        from posthog.hogql.database.schema.system import dashboards
+
+        context = HogQLContext(team_id=self.team.pk, team=self.team, user=None)
+        database = Database.create_for(team=self.team, user=None)
+        context.database = database
+
+        table_type = ast.TableType(table=dashboards)
+
+        guard = build_access_control_guard(dashboards, table_type, context)
+        assert guard is None
+
+    @patch("posthoganalytics.feature_enabled", new=Mock(return_value=True))
+    def test_blocked_ids_bind_as_single_sensitive_placeholder(self):
+        """
+        The deny list compiles to one ``%(..._sensitive)s`` placeholder bound to a list,
+        not N per-ID placeholders. Mirrors ``JSONDropKeys`` in property-level AC.
+        """
+        from posthog.hogql.parser import parse_select
+
+        from posthog.clickhouse.client.escape import substitute_params_for_display
+        from posthog.constants import AvailableFeature
+
+        from ee.models import AccessControl
+
+        self.organization.available_product_features = [
+            {"key": AvailableFeature.ACCESS_CONTROL, "name": AvailableFeature.ACCESS_CONTROL},
+        ]
+        self.organization.save()
+
+        membership = OrganizationMembership.objects.get(user=self.user, organization=self.organization)
+        membership.level = OrganizationMembership.Level.MEMBER
+        membership.save()
+
+        for resource_id in ("dash-1", "dash-2", "dash-3"):
+            AccessControl.objects.create(
+                team=self.team,
+                resource="dashboard",
+                resource_id=resource_id,
+                access_level="none",
+            )
+
+        context = HogQLContext(
+            team_id=self.team.pk,
+            team=self.team,
+            user=self.user,
+            enable_select_queries=True,
+        )
+        prepared = prepare_ast_for_printing(
+            parse_select("SELECT id, name FROM system.dashboards"),
+            context=context,
+            dialect="clickhouse",
+        )
+        assert prepared is not None
+        sql = print_prepared_ast(prepared, context=context, dialect="clickhouse")
+
+        sensitive_keys = [k for k in context.values if k.endswith("_sensitive")]
+        deny_keys = [k for k in sensitive_keys if isinstance(context.values[k], list)]
+        assert len(deny_keys) == 1, f"expected exactly one sensitive list placeholder, got {sensitive_keys!r}"
+        deny_key = deny_keys[0]
+        assert context.values[deny_key] == ["dash-1", "dash-2", "dash-3"]
+        assert f"notIn(toString(system__dashboards.id), %({deny_key})s)" in sql
+        # No raw IDs leaked into the SQL template
+        for raw in ("'dash-1'", "'dash-2'", "'dash-3'"):
+            assert raw not in sql
+
+        # And the display renderer scrubs them.
+        rendered = substitute_params_for_display(sql, context.values)
+        for raw in ("dash-1", "dash-2", "dash-3"):
+            assert raw not in rendered
+        assert "[HIDDEN]" in rendered
 
 
 @patch("posthoganalytics.feature_enabled", new=Mock(return_value=True))
