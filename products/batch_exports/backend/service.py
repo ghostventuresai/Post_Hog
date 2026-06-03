@@ -37,6 +37,7 @@ from posthog.temporal.common.schedule import (
     unpause_schedule,
     update_schedule,
 )
+from posthog.temporal.common.utils import retry_once_on_read_only_connection
 
 from products.batch_exports.backend.models.batch_export import (
     BatchExport,
@@ -928,6 +929,7 @@ def start_file_download_batch_export(
     start_batch_export_workflow(temporal, "file-download-export", workflow_id, inputs)
 
 
+@retry_once_on_read_only_connection
 def create_batch_export_run(
     batch_export_id: UUID,
     data_interval_start: str | None,
@@ -959,11 +961,16 @@ def create_batch_export_run(
     return run
 
 
+@retry_once_on_read_only_connection
 def update_batch_export_run(
     run_id: UUID,
     **kwargs,
 ) -> BatchExportRun:
     """Update the BatchExportRun with given run_id and provided **kwargs.
+
+    Recycles a stale read-only connection and retries once: long-lived Temporal
+    workers can hold a connection pinned to a replica after a Postgres failover,
+    and the UPDATE here would otherwise fail the run with `ReadOnlySqlTransaction`.
 
     Arguments:
         run_id: The id of the BatchExportRun to update.
