@@ -41921,6 +41921,16 @@
                         }
                     },
                     "type": "object"
+                },
+                "TRENDS": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "trendsFilter": {
+                            "description": "Frontend-only trends display settings that should not be sent to query runners.",
+                            "type": "object"
+                        }
+                    },
+                    "type": "object"
                 }
             },
             "type": "object"
