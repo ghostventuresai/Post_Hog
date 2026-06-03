@@ -1,3 +1,5 @@
+import type { TimeInterval } from '@posthog/quill-charts'
+
 import type { AnalyticsMetadata } from '../types'
 
 // Base payload that all tool results share
@@ -29,6 +31,9 @@ export interface TrendsFilter {
     aggregationAxisFormat?: 'numeric' | 'duration' | 'duration_ms' | 'percentage'
 }
 
+// Subset of quill-charts' interval set — trends never bucket by second.
+export type TrendsInterval = Exclude<TimeInterval, 'second'>
+
 export interface TrendsQuery {
     kind: 'TrendsQuery'
     trendsFilter?: TrendsFilter
@@ -37,6 +42,11 @@ export interface TrendsQuery {
         name?: string
         custom_name?: string
     }>
+    interval?: TrendsInterval
+    dateRange?: {
+        date_from?: string
+        date_to?: string
+    }
 }
 
 export interface FunnelsQuery {
@@ -176,6 +186,7 @@ export type PathsResult = PathsResultItem[]
 export interface TrendsPayload extends BasePayload {
     query: TrendsQuery
     results: TrendsResult
+    timezone?: string
 }
 
 export interface FunnelPayload extends BasePayload {
@@ -205,6 +216,7 @@ export interface RetentionPayload extends BasePayload {
 export interface TrendsVisualizerProps {
     query: TrendsQuery | undefined
     results: TrendsResult
+    timezone?: string | undefined
 }
 
 export interface FunnelVisualizerProps {
