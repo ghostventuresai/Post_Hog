@@ -49,6 +49,26 @@ def team_id_guard_for_table(table_type: ast.TableOrSelectType, context: HogQLCon
     )
 
 
+# String functions that return an Array — a Nullable string arg would produce an
+# illegal Nullable(Array(...)) type, so their nullable string args are coerced.
+_ARRAY_RETURNING_STRING_FUNCTIONS = frozenset(
+    {
+        "splitByChar",
+        "splitByString",
+        "splitByRegexp",
+        "splitByWhitespace",
+        "splitByNonAlpha",
+        "alphaTokens",
+        "extractAll",
+        "extractAllGroups",
+        "extractAllGroupsHorizontal",
+        "extractAllGroupsVertical",
+        "extractGroups",
+        "ngrams",
+        "tokens",
+    }
+)
+
 # In non-nullable materialized columns, these values are treated as NULL
 MAT_COL_NULL_SENTINELS = ["", "null"]
 
@@ -133,6 +153,25 @@ class ClickHousePrinter(BasePrinter):
                         args.append(f"ifNull({self.visit(arg)}, '')")
                 else:
                     args.append(f"ifNull(toString({self.visit(arg)}), '')")
+        elif node.name in _ARRAY_RETURNING_STRING_FUNCTIONS:
+            # A Nullable string arg would make the result Nullable(Array(...)),
+            # which ClickHouse rejects, so coerce nullable string args to a
+            # non-nullable empty string. Coercion is position-agnostic on
+            # purpose — a nullable separator would be just as illegal.
+            args = []
+            for arg in node_args:
+                visited = self.visit(arg)
+                arg_type = arg.type.resolve_constant_type(self.context) if arg.type is not None else None
+                # StringArrayType is a StringType subclass but resolves to an
+                # Array — coercing it to a bare '' would be invalid, so exclude it.
+                if (
+                    isinstance(arg_type, ast.StringType)
+                    and not isinstance(arg_type, ast.StringArrayType)
+                    and arg_type.nullable
+                ):
+                    args.append(f"ifNull({visited}, '')")
+                else:
+                    args.append(visited)
         else:
             args = [self.visit(arg) for arg in node_args]
 
