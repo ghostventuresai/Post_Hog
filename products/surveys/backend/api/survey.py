@@ -1402,6 +1402,12 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
             validated_data.pop("remove_targeting_flag")
 
         validated_data["team_id"] = self.context["team_id"]
+        team = Team.objects.get(id=self.context["team_id"])
+        if "enable_partial_responses" not in validated_data:
+            survey_config = team.survey_config or {}
+            project_default = survey_config.get("enable_partial_responses")
+            if project_default is not None:
+                validated_data["enable_partial_responses"] = project_default
         warn_if_missing_feature_flag_write_scope(
             self.context["request"],
             action="survey.create",
@@ -1423,7 +1429,6 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
         self._associate_actions(instance, validated_data.get("conditions"))
         self._add_internal_response_sampling_filters(instance)
 
-        team = Team.objects.get(id=self.context["team_id"])
         log_activity(
             organization_id=team.organization_id,
             team_id=self.context["team_id"],
