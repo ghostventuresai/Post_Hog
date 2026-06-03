@@ -54,10 +54,12 @@
   
   FROM
       campaign_costs
+  
   ORDER BY
       ID ASC
   
   LIMIT 101
+  
   OFFSET 0
   '''
 # ---
@@ -225,11 +227,13 @@
   FROM
       campaign_costs
       LEFT JOIN ucg ON and(equals(campaign_costs.match_key, ucg.match_key), equals(campaign_costs.source, ucg.source))
+  
   ORDER BY
       Cost DESC,
       ID ASC
   
   LIMIT 101
+  
   OFFSET 0
   '''
 # ---
@@ -288,11 +292,13 @@
   
   FROM
       campaign_costs
+  
   ORDER BY
       Cost DESC,
       ID ASC
   
   LIMIT 101
+  
   OFFSET 0
   '''
 # ---
@@ -351,11 +357,13 @@
   
   FROM
       campaign_costs
+  
   ORDER BY
       Cost DESC,
       ID ASC
   
   LIMIT 101
+  
   OFFSET 0
   '''
 # ---
@@ -451,11 +459,13 @@
       
       FROM
           campaign_costs
+      
       ORDER BY
           Cost DESC,
           ID ASC
       
       LIMIT 101
+      
       OFFSET 0
     ''',
     'response': list([
