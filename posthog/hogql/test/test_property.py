@@ -134,7 +134,7 @@ class TestProperty(BaseTest):
             self._property_to_expr(
                 Property(type="group", group_type_index=0, key="arr", operator="gt", value=100), scope="group"
             ),
-            self._parse_expr("properties.arr > 100"),
+            self._parse_expr("toFloat(properties.arr) > 100"),
         )
 
     def test_property_to_expr_group_booleans(self):
@@ -1371,17 +1371,17 @@ class TestProperty(BaseTest):
     def test_property_to_expr_between_operator(self):
         self.assertEqual(
             self._property_to_expr({"type": "event", "key": "age", "operator": "between", "value": [18, 65]}),
-            self._parse_expr("(properties.age >= 18 AND properties.age <= 65)"),
+            self._parse_expr("(toFloat(properties.age) >= 18 AND toFloat(properties.age) <= 65)"),
         )
 
         self.assertEqual(
             self._property_to_expr({"type": "person", "key": "age", "operator": "between", "value": [25, 50]}),
-            self._parse_expr("(person.properties.age >= 25 AND person.properties.age <= 50)"),
+            self._parse_expr("(toFloat(person.properties.age) >= 25 AND toFloat(person.properties.age) <= 50)"),
         )
 
         self.assertEqual(
             self._property_to_expr({"type": "event", "key": "score", "operator": "not_between", "value": [0, 100]}),
-            self._parse_expr("(properties.score < 0 OR properties.score > 100)"),
+            self._parse_expr("(toFloat(properties.score) < 0 OR toFloat(properties.score) > 100)"),
         )
 
     def test_property_to_expr_between_operator_validation(self):
@@ -1435,25 +1435,150 @@ class TestProperty(BaseTest):
         # Test MIN operator (alias for GTE)
         self.assertEqual(
             self._property_to_expr({"type": "event", "key": "age", "operator": "min", "value": 18}),
-            self._parse_expr("properties.age >= 18"),
+            self._parse_expr("toFloat(properties.age) >= 18"),
         )
 
         # Test MAX operator (alias for LTE)
         self.assertEqual(
             self._property_to_expr({"type": "event", "key": "age", "operator": "max", "value": 65}),
-            self._parse_expr("properties.age <= 65"),
+            self._parse_expr("toFloat(properties.age) <= 65"),
         )
 
         # Test MIN with person properties
         self.assertEqual(
             self._property_to_expr({"type": "person", "key": "age", "operator": "min", "value": 25}),
-            self._parse_expr("person.properties.age >= 25"),
+            self._parse_expr("toFloat(person.properties.age) >= 25"),
         )
 
         # Test MAX with person properties
         self.assertEqual(
             self._property_to_expr({"type": "person", "key": "score", "operator": "max", "value": 100}),
-            self._parse_expr("person.properties.score <= 100"),
+            self._parse_expr("toFloat(person.properties.score) <= 100"),
+        )
+
+    def test_property_to_expr_numeric_coercion_for_comparison_operators(self):
+        """LT/LTE/GT/GTE on event JSON properties must coerce the LHS to a number.
+
+        Event ``properties`` are stored as JSON-extracted strings in ClickHouse.
+        Comparing String <= Float64 has no supertype and the query errors out
+        with "There is no supertype for types String, Float64". The hog VM that
+        evaluates the same filter at delivery time auto-coerces via
+        unifyComparisonTypes, so the ClickHouse path needs to match.
+        """
+        for operator, op_sql in [("lt", "<"), ("lte", "<="), ("gt", ">"), ("gte", ">=")]:
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": 3, "operator": operator}),
+                self._parse_expr(f"toFloat(properties.rating) {op_sql} 3"),
+            )
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": 3.5, "operator": operator}),
+                self._parse_expr(f"toFloat(properties.rating) {op_sql} 3.5"),
+            )
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": -1, "operator": operator}),
+                self._parse_expr(f"toFloat(properties.rating) {op_sql} -1"),
+            )
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": 0, "operator": operator}),
+                self._parse_expr(f"toFloat(properties.rating) {op_sql} 0"),
+            )
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": 1_000_000, "operator": operator}),
+                self._parse_expr(f"toFloat(properties.rating) {op_sql} 1000000"),
+            )
+            # String value must stay lexicographic — users explicitly opt out of numeric
+            # comparison by passing a string, and existing filters rely on that.
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "rating", "value": "3", "operator": operator}),
+                self._parse_expr(f"properties.rating {op_sql} '3'"),
+            )
+            # Booleans subclass int in Python; without the explicit guard they would
+            # silently get coerced and break boolean property filters.
+            self.assertEqual(
+                self._property_to_expr({"type": "event", "key": "flag", "value": True, "operator": operator}),
+                self._parse_expr(f"properties.flag {op_sql} true"),
+            )
+
+    def test_property_to_expr_numeric_coercion_across_scopes(self):
+        """Numeric coercion must apply to all property scopes (event, person, group, session)."""
+        self.assertEqual(
+            self._property_to_expr({"type": "person", "key": "age", "value": 25, "operator": "lte"}),
+            self._parse_expr("toFloat(person.properties.age) <= 25"),
+        )
+        self.assertEqual(
+            self._property_to_expr(
+                {"type": "group", "group_type_index": 0, "key": "size", "value": 100, "operator": "gte"},
+                scope="event",
+            ),
+            self._parse_expr("toFloat(group_0.properties.size) >= 100"),
+        )
+        # `$session_duration` is already numerically typed; the toFloat wrap is a no-op
+        # cast, exercised here so a future "skip coercion for typed columns" optimization
+        # doesn't accidentally diverge between session and event scopes.
+        self.assertEqual(
+            self._property_to_expr(
+                {"type": "session", "key": "$session_duration", "value": 60, "operator": "lte"},
+                scope="event",
+            ),
+            self._parse_expr("toFloat(session.$session_duration) <= 60"),
+        )
+
+    def test_property_to_expr_numeric_coercion_in_between_validation(self):
+        """BETWEEN bounds may arrive with mixed Python types because
+        ``_validate_between_values`` accepts string-numerics like ``"5"`` via ``float()``.
+        Coercion must be decided once per BETWEEN so both halves stay in the same
+        comparison regime — never one numeric and one lexicographic.
+        """
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "between", "value": [0.5, 99.5]}),
+            self._parse_expr("(toFloat(properties.score) >= 0.5 AND toFloat(properties.score) <= 99.5)"),
+        )
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "between", "value": [0, 99.5]}),
+            self._parse_expr("(toFloat(properties.score) >= 0 AND toFloat(properties.score) <= 99.5)"),
+        )
+        # Mixed int + string-numeric — locks in the one-decision-per-pair behavior so
+        # we can't regress to ``toFloat(x) >= 1 AND x <= '5'`` (lexicographic high bound
+        # would silently exclude ``"10"`` even when the user meant ``<= 5``).
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "between", "value": [1, "5"]}),
+            self._parse_expr("(toFloat(properties.score) >= 1 AND toFloat(properties.score) <= '5')"),
+        )
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "between", "value": ["1", 5]}),
+            self._parse_expr("(toFloat(properties.score) >= '1' AND toFloat(properties.score) <= 5)"),
+        )
+        # Both bounds string: stay lexicographic to match single-value LT/LTE semantics
+        # for string operands — the user explicitly opted out of numeric comparison.
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "between", "value": ["1", "5"]}),
+            self._parse_expr("(properties.score >= '1' AND properties.score <= '5')"),
+        )
+
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "score", "operator": "not_between", "value": [1, "5"]}),
+            self._parse_expr("(toFloat(properties.score) < 1 OR toFloat(properties.score) > '5')"),
+        )
+
+    def test_property_to_expr_numeric_coercion_does_not_affect_other_operators(self):
+        """Equality, contains, regex, IS_SET etc. must NOT be coerced — they need
+        string/literal semantics. A regression here would break any filter relying on those.
+        """
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "rating", "value": 3, "operator": "exact"}),
+            self._parse_expr("properties.rating = 3"),
+        )
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "rating", "value": 3, "operator": "is_not"}),
+            self._parse_expr("properties.rating != 3"),
+        )
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "rating", "value": 3, "operator": "icontains"}),
+            self._parse_expr("toString(properties.rating) ilike '%3%'"),
+        )
+        self.assertEqual(
+            self._property_to_expr({"type": "event", "key": "rating", "operator": "is_set"}),
+            self._parse_expr("properties.rating != null"),
         )
 
     def test_property_to_expr_semver_operators(self):
@@ -1998,3 +2123,146 @@ class TestPropertyDateOperatorsWithData(APIBaseTest):
 
         count = self._run({"type": "event", "key": "signup_dt", "value": value, "operator": operator})
         assert count == expected_count
+
+
+class TestPropertyNumericOperatorsWithData(APIBaseTest):
+    """End-to-end tests for LT/LTE/GT/GTE/BETWEEN/NOT_BETWEEN on JSON properties that
+    actually execute the generated SQL against ClickHouse.
+
+    Unit tests only assert AST shape and can't catch ClickHouse-level type errors. The
+    real bug we fixed surfaced as "There is no supertype for types String, Float64"
+    because event JSON property values come out of ``JSONExtractRaw`` as String, and
+    comparing a String with an Int constant has no supertype in ClickHouse.
+    """
+
+    event_name = "survey_response"
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+
+        # The ``"five"`` and missing-rating rows are the contract-defining ones: the
+        # numeric coercion must drop them silently (accurateCastOrNull returns NULL,
+        # the comparison is NULL, the row is excluded) so non-numeric or absent values
+        # never accidentally satisfy a numeric filter.
+        for distinct_id, rating, comment in [
+            ("u1", 1, "ok"),
+            ("u2", 2, "ok"),
+            ("u3", 3, "ok"),
+            ("u4", 4, "ok"),
+            ("u5", 5, "ok"),
+            ("u6", "five", "ok"),
+            ("u7", None, "ok"),
+        ]:
+            properties: dict[str, Any] = {"comment": comment}
+            if rating is not None:
+                properties["rating"] = rating
+            _create_event(
+                team=cls.team,
+                event=cls.event_name,
+                distinct_id=distinct_id,
+                properties=properties,
+            )
+
+    def _run(self, filter: dict) -> int:
+        expr = property_to_expr(filter, team=self.team, scope="event")
+        query_ast = ast.SelectQuery(
+            select=[ast.Call(name="count", args=[])],
+            select_from=ast.JoinExpr(table=ast.Field(chain=["events"])),
+            where=ast.And(
+                exprs=[
+                    ast.CompareOperation(
+                        op=ast.CompareOperationOp.Eq,
+                        left=ast.Field(chain=["event"]),
+                        right=ast.Constant(value=self.event_name),
+                    ),
+                    expr,
+                ]
+            ),
+        )
+        result = execute_hogql_query(team=self.team, query=query_ast)
+        return result.results[0][0]
+
+    @parameterized.expand(
+        [
+            ("lte", 3, 3),
+            ("lt", 3, 2),
+            ("gte", 3, 3),
+            ("gt", 3, 2),
+            ("lte", 5, 5),
+            ("gte", 1, 5),
+            ("lte", 0, 0),
+            ("gte", 6, 0),
+            ("lte", -1, 0),
+        ]
+    )
+    def test_numeric_comparison_filters_events_correctly(
+        self,
+        operator: str,
+        value: int,
+        expected_count: int,
+    ):
+        """Reproduces the survey-notification incident: a ``rating <= 3`` filter on an
+        event JSON property used to error out at the ClickHouse layer. This test holds
+        the line — the query must compile *and* match exactly the rows the user intends.
+        """
+        count = self._run({"type": "event", "key": "rating", "value": value, "operator": operator})
+        assert count == expected_count, f"{operator} {value}: expected {expected_count}, got {count}"
+
+    @parameterized.expand(
+        [
+            ("between_1_3", [1, 3], 3),
+            ("between_2_4", [2, 4], 3),
+            ("between_3_3", [3, 3], 1),
+            ("between_6_9", [6, 9], 0),
+        ]
+    )
+    def test_between_filter_returns_expected_rows(
+        self,
+        _name: str,
+        value: list[int],
+        expected_count: int,
+    ):
+        count = self._run({"type": "event", "key": "rating", "value": value, "operator": "between"})
+        assert count == expected_count
+
+    @parameterized.expand(
+        [
+            ("not_between_1_3", [1, 3], 2),
+            ("not_between_2_4", [2, 4], 2),
+        ]
+    )
+    def test_not_between_filter_returns_expected_rows(
+        self,
+        _name: str,
+        value: list[int],
+        expected_count: int,
+    ):
+        count = self._run({"type": "event", "key": "rating", "value": value, "operator": "not_between"})
+        assert count == expected_count
+
+    def test_string_comparison_still_uses_lexicographic_semantics(self):
+        """A numeric coercion regression here would silently change string filter results.
+
+        With ``value="3"`` (string), the LHS must NOT be wrapped in ``toFloat`` —
+        the comparison stays lexicographic so existing filters keep working.
+        """
+        count = self._run({"type": "event", "key": "comment", "value": "z", "operator": "lte"})
+        # All 7 events match: every seeded ``comment`` is the literal "ok", and
+        # "ok" <= "z" lexically. A numeric-coercion bleed-through would turn "ok"
+        # into NULL via accurateCastOrNull and the count would drop to 0 — the
+        # specific failure mode this test guards against.
+        assert count == 7
+
+    @parameterized.expand([("not_materialized", False), ("materialized", True)])
+    def test_lte_works_against_materialized_column(self, _name: str, is_materialized: bool):
+        """Materialized columns store the property in a typed column. The toFloat wrap
+        should remain valid (toFloat on a numeric column is a no-op cast) and the query
+        should still return the right rows whether or not the column is materialized.
+        """
+        if is_materialized:
+            self.addCleanup(cleanup_materialized_columns)
+            materialize("events", "rating")
+
+        count = self._run({"type": "event", "key": "rating", "value": 3, "operator": "lte"})
+        assert count == 3, f"materialized={is_materialized}: expected 3, got {count}"
