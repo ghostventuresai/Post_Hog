@@ -54,8 +54,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        if (req.url.searchParams.get('provider_key_id') === 'key-1') {
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        if (new URL(request.url).searchParams.get('provider_key_id') === 'key-1') {
                             return [200, BYOK_OPENAI_MODELS]
                         }
                         return [200, []]
@@ -88,8 +88,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        if (req.url.searchParams.get('provider_key_id') === 'key-1') {
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        if (new URL(request.url).searchParams.get('provider_key_id') === 'key-1') {
                             return [200, BYOK_OPENAI_MODELS_MIXED]
                         }
                         return [200, []]
@@ -120,6 +120,7 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
+                    '/api/llm_proxy/models/': () => [200, []],
                 },
             })
 
@@ -142,8 +143,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        const keyId = req.url.searchParams.get('provider_key_id')
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        const keyId = new URL(request.url).searchParams.get('provider_key_id')
                         if (keyId === 'key-1') {
                             return [200, BYOK_OPENAI_MODELS]
                         }
@@ -177,8 +178,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        const keyId = req.url.searchParams.get('provider_key_id')
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        const keyId = new URL(request.url).searchParams.get('provider_key_id')
                         if (keyId === 'key-1') {
                             return [500, { error: 'Internal error' }]
                         }
@@ -244,6 +245,7 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
+                    '/api/llm_proxy/models/': () => [200, []],
                 },
             })
 
@@ -263,6 +265,7 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
+                    '/api/llm_proxy/models/': () => [200, []],
                 },
             })
 
@@ -287,8 +290,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        const keyId = req.url.searchParams.get('provider_key_id')
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        const keyId = new URL(request.url).searchParams.get('provider_key_id')
                         if (keyId === 'key-1') {
                             return [200, BYOK_OPENAI_MODELS]
                         }
@@ -327,8 +330,8 @@ describe('modelPickerLogic', () => {
                     '/api/environments/:team_id/llm_analytics/evaluation_config/': {
                         active_provider_key: null,
                     },
-                    '/api/llm_proxy/models/': (req: any) => {
-                        const keyId = req.url.searchParams.get('provider_key_id')
+                    '/api/llm_proxy/models/': async ({ request }) => {
+                        const keyId = new URL(request.url).searchParams.get('provider_key_id')
                         if (keyId === 'key-1' || keyId === 'key-2') {
                             return [200, BYOK_OPENAI_MODELS]
                         }
