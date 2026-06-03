@@ -14,9 +14,9 @@ actions document the ``token`` input as the rate-limit lever; passing an
 app-scoped token moves the call off the shared default bucket — the same
 offload pattern already used for ``dorny/paths-filter``.
 
-This rule is non-blocking while the existing call sites are migrated: it warns
-so new workflows are guided and the backlog is visible, without failing every
-PR until the migration completes. Flip ``blocking = True`` once the tree is clean.
+All call sites are migrated, so this rule is blocking: a new `setup-*` step on
+the default token fails CI. The accepted pattern is `token: ${{ steps.<id>.outputs.token
+|| github.token }}` (an app-scoped token with a default-token fallback for forks).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class SetupActionTokenCheck(WorkflowCheck):
     id = "WF005-setup-action-token"
     label = "setup-* off default token"
     description = "actions/setup-{node,python,go} should pass an app-scoped token: (not the default GITHUB_TOKEN)"
-    blocking = False  # rollout: warn while existing call sites are migrated
+    blocking = True  # all call sites migrated — enforce going forward
 
     @property
     def fix_hint(self) -> str | None:
