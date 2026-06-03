@@ -490,7 +490,7 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
         event_correlation_query = parse_select(
             f"""
             WITH
-                funnel_actors AS (
+                funnel_actors AS MATERIALIZED (
                     {{funnel_persons_query}}
                 ),
                 {{date_from}} AS date_from,
@@ -522,14 +522,6 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
             -- To get the total success/failure numbers, we do an aggregation on
             -- the funnel people CTE and count distinct actor_ids
             UNION ALL
-
-            -- :HACKY: HogQL does not have access to a CTE in the second union query, thus
-            -- we're repeating the CTE here. This likely is a big hit on query performance.
-            WITH
-                funnel_actors AS (
-                    {{funnel_persons_query}}
-                ),
-                {target_step} AS target_step
 
             SELECT
                 -- We're not using WITH TOTALS because the resulting queries are
@@ -596,7 +588,7 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
         query = parse_select(
             f"""
             WITH
-                funnel_actors AS (
+                funnel_actors AS MATERIALIZED (
                     {{funnel_persons_query}}
                 ),
                 {{date_from}} AS date_from,
@@ -627,14 +619,6 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
             UNION ALL
             -- To get the total success/failure numbers, we do an aggregation on
             -- the funnel people CTE and count distinct actor_ids
-
-            -- :HACKY: HogQL does not have access to a CTE in the second union query, thus
-            -- we're repeating the CTE here. This likely is a big hit on query performance.
-            WITH
-                funnel_actors AS (
-                    {{funnel_persons_query}}
-                ),
-                {target_step} AS target_step
 
             SELECT
                 {{total_identifier}} as name,
@@ -684,7 +668,7 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
         query = parse_select(
             f"""
             WITH
-                funnel_actors AS (
+                funnel_actors AS MATERIALIZED (
                     {{funnel_persons_query}}
                 ),
                 {target_step} AS target_step
@@ -731,14 +715,6 @@ class FunnelCorrelationQueryRunner(AnalyticsQueryRunner[FunnelCorrelationRespons
             HAVING prop.1 NOT IN {{exclude_names}}
 
             UNION ALL
-
-            -- :HACKY: HogQL does not have access to a CTE in the second union query, thus
-            -- we're repeating the CTE here. This likely is a big hit on query performance.
-            WITH
-                funnel_actors AS (
-                    {{funnel_persons_query}}
-                ),
-                {target_step} AS target_step
 
             SELECT
                 {{total_identifier}} as name,
