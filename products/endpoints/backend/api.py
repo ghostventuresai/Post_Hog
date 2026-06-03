@@ -2687,6 +2687,7 @@ class EndpointViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, TaggedItemView
         # the `.` is rejected by lint_spec_consistency_hook + the MCP YAML scaffolder.
         operation_id="endpoints_openapi_spec_retrieve",
         description="Get OpenAPI 3.0 specification for this endpoint. Use this to generate typed SDK clients.",
+        operation_id="endpoints_openapi_spec_retrieve",
         parameters=[
             OpenApiParameter(
                 name="version",
