@@ -408,44 +408,27 @@ async fn it_rejects_missing_distinct_id() -> Result<()> {
     Ok(())
 }
 
+#[rstest]
+#[case(json!({"distinct_id": "user1", "groups": {"group1": "group1"}}), "not_authenticated", "No API token provided.")]
+#[case(json!({"token": "invalid_token", "distinct_id": "user1", "groups": {"group1": "group1"}}), "authentication_failed", "Invalid or expired API key.")]
 #[tokio::test]
-async fn it_rejects_missing_token() -> Result<()> {
+async fn it_rejects_invalid_auth(
+    #[case] payload: serde_json::Value,
+    #[case] expected_code: &str,
+    #[case] expected_detail: &str,
+) -> Result<()> {
     let config = DEFAULT_TEST_CONFIG.clone();
     let server = ServerHandle::for_config(config).await;
 
-    let payload = json!({
-        "distinct_id": "user1",
-        "groups": {"group1": "group1"}
-    });
     let res = server
         .send_flags_request(payload.to_string(), Some("1"), None)
         .await;
     assert_eq!(StatusCode::UNAUTHORIZED, res.status());
-    assert_eq!(
-        res.text().await?,
-        "No API token provided. Please include a valid API token in your request."
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn it_rejects_invalid_token() -> Result<()> {
-    let config = DEFAULT_TEST_CONFIG.clone();
-    let server = ServerHandle::for_config(config).await;
-
-    let payload = json!({
-        "token": "invalid_token",
-        "distinct_id": "user1",
-        "groups": {"group1": "group1"}
-    });
-    let res = server
-        .send_flags_request(payload.to_string(), Some("1"), None)
-        .await;
-    assert_eq!(StatusCode::UNAUTHORIZED, res.status());
-    assert_eq!(
-        res.text().await?,
-        "The provided API key is invalid or has expired. Please check your API key and try again."
-    );
+    let body: serde_json::Value = res.json().await?;
+    assert_eq!(body["type"], "authentication_error");
+    assert_eq!(body["code"], expected_code);
+    assert_eq!(body["detail"], expected_detail);
+    assert_eq!(body["attr"], serde_json::Value::Null);
     Ok(())
 }
 
