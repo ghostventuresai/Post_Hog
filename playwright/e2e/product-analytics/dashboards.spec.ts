@@ -115,7 +115,7 @@ test.describe('Dashboards', () => {
         })
     })
 
-    test.skip('Can duplicate, rename, and remove dashboard tiles', async ({ page }) => {
+    test('Can duplicate, rename, and remove dashboard tiles', async ({ page }) => {
         const dashboard = new DashboardPage(page)
         const newTileName = randomString('tile-name')
 
@@ -179,8 +179,12 @@ test.describe('Dashboards', () => {
         await test.step('write query, run, and save as insight', async () => {
             const editor = page.locator('.monaco-editor').first()
             await editor.click()
-            await page.keyboard.press('Meta+a')
-            await page.keyboard.type('SELECT {variables.test_number}', { delay: 10 })
+            await page.keyboard.press('ControlOrMeta+a')
+            // insertText() inserts the whole string at once, so Monaco's bracket
+            // auto-close and autocomplete don't intercept the `{`/`}` mid-type and
+            // produce a malformed query that leaves "Save as insight" disabled.
+            await page.keyboard.insertText('SELECT {variables.test_number}')
+            await page.keyboard.press('Escape')
 
             await page.getByRole('button', { name: 'Run' }).click()
             await expect(page.locator('[data-attr=sql-editor-output-pane-empty-state]')).not.toBeVisible()
@@ -233,11 +237,15 @@ test.describe('Dashboards', () => {
         await test.step('verify navigation to dashboards list (not "Not found")', async () => {
             await expect(page).toHaveURL(/\/dashboard(#panel=[a-z]+)?$/)
             await expect(page.getByText('Not found')).not.toBeVisible()
-            await expect(page.getByText(dashboardName)).not.toBeVisible()
+            // Scope to the table: the deletion toast also contains the name, and the
+            // row lingers briefly until delayedDeleteDashboard prunes it — an unscoped
+            // getByText matches both and trips strict mode instead of retrying away.
+            await expect(page.getByTestId('dashboards-table').getByText(dashboardName)).not.toBeVisible()
         })
     })
 
     test('Deleting an insight from dashboard redirects back', async ({ page }) => {
+        test.setTimeout(120_000)
         const dashboard = new DashboardPage(page)
         const insight = new InsightPage(page)
         const insightName = randomString('dash-trends')
