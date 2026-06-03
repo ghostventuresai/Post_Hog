@@ -51,6 +51,13 @@ def post_slack_update(input: PostSlackUpdateInput) -> None:
 
     try:
         context = SlackThreadContext.from_dict(input.slack_thread_context)
+        # The workflow input is frozen at task start, so for a thread that has
+        # since switched to a different participant (multiplayer follow-up,
+        # resume by another teammate), we layer the live actor from run state
+        # on top before posting.
+        acting = (task_run.state or {}).get("acting_slack_user_id")
+        if acting:
+            context.acting_slack_user_id = acting
         handler = SlackThreadHandler(context)
         creator_has_access = _viewer_has_posthog_code_access(task_run.task.created_by)
         task_url: str | None = (

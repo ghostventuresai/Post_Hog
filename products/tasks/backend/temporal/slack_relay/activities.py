@@ -149,10 +149,12 @@ def relay_slack_message(input: RelaySlackMessageInput) -> None:
         thread_ts=mapping.thread_ts,
         user_message_ts=input.user_message_ts,
         mentioning_slack_user_id=mapping.mentioning_slack_user_id,
+        acting_slack_user_id=state.get("acting_slack_user_id"),
     )
     handler = SlackThreadHandler(context)
 
-    mention_prefix = f"<@{mapping.mentioning_slack_user_id}> " if mapping.mentioning_slack_user_id else ""
+    target = context.reply_target_slack_user_id
+    mention_prefix = f"<@{target}> " if target else ""
     if input.delete_progress:
         handler.delete_progress()
     handler.post_thread_message(f"{mention_prefix}{text}")

@@ -1269,6 +1269,12 @@ def forward_posthog_code_followup_activity(
     if user_message_ts:
         _safe_react(slack.client, channel, user_message_ts, "eyes")
 
+    # Record who triggered this turn so async reply paths (the agent's relay
+    # back via the relay API, the PR-opened notification) tag them instead of
+    # the original mentioner. Stored before forwarding to the sandbox so the
+    # state is set even if relayed responses arrive before this returns.
+    TaskRun.update_state_atomic(str(task_run.id), updates={"acting_slack_user_id": slack_user_id})
+
     auth_token = None
     created_by = mapping.task.created_by
     if created_by and created_by.id:
@@ -1385,6 +1391,10 @@ def _resume_task_with_new_run(
     if user_message_ts:
         extra_state["pending_user_message_ts"] = user_message_ts
     extra_state["slack_mention_workflow_id"] = derive_mention_workflow_id(inputs)
+    # The new run is being created on behalf of whoever sent the follow-up that
+    # resumed the thread; reply paths read this to tag them rather than the
+    # original task creator.
+    extra_state["acting_slack_user_id"] = slack_user_id
 
     try:
         new_run = mapping.task.create_run(mode="interactive", extra_state=extra_state)

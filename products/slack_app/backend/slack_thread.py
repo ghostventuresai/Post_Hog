@@ -36,6 +36,16 @@ class SlackThreadContext:
     thread_ts: str
     user_message_ts: str | None = None
     mentioning_slack_user_id: str | None = None
+    # Slack user id of the most recent participant in this thread. Differs from
+    # ``mentioning_slack_user_id`` when a teammate follows up after the original
+    # author started the thread (multiplayer); the bot's reply tags them so the
+    # ping reaches whoever actually asked, not the user who opened the task.
+    acting_slack_user_id: str | None = None
+
+    @property
+    def reply_target_slack_user_id(self) -> str | None:
+        """Slack user id the bot should tag in replies — actor first, mentioner as fallback."""
+        return self.acting_slack_user_id or self.mentioning_slack_user_id
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -47,6 +57,8 @@ class SlackThreadContext:
             d["user_message_ts"] = self.user_message_ts
         if self.mentioning_slack_user_id is not None:
             d["mentioning_slack_user_id"] = self.mentioning_slack_user_id
+        if self.acting_slack_user_id is not None:
+            d["acting_slack_user_id"] = self.acting_slack_user_id
         return d
 
     @classmethod
@@ -57,6 +69,7 @@ class SlackThreadContext:
             thread_ts=data["thread_ts"],
             user_message_ts=data.get("user_message_ts"),
             mentioning_slack_user_id=data.get("mentioning_slack_user_id"),
+            acting_slack_user_id=data.get("acting_slack_user_id"),
         )
 
 
@@ -217,7 +230,8 @@ class SlackThreadHandler:
 
     def post_pr_opened(self, pr_url: str, task_url: str | None) -> None:
         """Post PR opened message with action buttons."""
-        mention_prefix = f"<@{self.context.mentioning_slack_user_id}> " if self.context.mentioning_slack_user_id else ""
+        target = self.context.reply_target_slack_user_id
+        mention_prefix = f"<@{target}> " if target else ""
         header = f"{mention_prefix}Pull request opened."
 
         buttons: list[dict[str, Any]] = [

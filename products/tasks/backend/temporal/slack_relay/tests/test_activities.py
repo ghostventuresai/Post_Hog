@@ -104,6 +104,42 @@ class TestRelaySlackMessage(TestCase):
         self.task_run.refresh_from_db()
         assert relay_id in self.task_run.state.get("slack_sent_relay_ids", [])
 
+    @parameterized.expand(
+        [
+            # The mapping's ``mentioning_slack_user_id`` is the original task
+            # author. State carries the latest actor, set by the followup
+            # handler. The bot's reply should tag whoever spoke most recently —
+            # so it pings the original when no actor is recorded, and the
+            # follow-up sender once one is.
+            ("no_actor_falls_back_to_mentioner", {}, "<@U123> "),
+            ("actor_overrides_mentioner", {"acting_slack_user_id": "UBOB"}, "<@UBOB> "),
+        ]
+    )
+    @patch("products.slack_app.backend.slack_thread.SlackThreadHandler.update_reaction")
+    @patch("products.slack_app.backend.slack_thread.SlackThreadHandler.post_thread_message")
+    @patch("products.slack_app.backend.slack_thread.SlackThreadHandler.delete_progress")
+    def test_mention_prefix_uses_acting_user_from_state(
+        self,
+        _name,
+        state_overrides,
+        expected_prefix,
+        _mock_delete_progress,
+        mock_post,
+        _mock_update,
+    ):
+        TaskRun.update_state_atomic(str(self.task_run.id), updates=state_overrides)
+
+        relay_slack_message(
+            RelaySlackMessageInput(
+                run_id=str(self.task_run.id),
+                relay_id=f"relay-mention-{_name}",
+                text="agent reply",
+            )
+        )
+
+        mock_post.assert_called_once()
+        assert mock_post.call_args.args[0].startswith(expected_prefix)
+
 
 class TestMarkdownToSlackMrkdwn(TestCase):
     @parameterized.expand(

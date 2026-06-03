@@ -897,6 +897,10 @@ class TestForwardPostHogCodeFollowupActivity(TestCase):
         )
         # Response is delivered by relayAgentResponse from the agent-server, not by this activity.
         mock_slack_instance.client.chat_postMessage.assert_not_called()
+        # The follow-up sender is recorded on the run so the async reply tags
+        # them instead of the original task author (multiplayer support).
+        self.task_run.refresh_from_db()
+        assert self.task_run.state.get("acting_slack_user_id") == "U_ALICE"
 
     @patch("posthog.temporal.ai.posthog_code_slack_mention.create_sandbox_connection_token", return_value="jwt-token")
     @patch("posthog.temporal.ai.posthog_code_slack_mention.send_user_message")

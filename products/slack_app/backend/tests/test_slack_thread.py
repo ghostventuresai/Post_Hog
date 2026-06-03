@@ -269,3 +269,83 @@ class TestSlackThreadHandlerWithoutTaskUrl(TestCase):
 
         mock_client.chat_postMessage.assert_called_once()
         assert _action_blocks(mock_client.chat_postMessage.call_args.kwargs) == []
+
+
+class TestSlackThreadContextReplyTarget(TestCase):
+    """Multiplayer support: a thread that started with one user can have its
+    later messages come from a teammate. The ``acting_slack_user_id`` field
+    carries who spoke most recently, and the bot's replies must tag *them*
+    instead of always pinging the original mentioner.
+    """
+
+    def test_acting_user_wins_when_present(self):
+        ctx = SlackThreadContext(
+            integration_id=1,
+            channel="C001",
+            thread_ts="1.0",
+            mentioning_slack_user_id="UORIGINAL",
+            acting_slack_user_id="ULATEST",
+        )
+        assert ctx.reply_target_slack_user_id == "ULATEST"
+
+    def test_falls_back_to_mentioner_when_no_actor(self):
+        ctx = SlackThreadContext(
+            integration_id=1,
+            channel="C001",
+            thread_ts="1.0",
+            mentioning_slack_user_id="UORIGINAL",
+        )
+        assert ctx.reply_target_slack_user_id == "UORIGINAL"
+
+    def test_none_when_neither_set(self):
+        ctx = SlackThreadContext(integration_id=1, channel="C001", thread_ts="1.0")
+        assert ctx.reply_target_slack_user_id is None
+
+    def test_round_trips_through_dict(self):
+        original = SlackThreadContext(
+            integration_id=1,
+            channel="C001",
+            thread_ts="1.0",
+            mentioning_slack_user_id="UORIGINAL",
+            acting_slack_user_id="ULATEST",
+        )
+        assert SlackThreadContext.from_dict(original.to_dict()) == original
+
+
+class TestSlackThreadHandlerMentionTagging(TestCase):
+    @patch.object(SlackThreadHandler, "_get_client")
+    def test_post_pr_opened_tags_acting_user_over_mentioner(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        context = SlackThreadContext(
+            integration_id=1,
+            channel="C001",
+            thread_ts="1.0",
+            mentioning_slack_user_id="UORIGINAL",
+            acting_slack_user_id="ULATEST",
+        )
+        handler = SlackThreadHandler(context)
+
+        handler.post_pr_opened("https://github.com/org/repo/pull/1", task_url=None)
+
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["text"].startswith("<@ULATEST> Pull request opened.")
+
+    @patch.object(SlackThreadHandler, "_get_client")
+    def test_post_pr_opened_falls_back_to_mentioner(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        context = SlackThreadContext(
+            integration_id=1,
+            channel="C001",
+            thread_ts="1.0",
+            mentioning_slack_user_id="UORIGINAL",
+        )
+        handler = SlackThreadHandler(context)
+
+        handler.post_pr_opened("https://github.com/org/repo/pull/1", task_url=None)
+
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["text"].startswith("<@UORIGINAL> Pull request opened.")
