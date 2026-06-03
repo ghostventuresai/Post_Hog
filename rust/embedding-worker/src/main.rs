@@ -7,6 +7,7 @@ use axum::{
     Router,
 };
 use common_kafka::kafka_consumer::RecvErr;
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use common_metrics::{serve, setup_metrics_routes};
 use common_types::embedding::{EmbeddingRecord, EmbeddingRequest};
 use embedding_worker::{
@@ -115,13 +116,34 @@ async fn main() {
     let batch_size = config.max_events_per_batch;
 
     loop {
-        context.worker_liveness.report_healthy().await;
         // Just grab the event as a serde_json::Value and immediately drop it,
         // we can work out a real type for it later (once we're deployed etc)
         let received: Vec<Result<(EmbeddingRequest, _), _>> = context
             .kafka_consumer
             .json_recv_batch(batch_size, batch_wait_time)
             .await;
+
+        // If the topic doesn't exist yet, librdkafka surfaces UnknownTopicOrPartition.
+        // Back off and retry without reporting healthy, so the liveness deadline lapses
+        // and the pod is restarted in production if the topic never appears. Any other
+        // kafka error is still treated as fatal below.
+        if received.iter().any(|r| {
+            matches!(
+                r,
+                Err(RecvErr::Kafka(KafkaError::MessageConsumption(
+                    RDKafkaErrorCode::UnknownTopicOrPartition,
+                )))
+            )
+        }) {
+            error!(
+                "Kafka topic {} not found, sleeping 10s before retry",
+                context.config.consumer.kafka_consumer_topic,
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
+        }
+
+        context.worker_liveness.report_healthy().await;
 
         let mut transactional_producer = context.transactional_producer.lock().await;
 
