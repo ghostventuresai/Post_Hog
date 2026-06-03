@@ -655,6 +655,7 @@ export const LogPropertyFilterTypeApi = {
 
 export interface LogPropertyFilterApi {
     key: string
+    keys?: string[] | null
     label?: string | null
     operator: PropertyOperatorApi
     type: LogPropertyFilterTypeApi

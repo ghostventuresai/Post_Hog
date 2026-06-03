@@ -80,6 +80,7 @@ export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOnesixVal
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOnesevenLabelDefault = null
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOnesevenValueDefault = null
+export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault = null
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault = null
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOneeightValueDefault = null
 export const errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOnenineLabelDefault = null
@@ -862,6 +863,9 @@ export const ErrorTrackingAssignmentRulesCreateBody = /* @__PURE__ */ zod.object
                     }),
                     zod.object({
                         key: zod.string(),
+                        keys: zod
+                            .union([zod.array(zod.string()), zod.null()])
+                            .default(errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault),
                         label: zod
                             .union([zod.string(), zod.null()])
                             .default(errorTrackingAssignmentRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault),
@@ -1158,6 +1162,7 @@ export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOnesixValue
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOnesevenLabelDefault = null
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOnesevenValueDefault = null
+export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault = null
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault = null
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOneeightValueDefault = null
 export const errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOnenineLabelDefault = null
@@ -1940,6 +1945,9 @@ export const ErrorTrackingGroupingRulesCreateBody = /* @__PURE__ */ zod.object({
                     }),
                     zod.object({
                         key: zod.string(),
+                        keys: zod
+                            .union([zod.array(zod.string()), zod.null()])
+                            .default(errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault),
                         label: zod
                             .union([zod.string(), zod.null()])
                             .default(errorTrackingGroupingRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault),
@@ -2237,6 +2245,7 @@ export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOnesixValue
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOnesevenLabelDefault = null
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOnesevenValueDefault = null
+export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOneeightKeysDefault = null
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOneeightLabelDefault = null
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOneeightValueDefault = null
 export const errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOnenineLabelDefault = null
@@ -3025,6 +3034,9 @@ export const ErrorTrackingGroupingRulesUpdateBody = /* @__PURE__ */ zod.object({
                         }),
                         zod.object({
                             key: zod.string(),
+                            keys: zod
+                                .union([zod.array(zod.string()), zod.null()])
+                                .default(errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOneeightKeysDefault),
                             label: zod
                                 .union([zod.string(), zod.null()])
                                 .default(errorTrackingGroupingRulesUpdateBodyFiltersOneValuesItemOneeightLabelDefault),
@@ -3855,6 +3867,7 @@ export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOnesixVa
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOnesevenLabelDefault = null
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOnesevenValueDefault = null
+export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault = null
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault = null
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOneeightValueDefault = null
 export const errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOnenineLabelDefault = null
@@ -4640,6 +4653,9 @@ export const ErrorTrackingSuppressionRulesCreateBody = /* @__PURE__ */ zod.objec
                     }),
                     zod.object({
                         key: zod.string(),
+                        keys: zod
+                            .union([zod.array(zod.string()), zod.null()])
+                            .default(errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOneeightKeysDefault),
                         label: zod
                             .union([zod.string(), zod.null()])
                             .default(errorTrackingSuppressionRulesCreateBodyFiltersOneValuesItemOneeightLabelDefault),
@@ -4927,6 +4943,7 @@ export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOnesixVa
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOnesevenLabelDefault = null
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOnesevenValueDefault = null
+export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOneeightKeysDefault = null
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOneeightLabelDefault = null
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOneeightValueDefault = null
 export const errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOnenineLabelDefault = null
@@ -5711,6 +5728,9 @@ export const ErrorTrackingSuppressionRulesUpdateBody = /* @__PURE__ */ zod.objec
                     }),
                     zod.object({
                         key: zod.string(),
+                        keys: zod
+                            .union([zod.array(zod.string()), zod.null()])
+                            .default(errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOneeightKeysDefault),
                         label: zod
                             .union([zod.string(), zod.null()])
                             .default(errorTrackingSuppressionRulesUpdateBodyFiltersOneValuesItemOneeightLabelDefault),

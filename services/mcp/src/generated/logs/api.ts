@@ -83,6 +83,7 @@ export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOne
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenLabelDefault = null
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenValueDefault = null
+export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault = null
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightLabelDefault = null
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightValueDefault = null
 export const logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnenineLabelDefault = null
@@ -999,6 +1000,11 @@ export const LogsAlertsCreateBody = /* @__PURE__ */ zod.object({
                                         }),
                                         zod.object({
                                             key: zod.string(),
+                                            keys: zod
+                                                .union([zod.array(zod.string()), zod.null()])
+                                                .default(
+                                                    logsAlertsCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault
+                                                ),
                                             label: zod
                                                 .union([zod.string(), zod.null()])
                                                 .default(
@@ -1360,6 +1366,7 @@ export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValues
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenLabelDefault = null
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenValueDefault = null
+export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault = null
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightLabelDefault = null
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightValueDefault = null
 export const logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnenineLabelDefault = null
@@ -2270,6 +2277,11 @@ export const LogsAlertsPartialUpdateBody = /* @__PURE__ */ zod.object({
                                         }),
                                         zod.object({
                                             key: zod.string(),
+                                            keys: zod
+                                                .union([zod.array(zod.string()), zod.null()])
+                                                .default(
+                                                    logsAlertsPartialUpdateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault
+                                                ),
                                             label: zod
                                                 .union([zod.string(), zod.null()])
                                                 .default(
@@ -2693,6 +2705,7 @@ export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValue
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenLabelDefault = null
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenTypeDefault = `error_tracking_issue`
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnesevenValueDefault = null
+export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault = null
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightLabelDefault = null
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightValueDefault = null
 export const logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOnenineLabelDefault = null
@@ -3600,6 +3613,11 @@ export const LogsAlertsSimulateCreateBody = /* @__PURE__ */ zod.object({
                                         }),
                                         zod.object({
                                             key: zod.string(),
+                                            keys: zod
+                                                .union([zod.array(zod.string()), zod.null()])
+                                                .default(
+                                                    logsAlertsSimulateCreateBodyFiltersOneFilterGroupOneValuesItemValuesItemOneeightKeysDefault
+                                                ),
                                             label: zod
                                                 .union([zod.string(), zod.null()])
                                                 .default(
