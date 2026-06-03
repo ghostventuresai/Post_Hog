@@ -3,11 +3,13 @@ import { Message } from 'node-rdkafka'
 import { PluginEvent } from '~/plugin-scaffold'
 
 import { EventHeaders, Team } from '../../types'
+import { MaterializedColumnSlotManager } from '../../utils/materialized-column-slot-manager'
 import { createProcessAiEventStep } from '../ai/pipelines/steps/process-ai-event-step'
 import { IngestionWarningsOutput } from '../common/outputs'
 import { createCreateEventStep } from '../event-processing/create-event-step'
 import { createDisablePersonProcessingWithFakePersonStep } from '../event-processing/disable-person-processing-with-fake-person-step'
 import { createEmitEventStep } from '../event-processing/emit-event-step'
+import { createExtractDmatColumnsStep } from '../event-processing/extract-dmat-columns-step'
 import { createNormalizeEventStep } from '../event-processing/normalize-event-step'
 import { createPrepareEventStep } from '../event-processing/prepare-event-step'
 import { IngestionOutputs } from '../outputs/ingestion-outputs'
@@ -24,13 +26,14 @@ export interface TestingAiEventSubpipelineInput {
 export interface TestingAiEventSubpipelineConfig {
     outputs: IngestionOutputs<EventOutput | IngestionWarningsOutput>
     groupId: string
+    materializedColumnSlotManager: MaterializedColumnSlotManager
 }
 
 export function createTestingAiEventSubpipeline<TInput extends TestingAiEventSubpipelineInput, TContext>(
     builder: StartPipelineBuilder<TInput, TContext>,
     config: TestingAiEventSubpipelineConfig
 ): PipelineBuilder<TInput, void, TContext> {
-    const { outputs, groupId } = config
+    const { outputs, groupId, materializedColumnSlotManager } = config
 
     // Compared to ai-event-subpipeline.ts:
     // CHANGED: createNormalizeProcessPersonFlagStep → createDisablePersonProcessingWithFakePersonStep
@@ -46,5 +49,6 @@ export function createTestingAiEventSubpipeline<TInput extends TestingAiEventSub
         .pipe(createProcessAiEventStep())
         .pipe(createPrepareEventStep())
         .pipe(createCreateEventStep(EVENTS_OUTPUT))
+        .pipe(createExtractDmatColumnsStep(materializedColumnSlotManager))
         .pipe(createEmitEventStep({ outputs, groupId }))
 }

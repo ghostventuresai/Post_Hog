@@ -70,6 +70,13 @@ export type ErrorTrackingConsumerConfig = {
     INGESTION_PIPELINE: string | null
     /** Lane identifier (main, overflow) for metrics labeling */
     INGESTION_LANE: IngestionLane | null
+
+    /**
+     * Fleet-wide gate for writing dmat columns at ingestion time. Shared with
+     * `IngestionConsumerConfig` (error-tracking events land in the same events table), so the
+     * same env var controls both. See that definition for the rollout semantics.
+     */
+    INGESTION_DMAT_COLUMN_WRITES_ENABLED: boolean
 }
 
 export function getDefaultErrorTrackingConsumerConfig(): ErrorTrackingConsumerConfig {
@@ -99,6 +106,7 @@ export function getDefaultErrorTrackingConsumerConfig(): ErrorTrackingConsumerCo
         ERROR_TRACKING_PER_ISSUE_GUARD_COOLDOWN_TTL_SECONDS: 300,
         INGESTION_PIPELINE: null,
         INGESTION_LANE: null,
+        INGESTION_DMAT_COLUMN_WRITES_ENABLED: true,
     }
 }
 

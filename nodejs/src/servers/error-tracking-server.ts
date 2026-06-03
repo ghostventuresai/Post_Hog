@@ -44,6 +44,7 @@ import { createRedisPoolFromConfig } from '../utils/db/redis'
 import { ErrorTrackingSettingsManager } from '../utils/error-tracking-settings-manager'
 import { GeoIPService } from '../utils/geoip'
 import { logger } from '../utils/logger'
+import { MaterializedColumnSlotManager } from '../utils/materialized-column-slot-manager'
 import { PubSub } from '../utils/pubsub'
 import { TeamManager } from '../utils/team-manager'
 import { GroupTypeManager } from '../worker/ingestion/group-type-manager'
@@ -158,6 +159,10 @@ export class ErrorTrackingServer implements NodeServer {
         await this.pubsub.start()
 
         const teamManager = new TeamManager(this.postgres)
+        const materializedColumnSlotManager = new MaterializedColumnSlotManager(
+            this.postgres,
+            this.config.INGESTION_DMAT_COLUMN_WRITES_ENABLED
+        )
         const errorTrackingSettingsManager = this.config.ERROR_TRACKING_RATE_LIMITER_ENABLED
             ? new ErrorTrackingSettingsManager(this.postgres)
             : undefined
@@ -238,6 +243,7 @@ export class ErrorTrackingServer implements NodeServer {
                 {
                     outputs,
                     teamManager,
+                    materializedColumnSlotManager,
                     errorTrackingSettingsManager,
                     hogTransformer: createHogTransformerService(this.config, hogTransformerDeps),
                     groupTypeManager: new GroupTypeManager(groupRepository, teamManager),

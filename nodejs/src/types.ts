@@ -25,6 +25,7 @@ import type { MetricsIngestionConsumerConfig } from './metrics-ingestion/config'
 import type { SessionRecordingApiConfig, SessionRecordingConfig } from './session-recording/config'
 import { PostgresRouter } from './utils/db/postgres'
 import { GeoIPService } from './utils/geoip'
+import { MaterializedColumnSlotManager } from './utils/materialized-column-slot-manager'
 import { PubSub } from './utils/pubsub'
 import { TeamManager } from './utils/team-manager'
 import { GroupTypeManager } from './worker/ingestion/group-type-manager'
@@ -135,6 +136,7 @@ export interface HubServices {
     posthogRedisPool: GenericPool<Redis>
     cookielessRedisPool: GenericPool<Redis>
     teamManager: TeamManager
+    materializedColumnSlotManager: MaterializedColumnSlotManager
     groupTypeManager: GroupTypeManager
     groupRepository: GroupRepository
     personRepository: PersonRepository
@@ -380,6 +382,8 @@ export interface RawClickHouseEvent extends BaseEvent {
     group4_created_at?: ClickHouseTimestamp
     person_mode: PersonMode
     historical_migration?: boolean
+    /** dmat columns spread into the Kafka payload. Index signature because the set is data-driven. */
+    [dmatColumn: `dmat_${string}_${number}`]: string
 }
 
 export interface RawKafkaEvent extends RawClickHouseEvent {
@@ -407,6 +411,18 @@ export interface ProcessedEvent {
     person_created_at: DateTime | null
     person_mode: PersonMode
     historical_migration?: boolean
+    /** dmat columns keyed by ClickHouse column name (e.g. `dmat_string_3`). */
+    dmat_columns?: Record<string, string>
+}
+
+/**
+ * One row of a team's dmat slot config. Ingestion writes the extracted property value to
+ * `dmat_string_<slot_index>` for every event in this team.
+ */
+export interface MaterializedColumnSlot {
+    property_name: string
+    slot_index: number
+    state: 'READY' | 'BACKFILL'
 }
 
 /** Parsed event row from ClickHouse. */

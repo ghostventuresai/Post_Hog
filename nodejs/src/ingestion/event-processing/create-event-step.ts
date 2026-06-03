@@ -29,6 +29,7 @@ export function createCreateEventStep<O extends string, T extends CreateEventSte
         const { person, preparedEvent, processPerson, historicalMigration, headers, message } = input
 
         const capturedAt = headers.now ?? null
+
         const rawEvent = createEvent(preparedEvent, person, processPerson, historicalMigration, capturedAt)
         const result: CreateEventStepResult<O> = {
             eventsToEmit: [{ event: rawEvent, output }],

@@ -4,6 +4,7 @@ import { PluginEvent } from '~/plugin-scaffold'
 
 import { HogTransformerService } from '../../cdp/hog-transformations/hog-transformer.service'
 import { EventHeaders, Team } from '../../types'
+import { MaterializedColumnSlotManager } from '../../utils/materialized-column-slot-manager'
 import { TeamManager } from '../../utils/team-manager'
 import { GroupTypeManager } from '../../worker/ingestion/group-type-manager'
 import { BatchWritingGroupStore } from '../../worker/ingestion/groups/batch-writing-group-store'
@@ -12,6 +13,7 @@ import { IngestionWarningsOutput } from '../common/outputs'
 import { createCreateEventStep } from '../event-processing/create-event-step'
 import { createEmitEventStep } from '../event-processing/emit-event-step'
 import { EventPipelineRunnerOptions } from '../event-processing/event-pipeline-options'
+import { createExtractDmatColumnsStep } from '../event-processing/extract-dmat-columns-step'
 import { createHogTransformEventStep } from '../event-processing/hog-transform-event-step'
 import { createNormalizeEventStep } from '../event-processing/normalize-event-step'
 import { createNormalizeProcessPersonFlagStep } from '../event-processing/normalize-process-person-flag-step'
@@ -36,6 +38,7 @@ export interface EventSubpipelineConfig {
     options: EventPipelineRunnerOptions
     outputs: IngestionOutputs<EventOutput | IngestionWarningsOutput | PersonsOutput | PersonDistinctIdsOutput>
     teamManager: TeamManager
+    materializedColumnSlotManager: MaterializedColumnSlotManager
     groupTypeManager: GroupTypeManager
     hogTransformer: HogTransformerService
     personsStore: PersonsStore
@@ -52,6 +55,7 @@ export function createEventSubpipeline<TInput extends EventSubpipelineInput, TCo
         options,
         outputs,
         teamManager,
+        materializedColumnSlotManager,
         groupTypeManager,
         hogTransformer,
         personsStore,
@@ -105,6 +109,7 @@ export function createEventSubpipeline<TInput extends EventSubpipelineInput, TCo
         .pipe(createPrepareEventStep())
         .pipe(createProcessGroupsStep(teamManager, groupTypeManager, groupStore, options))
         .pipe(createCreateEventStep(EVENTS_OUTPUT))
+        .pipe(createExtractDmatColumnsStep(materializedColumnSlotManager))
         .pipe(
             topHog(
                 createEmitEventStep({
