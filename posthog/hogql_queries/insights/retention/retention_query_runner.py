@@ -66,6 +66,12 @@ DEFAULT_ENTITY = RetentionEntity(
     }
 )
 
+# Fields that define "same entity" for the purposes of WHERE-clause and aggregate
+# de-duplication. Mirrors the inputs entity_to_expr consumes:
+# id+type → event/action selection; table_name+timestamp_field → DWH routing;
+# properties → AND-chain.
+_ENTITY_IDENTITY_FIELDS: frozenset[str] = frozenset({"id", "type", "table_name", "timestamp_field", "properties"})
+
 
 class RetentionQueryRunner(AnalyticsQueryRunner[RetentionQueryResponse]):
     query: RetentionQuery
@@ -227,6 +233,12 @@ class RetentionQueryRunner(AnalyticsQueryRunner[RetentionQueryResponse]):
         return entity_to_expr(self.return_event, self.team)
 
     @cached_property
+    def start_and_return_entities_are_same(self) -> bool:
+        return all(
+            getattr(self.start_event, field) == getattr(self.return_event, field) for field in _ENTITY_IDENTITY_FIELDS
+        )
+
+    @cached_property
     def aggregation_target_events_column(self) -> str:
         if self.group_type_index is not None:
             group_index = int(self.group_type_index)
@@ -239,10 +251,16 @@ class RetentionQueryRunner(AnalyticsQueryRunner[RetentionQueryResponse]):
         global_event_filters = self.events_where_clause(
             self.is_first_occurrence_matching_filters, self.is_first_ever_occurrence
         )
-        # Pre-filter events to only those we care about
-        is_relevant_event = ast.Or(exprs=[self.start_entity_expr, self.return_entity_expr])
+        # Pre-filter events to only those we care about. Skip the or() wrapper
+        # when start == return — ClickHouse does not fully CSE the WHERE-side
+        # or(X, X) and the un-wrapped predicate is measurably faster.
         if not self.is_first_ever_occurrence:
-            global_event_filters.append(is_relevant_event)
+            relevant_event_filter: ast.Expr = (
+                self.start_entity_expr
+                if self.start_and_return_entities_are_same
+                else ast.Or(exprs=[self.start_entity_expr, self.return_entity_expr])
+            )
+            global_event_filters.append(relevant_event_filter)
 
         if self.group_type_index is not None:
             global_event_filters.append(
