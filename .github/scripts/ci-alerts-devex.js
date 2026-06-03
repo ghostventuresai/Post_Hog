@@ -150,6 +150,16 @@ function leadingRedStreak(classified) {
 // Slack client (injectable for tests)
 // ---------------------------------------------------------------------------
 
+// Slack errors that mean the bot token itself is unusable — a fresh tick can't
+// recover, so failing the (every-10-min) workflow run just trades a dead alerter
+// for a stream of red scheduled runs. The recurring trigger is the backing Slack
+// app being deactivated (account_inactive) or its token rotated/revoked. Tag the
+// error code on the thrown error so the top-level handler can fail soft on these;
+// extend the set if Slack surfaces a new token-death code.
+const FATAL_AUTH_ERRORS = new Set(['account_inactive', 'invalid_auth', 'not_authed', 'token_revoked', 'token_expired'])
+
+const slackError = (message, code) => Object.assign(new Error(message), { slackError: code })
+
 function defaultSlackClient(token, fetchImpl) {
     const doFetch = fetchImpl || fetch
     const post = async (method, body) => {
@@ -159,7 +169,7 @@ function defaultSlackClient(token, fetchImpl) {
             body: JSON.stringify(body),
         })
         const data = await res.json()
-        if (!data.ok) throw new Error(`slack ${method} failed: ${data.error}`)
+        if (!data.ok) throw slackError(`slack ${method} failed: ${data.error}`, data.error)
         return data
     }
     return {
@@ -173,7 +183,7 @@ function defaultSlackClient(token, fetchImpl) {
             url.searchParams.set('include_all_metadata', 'true')
             const res = await doFetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
             const data = await res.json()
-            if (!data.ok) throw new Error(`slack conversations.history failed: ${data.error}`)
+            if (!data.ok) throw slackError(`slack conversations.history failed: ${data.error}`, data.error)
             return data
         },
     }
@@ -297,7 +307,7 @@ function buildRecoveryReply(durationMins) {
 // Main
 // ---------------------------------------------------------------------------
 
-module.exports = async ({ context, github, core }, { now: _now, slack: _slack, fetch: _fetch } = {}) => {
+async function reconcile({ context, github, core }, { now: _now, slack: _slack, fetch: _fetch } = {}) {
     const now = _now || new Date()
     const owner = context.repo.owner
     const repo = context.repo.repo
@@ -422,4 +432,24 @@ module.exports = async ({ context, github, core }, { now: _now, slack: _slack, f
     core.setOutput('commit_streak', String(commitStreakCount))
 }
 
+// Fail soft on a dead/rotated token: a credential the alerter can't fix itself
+// shouldn't turn every scheduled tick red. Real bugs (bad scope, channel not
+// found, rate limits) still throw so they stay loud.
+module.exports = async (deps, opts = {}) => {
+    try {
+        return await reconcile(deps, opts)
+    } catch (err) {
+        if (FATAL_AUTH_ERRORS.has(err?.slackError)) {
+            deps.core.warning(
+                `Slack token unusable (${err.slackError}); skipping this tick. ` +
+                    `The backing Slack app is likely deactivated or the token revoked — rotate DEVEX_SLACK_BOT_TOKEN.`
+            )
+            deps.core.setOutput('action', 'skipped_auth')
+            return
+        }
+        throw err
+    }
+}
+
 module.exports.formatDuration = formatDuration
+module.exports.slackError = slackError

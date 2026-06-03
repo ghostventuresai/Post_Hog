@@ -102,10 +102,11 @@ const activeAnchor = (payload = {}) => ({
     },
 })
 
-function run(github, { history = [], now = minutes(0), env = {} } = {}) {
+function run(github, { history = [], now = minutes(0), env = {}, slack } = {}) {
     const outputs = {}
-    const core = { setOutput: (k, v) => (outputs[k] = v), info: () => {}, warning: () => {} }
-    const slack = makeSlack(history)
+    const warnings = []
+    const core = { setOutput: (k, v) => (outputs[k] = v), info: () => {}, warning: (m) => warnings.push(m) }
+    const slackClient = slack || makeSlack(history)
     Object.assign(process.env, {
         SLACK_CHANNEL: 'C0AS64N6DJL',
         GATING_WORKFLOWS: 'ci-backend.yml,ci-frontend.yml',
@@ -115,8 +116,16 @@ function run(github, { history = [], now = minutes(0), env = {} } = {}) {
     })
     return ciAlertsDevex(
         { context: { repo: { owner: 'PostHog', repo: 'posthog' } }, github, core },
-        { now, slack }
-    ).then(() => ({ slack, outputs }))
+        { now, slack: slackClient }
+    ).then(() => ({ slack: slackClient, outputs, warnings }))
+}
+
+// A Slack client whose history call rejects with a tagged Slack error, for
+// exercising the top-level fail-soft / rethrow split. Reuses makeSlack and the
+// production slackError so success-path stubs and the error shape stay single-sourced.
+function throwingSlack(code) {
+    const err = ciAlertsDevex.slackError(`slack failed: ${code}`, code)
+    return { ...makeSlack(), history: recordingFn(() => Promise.reject(err)) }
 }
 
 describe('ci-alerts-devex', () => {
@@ -270,6 +279,22 @@ describe('ci-alerts-devex', () => {
         assert.equal(outputs.action, 'none')
         assert.equal(slack.postMessage.calls.length, 0)
         assert.equal(slack.update.calls.length, 0)
+    })
+
+    for (const code of ['account_inactive', 'invalid_auth', 'not_authed', 'token_revoked', 'token_expired']) {
+        it(`fails soft instead of erroring when the Slack token is dead (${code})`, async () => {
+            const slack = throwingSlack(code)
+            const { outputs, warnings } = await run(createGithubMock(allPassing()), { slack })
+            assert.equal(outputs.action, 'skipped_auth')
+            assert.equal(warnings.length, 1)
+            assert.match(warnings[0], new RegExp(code))
+            assert.equal(slack.postMessage.calls.length, 0)
+            assert.equal(slack.update.calls.length, 0)
+        })
+    }
+
+    it('still throws on non-auth Slack errors so real bugs stay loud', async () => {
+        await assert.rejects(run(createGithubMock(allPassing()), { slack: throwingSlack('ratelimited') }), /ratelimited/)
     })
 
     describe('formatDuration', () => {
