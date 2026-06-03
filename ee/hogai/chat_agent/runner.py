@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
@@ -79,6 +79,7 @@ class ChatAgentRunner(BaseAgentRunner):
         is_agent_billable: bool = True,
         is_impersonated: bool = False,
         resume_payload: Optional[dict[str, Any]] = None,
+        is_user_initiated_cancel: Optional[Callable[[], bool]] = None,
     ):
         super().__init__(
             team,
@@ -107,6 +108,7 @@ class ChatAgentRunner(BaseAgentRunner):
             ),
             slack_thread_context=slack_thread_context,
             resume_payload=resume_payload,
+            is_user_initiated_cancel=is_user_initiated_cancel,
         )
         self._selected_agent_mode = agent_mode
 

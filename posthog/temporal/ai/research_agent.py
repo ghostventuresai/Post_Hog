@@ -12,7 +12,7 @@ from temporalio.common import RetryPolicy
 from posthog.schema import HumanMessage, MaxBillingContext
 
 from posthog.models import Team, User
-from posthog.temporal.ai.base import AgentBaseWorkflow
+from posthog.temporal.ai.base import AgentBaseWorkflow, is_user_initiated_activity_cancel
 
 from products.posthog_ai.backend.models.assistant import Conversation
 
@@ -104,6 +104,7 @@ async def process_research_agent_activity(inputs: ResearchAgentWorkflowInputs) -
         is_agent_billable=inputs.is_agent_billable,
         is_impersonated=inputs.is_impersonated,
         resume_payload=inputs.resume_payload,
+        is_user_initiated_cancel=is_user_initiated_activity_cancel,
     )
 
     redis_stream = ConversationRedisStream(inputs.stream_key)
