@@ -173,6 +173,7 @@ class TestPostSlackUpdate(TestCase):
         mock_post_pr_opened.assert_called_once_with(
             "https://github.com/org/repo/pull/1",
             "http://localhost:8000/project/1/tasks/10?runId=run-1",
+            reply_target_slack_user_id="U123",
         )
         mock_update_reaction.assert_called_once_with("hedgehog")
         mock_delete_progress.assert_called_once()

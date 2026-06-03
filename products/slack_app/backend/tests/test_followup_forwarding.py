@@ -869,10 +869,11 @@ class TestForwardPostHogCodeFollowupActivity(TestCase):
         call_kwargs = mock_slack_instance.client.chat_postMessage.call_args.kwargs
         assert "still starting up" in call_kwargs["text"]
 
+    @patch("posthog.temporal.ai.posthog_code_slack_mention.signal_task_set_current_actor")
     @patch("posthog.temporal.ai.posthog_code_slack_mention.create_sandbox_connection_token", return_value="jwt-token")
     @patch("posthog.temporal.ai.posthog_code_slack_mention.send_user_message")
     @patch("posthog.temporal.ai.posthog_code_slack_mention.SlackIntegration")
-    def test_successful_forwarding(self, mock_slack_cls, mock_send, mock_token):
+    def test_successful_forwarding(self, mock_slack_cls, mock_send, mock_token, mock_signal_actor):
         self._create_mapping()
         mock_slack_instance = MagicMock()
         mock_slack_cls.return_value = mock_slack_instance
@@ -897,6 +898,12 @@ class TestForwardPostHogCodeFollowupActivity(TestCase):
         )
         # Response is delivered by relayAgentResponse from the agent-server, not by this activity.
         mock_slack_instance.client.chat_postMessage.assert_not_called()
+        # The follow-up sender is recorded on the run so the async reply tags
+        # them instead of the original task author (multiplayer support). We
+        # signal the long-lived workflow rather than mutating state directly.
+        mock_signal_actor.assert_called_once()
+        signal_args = mock_signal_actor.call_args.args
+        assert signal_args[1] == "U_ALICE"  # second positional arg is the slack_user_id
 
     @patch("posthog.temporal.ai.posthog_code_slack_mention.create_sandbox_connection_token", return_value="jwt-token")
     @patch("posthog.temporal.ai.posthog_code_slack_mention.send_user_message")

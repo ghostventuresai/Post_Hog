@@ -32,6 +32,7 @@ from .refresh_sandbox_credentials import (
 )
 from .relay_sandbox_events import RelaySandboxEventsInput, relay_sandbox_events
 from .send_followup_to_sandbox import SendFollowupToSandboxInput, send_followup_to_sandbox
+from .set_actor_on_run import SetActorOnRunInput, set_actor_on_run
 from .start_agent_server import StartAgentServerInput, StartAgentServerOutput, start_agent_server
 from .track_workflow_event import TrackWorkflowEventInput, track_workflow_event
 from .update_task_run_status import UpdateTaskRunStatusInput, update_task_run_status
@@ -63,6 +64,7 @@ __all__ = [
     "UpdateTaskRunStatusInput",
     "RelaySandboxEventsInput",
     "SendFollowupToSandboxInput",
+    "SetActorOnRunInput",
     "cleanup_sandbox",
     "create_resume_snapshot",
     "create_sandbox_for_repository",
@@ -71,6 +73,7 @@ __all__ = [
     "forward_pending_user_message",
     "relay_sandbox_events",
     "send_followup_to_sandbox",
+    "set_actor_on_run",
     "get_sandbox_for_repository",
     "get_task_processing_context",
     "inject_fresh_tokens_on_resume",

@@ -112,11 +112,15 @@ class RelaySlackMessageInput:
 @activity.defn
 def relay_slack_message(input: RelaySlackMessageInput) -> None:
     from products.slack_app.backend.models import SlackThreadTaskMapping
-    from products.slack_app.backend.slack_thread import SlackThreadContext, SlackThreadHandler
+    from products.slack_app.backend.slack_thread import (
+        SlackThreadContext,
+        SlackThreadHandler,
+        resolve_reply_target_slack_user_id,
+    )
     from products.tasks.backend.models import TaskRun
 
     try:
-        task_run = TaskRun.objects.get(id=input.run_id)
+        task_run = TaskRun.objects.select_related("task__created_by").get(id=input.run_id)
     except TaskRun.DoesNotExist:
         logger.warning("slack_relay_run_not_found", run_id=input.run_id, relay_id=input.relay_id)
         return
@@ -152,7 +156,8 @@ def relay_slack_message(input: RelaySlackMessageInput) -> None:
     )
     handler = SlackThreadHandler(context)
 
-    mention_prefix = f"<@{mapping.mentioning_slack_user_id}> " if mapping.mentioning_slack_user_id else ""
+    target = resolve_reply_target_slack_user_id(task_run, mapping.integration_id, mapping.mentioning_slack_user_id)
+    mention_prefix = f"<@{target}> " if target else ""
     if input.delete_progress:
         handler.delete_progress()
     handler.post_thread_message(f"{mention_prefix}{text}")

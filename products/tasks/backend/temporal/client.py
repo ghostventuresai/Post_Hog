@@ -317,6 +317,25 @@ def signal_task_followup_message(workflow_id: str, message: str | None, artifact
     asyncio.run(handle.signal("send_followup_message", args=[message, artifact_ids]))
 
 
+def signal_task_set_current_actor(workflow_id: str, slack_user_id: str | None) -> None:
+    """Tell the task processing workflow who's now driving the thread.
+
+    Used by the Slack follow-up handler in multiplayer threads so the workflow
+    can persist the new actor's Slack user id onto ``TaskRun.state``, where
+    cross-workflow reply paths read it from. Silently no-ops if the workflow
+    is gone — the agent's reply will fall back to the last persisted value.
+    """
+    try:
+        client = sync_connect()
+        handle = client.get_workflow_handle(workflow_id)
+        asyncio.run(handle.signal("set_current_actor", args=[slack_user_id]))
+    except Exception:
+        logger.exception(
+            "task_set_current_actor_signal_failed",
+            extra={"workflow_id": workflow_id},
+        )
+
+
 def execute_posthog_code_agent_relay_workflow(
     run_id: str,
     text: str,
