@@ -25,7 +25,11 @@ import {
 } from '../shared/handleTrendsChartClick'
 import { buildTrendsSeriesMeta, type TrendsSeriesMeta } from '../shared/trendsSeriesMeta'
 import { TrendsTooltip } from '../shared/TrendsTooltip'
-import { buildTrendsLifecycleConfig, buildTrendsLifecycleSeries } from './trendsLifecycleChartTransforms'
+import {
+    buildLifecycleValueLabelFormatter,
+    buildTrendsLifecycleConfig,
+    buildTrendsLifecycleSeries,
+} from './trendsLifecycleChartTransforms'
 
 interface TrendsLifecycleChartProps {
     context?: QueryContext<InsightVizNode>
@@ -60,6 +64,7 @@ export function TrendsLifecycleChart({ context, inSharedMode = false }: TrendsLi
         hasPersonsModal,
         querySource,
         showValuesOnSeries,
+        showPercentagesOnSeries,
         showLegend,
     } = useValues(trendsDataLogic(insightProps))
     const { timezone, weekStartDay, baseCurrency } = useValues(teamLogic)
@@ -80,9 +85,18 @@ export function TrendsLifecycleChart({ context, inSharedMode = false }: TrendsLi
 
     const legendItems = useMemo(() => legendItemsFromSeries(series, theme), [series, theme])
 
-    const valueLabelFormatter = useCallback(
+    const formatValue = useCallback(
         (value: number) => formatAggregationAxisValue(trendsFilter, value, baseCurrency),
         [trendsFilter, baseCurrency]
+    )
+
+    const valueLabelFormatter = useMemo(
+        () =>
+            buildLifecycleValueLabelFormatter(formatValue, {
+                showValues: !!showValuesOnSeries,
+                showPercentages: !!showPercentagesOnSeries,
+            }),
+        [formatValue, showValuesOnSeries, showPercentagesOnSeries]
     )
 
     const timeSeriesConfig: TimeSeriesBarChartConfig = useMemo(
@@ -95,7 +109,7 @@ export function TrendsLifecycleChart({ context, inSharedMode = false }: TrendsLi
                 interval,
                 timezone,
                 allDays: currentPeriodResult?.days ?? [],
-                valueLabels: showValuesOnSeries ? { formatter: valueLabelFormatter } : false,
+                valueLabels: showValuesOnSeries || showPercentagesOnSeries ? { formatter: valueLabelFormatter } : false,
                 tooltip: LIFECYCLE_TOOLTIP_CONFIG,
             }),
         [
@@ -107,6 +121,7 @@ export function TrendsLifecycleChart({ context, inSharedMode = false }: TrendsLi
             timezone,
             currentPeriodResult?.days,
             showValuesOnSeries,
+            showPercentagesOnSeries,
             valueLabelFormatter,
         ]
     )
