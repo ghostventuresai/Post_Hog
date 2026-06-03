@@ -4027,6 +4027,7 @@ class ProductKey(StrEnum):
     DEPLOYMENTS = "deployments"
     EARLY_ACCESS_FEATURES = "early_access_features"
     ENDPOINTS = "endpoints"
+    ENGINEERING_ANALYTICS = "engineering_analytics"
     ERROR_TRACKING = "error_tracking"
     EXPERIMENTS = "experiments"
     FEATURE_FLAGS = "feature_flags"
