@@ -1084,10 +1084,12 @@ AI_BILLING_INSTANCE_GROUP_TYPE = "instance"
 CLOUD_REGION_TO_TEAM_ID = {
     "EU": 1,
     "US": 2,
+    "DEV": 1,
 }
 CLOUD_REGION_TO_URL = {
     "EU": "https://eu.posthog.com",
     "US": "https://us.posthog.com",
+    "DEV": "https://app.dev.posthog.dev",
 }
 
 
