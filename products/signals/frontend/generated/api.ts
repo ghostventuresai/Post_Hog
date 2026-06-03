@@ -9,6 +9,9 @@ import { apiMutator } from '../../../../frontend/src/lib/api-orval-mutator'
  * OpenAPI spec version: 1.0.0
  */
 import type {
+    CursorConnectionRequestApi,
+    CursorConnectionStatusApi,
+    CursorDispatchResponseApi,
     EmitFindingRequestApi,
     EmitFindingResponseApi,
     ForgetRequestApi,
@@ -162,6 +165,24 @@ export const signalsReportsRetrieve = async (
     })
 }
 
+export const getSignalsReportsDispatchToCursorCreateUrl = (projectId: string, id: string) => {
+    return `/api/projects/${projectId}/signals/reports/${id}/dispatch_to_cursor/`
+}
+
+/**
+ * Dispatch this report to a Cursor Cloud Agent. Behind the signals-cursor-dispatch flag.
+ */
+export const signalsReportsDispatchToCursorCreate = async (
+    projectId: string,
+    id: string,
+    options?: RequestInit
+): Promise<CursorDispatchResponseApi> => {
+    return apiMutator<CursorDispatchResponseApi>(getSignalsReportsDispatchToCursorCreateUrl(projectId, id), {
+        ...options,
+        method: 'POST',
+    })
+}
+
 export const getSignalsReportsStateCreateUrl = (projectId: string, id: string) => {
     return `/api/projects/${projectId}/signals/reports/${id}/state/`
 }
@@ -194,6 +215,43 @@ export const signalsReportsStateCreate = async (
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...options?.headers },
         body: JSON.stringify(signalReportStateRequestApi),
+    })
+}
+
+export const getSignalsReportsCursorConnectionRetrieveUrl = (projectId: string) => {
+    return `/api/projects/${projectId}/signals/reports/cursor_connection/`
+}
+
+/**
+ * Get or set this team's Cursor connection (the key a settings UI configures, stored per team).
+ */
+export const signalsReportsCursorConnectionRetrieve = async (
+    projectId: string,
+    options?: RequestInit
+): Promise<CursorConnectionStatusApi> => {
+    return apiMutator<CursorConnectionStatusApi>(getSignalsReportsCursorConnectionRetrieveUrl(projectId), {
+        ...options,
+        method: 'GET',
+    })
+}
+
+export const getSignalsReportsCursorConnectionCreateUrl = (projectId: string) => {
+    return `/api/projects/${projectId}/signals/reports/cursor_connection/`
+}
+
+/**
+ * Get or set this team's Cursor connection (the key a settings UI configures, stored per team).
+ */
+export const signalsReportsCursorConnectionCreate = async (
+    projectId: string,
+    cursorConnectionRequestApi: CursorConnectionRequestApi,
+    options?: RequestInit
+): Promise<CursorConnectionStatusApi> => {
+    return apiMutator<CursorConnectionStatusApi>(getSignalsReportsCursorConnectionCreateUrl(projectId), {
+        ...options,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        body: JSON.stringify(cursorConnectionRequestApi),
     })
 }
 

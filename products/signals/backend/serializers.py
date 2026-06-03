@@ -433,3 +433,33 @@ class SignalReportArtefactWriteSerializer(serializers.Serializer):
         if len(value) > self.MAX_ENTRIES:
             raise serializers.ValidationError(f"At most {self.MAX_ENTRIES} reviewers may be supplied.")
         return value
+
+
+class CursorConnectionRequestSerializer(serializers.Serializer):
+    api_key = serializers.CharField(
+        write_only=True,
+        help_text="Cursor API key for this team. Stored encrypted on the team's Cursor integration.",
+    )
+
+
+class CursorConnectionStatusSerializer(serializers.Serializer):
+    connected = serializers.BooleanField(
+        help_text="Whether this team has a Cursor integration configured.",
+    )
+
+
+class CursorDispatchResponseSerializer(serializers.Serializer):
+    agent_id = serializers.CharField(
+        allow_null=True,
+        help_text="Identifier Cursor assigned to the dispatched cloud agent run.",
+    )
+    agent_url = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="URL to the agent run in Cursor, when Cursor returns one.",
+    )
+    agent_status = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="Initial run status reported by Cursor (e.g. queued, running).",
+    )

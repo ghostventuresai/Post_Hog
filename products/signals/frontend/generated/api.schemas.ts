@@ -108,6 +108,24 @@ export interface PaginatedSignalReportListApi {
     results: SignalReportApi[]
 }
 
+export interface CursorDispatchResponseApi {
+    /**
+     * Identifier Cursor assigned to the dispatched cloud agent run.
+     * @nullable
+     */
+    agent_id: string | null
+    /**
+     * URL to the agent run in Cursor, when Cursor returns one.
+     * @nullable
+     */
+    agent_url?: string | null
+    /**
+     * Initial run status reported by Cursor (e.g. queued, running).
+     * @nullable
+     */
+    agent_status?: string | null
+}
+
 /**
  * * `suppressed` - suppressed
  * `potential` - potential
@@ -139,6 +157,16 @@ export interface SignalReportStateRequestApi {
      * @maximum 100000
      */
     snooze_for?: number
+}
+
+export interface CursorConnectionStatusApi {
+    /** Whether this team has a Cursor integration configured. */
+    connected: boolean
+}
+
+export interface CursorConnectionRequestApi {
+    /** Cursor API key for this team. Stored encrypted on the team's Cursor integration. */
+    api_key: string
 }
 
 /**

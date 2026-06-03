@@ -11825,6 +11825,34 @@ export namespace Schemas {
       access_secret: string;
     }
 
+    export interface CursorConnectionRequest {
+      /** Cursor API key for this team. Stored encrypted on the team's Cursor integration. */
+      api_key: string;
+    }
+
+    export interface CursorConnectionStatus {
+      /** Whether this team has a Cursor integration configured. */
+      connected: boolean;
+    }
+
+    export interface CursorDispatchResponse {
+      /**
+         * Identifier Cursor assigned to the dispatched cloud agent run.
+         * @nullable
+         */
+      agent_id: string | null;
+      /**
+         * URL to the agent run in Cursor, when Cursor returns one.
+         * @nullable
+         */
+      agent_url?: string | null;
+      /**
+         * Initial run status reported by Cursor (e.g. queued, running).
+         * @nullable
+         */
+      agent_status?: string | null;
+    }
+
     export interface CustomerJourney {
       readonly id: string;
       insight: number;
@@ -20148,6 +20176,7 @@ export namespace Schemas {
     * `azure-blob` - Azure Blob
     * `bing-ads` - Bing Ads
     * `clickup` - Clickup
+    * `cursor` - Cursor
     * `customerio-app` - Customerio App
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
@@ -20188,6 +20217,7 @@ export namespace Schemas {
       AzureBlob: 'azure-blob',
       BingAds: 'bing-ads',
       Clickup: 'clickup',
+      Cursor: 'cursor',
       CustomerioApp: 'customerio-app',
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',
@@ -42095,6 +42125,7 @@ export namespace Schemas {
     * `azure-blob` - Azure Blob
     * `bing-ads` - Bing Ads
     * `clickup` - Clickup
+    * `cursor` - Cursor
     * `customerio-app` - Customerio App
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
@@ -42146,6 +42177,7 @@ export namespace Schemas {
       AzureBlob: 'azure-blob',
       BingAds: 'bing-ads',
       Clickup: 'clickup',
+      Cursor: 'cursor',
       CustomerioApp: 'customerio-app',
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',
@@ -47504,6 +47536,7 @@ export namespace Schemas {
     * `azure-blob` - Azure Blob
     * `bing-ads` - Bing Ads
     * `clickup` - Clickup
+    * `cursor` - Cursor
     * `customerio-app` - Customerio App
     * `customerio-track` - Customerio Track
     * `customerio-webhook` - Customerio Webhook
@@ -47555,6 +47588,7 @@ export namespace Schemas {
       AzureBlob: 'azure-blob',
       BingAds: 'bing-ads',
       Clickup: 'clickup',
+      Cursor: 'cursor',
       CustomerioApp: 'customerio-app',
       CustomerioTrack: 'customerio-track',
       CustomerioWebhook: 'customerio-webhook',

@@ -5,10 +5,20 @@ import { actionToUrl, router, urlToAction } from 'kea-router'
 import { lemonToast } from '@posthog/lemon-ui'
 
 import api, { CountedPaginatedResponse } from 'lib/api'
+import { FEATURE_FLAGS } from 'lib/constants'
+import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
+import { getCurrentTeamId } from 'lib/utils/getAppContext'
 import { SignalNode } from 'scenes/debug/signals/types'
 import { sceneConfigurations } from 'scenes/scenes'
 import { Scene } from 'scenes/sceneTypes'
 import { urls } from 'scenes/urls'
+
+import {
+    signalsReportsCursorConnectionCreate,
+    signalsReportsCursorConnectionRetrieve,
+    signalsReportsDispatchToCursorCreate,
+} from 'products/signals/frontend/generated/api'
+import { CursorConnectionStatusApi } from 'products/signals/frontend/generated/api.schemas'
 
 import { Breadcrumb } from '~/types'
 
@@ -32,7 +42,7 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
     path(['scenes', 'inbox', 'inboxSceneLogic']),
 
     connect({
-        values: [signalSourcesLogic, ['hasNoSources', 'isSessionAnalysisRunning']],
+        values: [signalSourcesLogic, ['hasNoSources', 'isSessionAnalysisRunning'], featureFlagLogic, ['featureFlags']],
         actions: [signalSourcesLogic, ['loadSourceConfigs']],
     }),
 
@@ -43,6 +53,11 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
         setActiveDetailTab: (tab: DetailTab) => ({ tab }),
         deleteReport: (reportId: string) => ({ reportId }),
         reingestReport: (reportId: string) => ({ reportId }),
+        dispatchToCursor: (reportId: string) => ({ reportId }),
+        dispatchToCursorSuccess: (reportId: string) => ({ reportId }),
+        dispatchToCursorFailure: (reportId: string) => ({ reportId }),
+        setShowConnectModal: (show: boolean) => ({ show }),
+        setCursorApiKeyDraft: (apiKey: string) => ({ apiKey }),
         runSessionAnalysis: true,
         runSessionAnalysisSuccess: true,
         runSessionAnalysisFailure: (error: string) => ({ error }),
@@ -95,6 +110,15 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
                 },
             },
         ],
+        cursorConnection: [
+            { connected: false } as CursorConnectionStatusApi,
+            {
+                loadCursorConnection: async () =>
+                    await signalsReportsCursorConnectionRetrieve(String(getCurrentTeamId())),
+                connectCursor: async ({ apiKey }: { apiKey: string }) =>
+                    await signalsReportsCursorConnectionCreate(String(getCurrentTeamId()), { api_key: apiKey }),
+            },
+        ],
     })),
 
     reducers({
@@ -135,6 +159,31 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
                 runSessionAnalysis: () => true,
                 runSessionAnalysisSuccess: () => false,
                 runSessionAnalysisFailure: () => false,
+            },
+        ],
+        dispatchingReportIds: [
+            [] as string[],
+            {
+                dispatchToCursor: (state: string[], { reportId }: { reportId: string }) =>
+                    state.includes(reportId) ? state : [...state, reportId],
+                dispatchToCursorSuccess: (state: string[], { reportId }: { reportId: string }) =>
+                    state.filter((id) => id !== reportId),
+                dispatchToCursorFailure: (state: string[], { reportId }: { reportId: string }) =>
+                    state.filter((id) => id !== reportId),
+            },
+        ],
+        showConnectModal: [
+            false,
+            {
+                setShowConnectModal: (_: boolean, { show }: { show: boolean }) => show,
+                connectCursorSuccess: () => false,
+            },
+        ],
+        cursorApiKeyDraft: [
+            '',
+            {
+                setCursorApiKeyDraft: (_: string, { apiKey }: { apiKey: string }) => apiKey,
+                connectCursorSuccess: () => '',
             },
         ],
     }),
@@ -205,6 +254,20 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
                 return reviewersArtefact.content as EnrichedReviewer[]
             },
         ],
+        canDispatchToCursor: [
+            (s) => [s.featureFlags],
+            (featureFlags: Record<string, boolean | string>): boolean =>
+                !!featureFlags[FEATURE_FLAGS.SIGNALS_CURSOR_DISPATCH],
+        ],
+        isDispatchingToCursor: [
+            (s) => [s.dispatchingReportIds, s.selectedReportId],
+            (dispatchingReportIds: string[], selectedReportId: string | null): boolean =>
+                selectedReportId !== null && dispatchingReportIds.includes(selectedReportId),
+        ],
+        cursorConnected: [
+            (s) => [s.cursorConnection],
+            (cursorConnection: CursorConnectionStatusApi): boolean => !!cursorConnection?.connected,
+        ],
     }),
 
     listeners(({ actions, values, cache }) => ({
@@ -257,6 +320,34 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
                 lemonToast.error(errorMessage)
             }
         },
+        dispatchToCursor: async ({ reportId }) => {
+            try {
+                const response = await signalsReportsDispatchToCursorCreate(String(getCurrentTeamId()), reportId)
+                const agentUrl = response.agent_url
+                lemonToast.success(
+                    'Sent to Cursor — a cloud agent is now working on this report',
+                    agentUrl
+                        ? {
+                              button: {
+                                  label: 'View agent in Cursor',
+                                  action: () => window.open(agentUrl, '_blank', 'noopener,noreferrer'),
+                              },
+                          }
+                        : undefined
+                )
+                actions.dispatchToCursorSuccess(reportId)
+            } catch (error: any) {
+                const errorMessage = error?.detail || error?.message || 'Failed to send report to Cursor'
+                lemonToast.error(errorMessage)
+                actions.dispatchToCursorFailure(reportId)
+            }
+        },
+        connectCursorSuccess: () => {
+            lemonToast.success('Cursor connected')
+        },
+        connectCursorFailure: () => {
+            lemonToast.error('Failed to connect Cursor — check the API key')
+        },
         loadSourceConfigsSuccess: () => {
             clearInterval(cache.sessionAnalysisPollInterval)
             if (values.isSessionAnalysisRunning) {
@@ -285,6 +376,7 @@ export const inboxSceneLogic = kea<inboxSceneLogicType>([
     events(({ actions, cache }) => ({
         afterMount: () => {
             actions.loadReports()
+            actions.loadCursorConnection()
         },
         beforeUnmount: () => {
             clearInterval(cache.sessionAnalysisPollInterval)
