@@ -22,16 +22,11 @@ def execute_hogql_query_with_timings(*args, **kwargs):
 def pretty_print_in_tests(query: str | None, team_id: int) -> str:
     if query is None:
         return ""
-    query = (
-        query.replace("SELECT", "\nSELECT")
-        .replace("FROM", "\nFROM")
-        .replace("WHERE", "\nWHERE")
-        .replace("GROUP", "\nGROUP")
-        .replace("HAVING", "\nHAVING")
-        .replace("LIMIT", "\nLIMIT")
-        .replace("SETTINGS", "\nSETTINGS")
-        .replace(f"team_id, {team_id})", "team_id, 420)")
+    # Newline before each top-level clause keyword for readable snapshots; the \b boundaries keep keywords that are substrings of longer tokens intact (e.g. the WHERE inside PREWHERE).
+    query = re.sub(
+        r"\b(SELECT|FROM|PREWHERE|WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|OFFSET|SETTINGS)\b", r"\n\1", query
     )
+    query = query.replace(f"team_id, {team_id})", "team_id, 420)")
     query = re.sub(r"in_cohort__[0-9]+", "in_cohort__XX", query)
     query = re.sub(r"cohort_id, [0-9]+", "cohort_id, XX", query)
     query = re.sub(r"RANDOM_TEST_ID::[a-f0-9\-]+", "RANDOM_TEST_ID::UUID", query)

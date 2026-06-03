@@ -12,6 +12,7 @@
   
   WHERE
       and(equals(events.team_id, 99999), equals(events.event, %(hogql_val_1)s), not(ifNull(notEquals(multiMatchAnyIndex(ifNull(replaceRegexpAll(nullIf(nullIf(JSONExtractRaw(events.properties, %(hogql_val_2)s), ''), 'null'), '^"|"$', ''), %(hogql_val_3)s), [%(hogql_val_4)s, %(hogql_val_5)s, %(hogql_val_6)s, %(hogql_val_7)s, %(hogql_val_8)s, %(hogql_val_9)s, %(hogql_val_10)s, %(hogql_val_11)s, %(hogql_val_12)s, %(hogql_val_13)s, %(hogql_val_14)s, %(hogql_val_15)s, %(hogql_val_16)s, %(hogql_val_17)s, %(hogql_val_18)s, %(hogql_val_19)s, %(hogql_val_20)s, %(hogql_val_21)s, %(hogql_val_22)s, %(hogql_val_23)s, %(hogql_val_24)s, %(hogql_val_25)s, %(hogql_val_26)s, %(hogql_val_27)s, %(hogql_val_28)s, %(hogql_val_29)s, %(hogql_val_30)s, %(hogql_val_31)s, %(hogql_val_32)s, %(hogql_val_33)s, %(hogql_val_34)s, %(hogql_val_35)s, %(hogql_val_36)s, %(hogql_val_37)s, %(hogql_val_38)s, %(hogql_val_39)s, %(hogql_val_40)s, %(hogql_val_41)s, %(hogql_val_42)s, %(hogql_val_43)s, %(hogql_val_44)s, %(hogql_val_45)s, %(hogql_val_46)s, %(hogql_val_47)s, %(hogql_val_48)s, %(hogql_val_49)s, %(hogql_val_50)s, %(hogql_val_51)s, %(hogql_val_52)s, %(hogql_val_53)s, %(hogql_val_54)s, %(hogql_val_55)s, %(hogql_val_56)s, %(hogql_val_57)s, %(hogql_val_58)s, %(hogql_val_59)s, %(hogql_val_60)s, %(hogql_val_61)s, %(hogql_val_62)s, %(hogql_val_63)s, %(hogql_val_64)s, %(hogql_val_65)s, %(hogql_val_66)s, %(hogql_val_67)s, %(hogql_val_68)s, %(hogql_val_69)s, %(hogql_val_70)s, %(hogql_val_71)s, %(hogql_val_72)s, %(hogql_val_73)s, %(hogql_val_74)s, %(hogql_val_75)s, %(hogql_val_76)s, %(hogql_val_77)s, %(hogql_val_78)s, %(hogql_val_79)s, %(hogql_val_80)s, %(hogql_val_81)s, %(hogql_val_82)s, %(hogql_val_83)s, %(hogql_val_84)s, %(hogql_val_85)s, %(hogql_val_86)s, %(hogql_val_87)s, %(hogql_val_88)s, %(hogql_val_89)s, %(hogql_val_90)s, %(hogql_val_91)s, %(hogql_val_92)s, %(hogql_val_93)s, %(hogql_val_94)s, %(hogql_val_95)s, %(hogql_val_96)s, %(hogql_val_97)s, %(hogql_val_98)s, %(hogql_val_99)s, %(hogql_val_100)s, %(hogql_val_101)s, %(hogql_val_102)s, %(hogql_val_103)s, %(hogql_val_104)s, %(hogql_val_105)s, %(hogql_val_106)s, %(hogql_val_107)s, %(hogql_val_108)s, %(hogql_val_109)s, %(hogql_val_110)s, %(hogql_val_111)s]), 0), 1)))
+  
   ORDER BY
       user_agent ASC
   
@@ -29,6 +30,7 @@
   
   WHERE
       and(equals(event, '$pageview'), not(notEquals(multiMatchAnyIndex(ifNull(properties.$user_agent, ''), ['GPTBot', 'Google-CloudVertexBot', 'Google-Extended', 'GoogleOther', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot', 'Claude-Web', 'anthropic-ai', 'Perplexity-User', 'PerplexityBot', 'CCBot', 'meta-externalagent', 'Bytespider', 'TikTokSpider', 'cohere-ai', 'Diffbot', 'omgili', 'Webzio-Extended', 'Timpibot', 'Amazonbot', 'PetalBot', 'Brightbot', 'OAI-SearchBot', 'Applebot-Extended', 'ChatGPT-User', 'meta-externalfetcher', 'Meta-ExternalFetcher', 'DuckAssistBot', 'MistralAI-User', 'Manus-User', 'Google-NotebookLM', 'Shap-User', 'desktop\\.hog\\.dev', 'mobile\\.hog\\.dev', 'agent\\.hog\\.dev', 'cloud\\.hog\\.dev', 'Applebot/', 'Googlebot', 'bingbot', 'Bingbot', 'YandexBot', 'Baiduspider', 'DuckDuckBot', 'Slurp', 'Yeti/', 'YisouSpider', 'Sogou web spider', 'pageburst', '360Spider', 'AdsBot-Google', 'Google-InspectionTool', 'Google-Food', 'AhrefsSiteAudit', 'AhrefsBot', 'Barkrowler', 'SemrushBot', 'SERankingBacklinksBot', 'MJ12bot', 'DotBot', 'Lighthouse', 'MeltwaterNews', 'FacebookBot', 'facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'Pinterest', 'Slackbot', 'Slack-ImgProxy', 'TelegramBot', 'WhatsApp', 'GoogleImageProxy', 'Iframely', 'Pingdom', 'UptimeRobot', 'Site24x7', 'StatusCake', 'Datadog', 'GrafanaSyntheticMonitoring', 'DMBrowser', 'DigitalOcean Uptime Probe', 'curl/', 'Wget', 'python-requests', 'axios', 'node-fetch', 'Go-http-client', 'okhttp', 'Apache-HttpClient', 'libwww-perl', 'Scrapy', 'PlayStore-Google', 'Amazon CloudFront', 'AmazonProductDiscovery', 'Google-BusinessLinkVerification', 'Storebot-Google', 'Google-Read-Aloud', 'Google-Appointments', 'Google-Actions', 'OneTrust', 'Chrome Privacy Preserving Prefetch Proxy', 'Mozlila/', 'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Playwright', 'Selenium', '^$']), 0)))
+  
   ORDER BY
       user_agent ASC
   
@@ -51,6 +53,7 @@
   
   GROUP BY
       bot_name
+  
   ORDER BY
       bot_name ASC
   
@@ -71,6 +74,7 @@
   
   GROUP BY
       bot_name
+  
   ORDER BY
       bot_name ASC
   
@@ -93,6 +97,7 @@
   
   GROUP BY
       bot_type
+  
   ORDER BY
       bot_type ASC
   
@@ -113,6 +118,7 @@
   
   GROUP BY
       bot_type
+  
   ORDER BY
       bot_type ASC
   
@@ -135,6 +141,7 @@
   
   GROUP BY
       category
+  
   ORDER BY
       category ASC
   
@@ -155,6 +162,7 @@
   
   GROUP BY
       category
+  
   ORDER BY
       category ASC
   
@@ -177,6 +185,7 @@
   
   GROUP BY
       traffic_type
+  
   ORDER BY
       traffic_type ASC
   
@@ -197,6 +206,7 @@
   
   GROUP BY
       traffic_type
+  
   ORDER BY
       traffic_type ASC
   
@@ -219,6 +229,7 @@
   
   GROUP BY
       is_bot
+  
   ORDER BY
       is_bot ASC
   
@@ -239,6 +250,7 @@
   
   GROUP BY
       is_bot
+  
   ORDER BY
       is_bot ASC
   
