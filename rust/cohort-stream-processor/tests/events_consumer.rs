@@ -1,0 +1,942 @@
+//! End-to-end tests for the `cohort_stream_events` consumer against a **real** Kafka broker.
+//!
+//! `#[ignore]`d by default: the consumer joins a consumer group, commits a `TopicPartitionList`,
+//! and reads its own committed offsets back, none of which the in-process `MockCluster` exercises
+//! faithfully. Run against a local stack with:
+//!
+//! ```sh
+//! cargo test -p cohort-stream-processor --test events_consumer -- --ignored
+//! ```
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use cohort_stream_processor::consumers::{CohortStreamEventsConsumer, EventDispatcher};
+use cohort_stream_processor::filters::{
+    CatalogHandle, CohortId, FilterCatalog, TeamFiltersBuilder, TeamId,
+};
+use cohort_stream_processor::partitions::{
+    run_rebalance_worker, CohortConsumerContext, OffsetTracker, PartitionRouter,
+};
+use cohort_stream_processor::producer::{
+    CaptureSink, CohortMembershipChange, KafkaMembershipSink, MembershipSink, MembershipStatus,
+};
+use cohort_stream_processor::stage1::{Stage1State, StatefulRecord};
+use cohort_stream_processor::store::{CohortStore, LeafStateKey, Stage1Key, StoreConfig};
+use common_kafka::config::KafkaConfig;
+use common_kafka::kafka_producer::KafkaProduceError;
+use lifecycle::{ComponentOptions, Manager};
+use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
+use rdkafka::client::DefaultClientContext;
+use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::message::Message;
+use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::util::Timeout;
+use rdkafka::{ClientConfig, Offset, TopicPartitionList};
+use serde_json::json;
+use tempfile::TempDir;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+const TEAM: i32 = 7;
+const HASH: [u8; 16] = *b"0123456789abcdef";
+const NUM_PARTITIONS: i32 = 4;
+const PERSONS: u128 = 3;
+const EVENTS_PER_PERSON: usize = 3;
+const BASE_TS: &str = "2026-05-26 12:34:56.789000";
+
+fn bootstrap_servers() -> String {
+    std::env::var("KAFKA_HOSTS").unwrap_or_else(|_| "localhost:9092".to_string())
+}
+
+/// A team with a single `performed_event` behavioral leaf on `$pageview` — every `$pageview` enters.
+fn behavioral_catalog() -> CatalogHandle {
+    let leaf = json!({
+        "type": "behavioral",
+        "value": "performed_event",
+        "key": "$pageview",
+        "time_value": 7,
+        "time_interval": "day",
+        "conditionHash": "0123456789abcdef",
+        "bytecode": ["_H", 1, 32, "$pageview", 32, "event", 1, 1, 11],
+    });
+    let cohort = json!({ "properties": { "type": "AND", "values": [leaf] } });
+    let mut builder = TeamFiltersBuilder::default();
+    builder
+        .add_cohort(CohortId(1), TeamId(TEAM), &cohort)
+        .expect("add cohort");
+    CatalogHandle::from_catalog(FilterCatalog::from_teams([(
+        TeamId(TEAM),
+        builder.freeze(),
+    )]))
+}
+
+fn behavioral_lsk(catalog: &CatalogHandle) -> LeafStateKey {
+    let snapshot = catalog.load();
+    let team = snapshot.team(TeamId(TEAM)).expect("team in catalog");
+    team.by_condition_to_lsk[&HASH][0]
+}
+
+fn person(n: u128) -> Uuid {
+    Uuid::from_u128(0xA1CE_0000 + n)
+}
+
+/// A serialized `CohortStreamEvent` envelope, byte-for-byte what the shuffler emits.
+fn envelope(person: Uuid, source_partition: i32, source_offset: i64) -> Vec<u8> {
+    let value = json!({
+        "team_id": TEAM,
+        "person_id": person.to_string(),
+        "distinct_id": "d",
+        "uuid": Uuid::from_u128(0xE0_0000 + source_offset as u128).to_string(),
+        "event": "$pageview",
+        "timestamp": BASE_TS,
+        "properties": "{}",
+        "person_properties": null,
+        "elements_chain": null,
+        "source_offset": source_offset,
+        "source_partition": source_partition,
+    });
+    serde_json::to_vec(&value).expect("serialize envelope")
+}
+
+async fn create_topic(topic: &str) {
+    let admin: AdminClient<DefaultClientContext> = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .create()
+        .expect("create admin client");
+    let new_topic = NewTopic::new(topic, NUM_PARTITIONS, TopicReplication::Fixed(1));
+    let opts = AdminOptions::new().operation_timeout(Some(Duration::from_secs(10)));
+    let results = admin
+        .create_topics(&[new_topic], &opts)
+        .await
+        .expect("create_topics");
+    for result in results {
+        match result {
+            Ok(_) | Err((_, rdkafka::types::RDKafkaErrorCode::TopicAlreadyExists)) => {}
+            Err((name, err)) => panic!("failed to create topic {name}: {err:?}"),
+        }
+    }
+    // Let topic metadata propagate before producing.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+}
+
+/// Keyed `"{team}:{person}"` so a person's events co-partition. Returns the total produced.
+async fn produce_events(topic: &str) -> usize {
+    let producer: FutureProducer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("message.timeout.ms", "10000")
+        .create()
+        .expect("create producer");
+
+    let mut total = 0;
+    let mut source_offset = 0i64;
+    for n in 1..=PERSONS {
+        let p = person(n);
+        let key = format!("{TEAM}:{p}");
+        for _ in 0..EVENTS_PER_PERSON {
+            let payload = envelope(p, 0, source_offset);
+            producer
+                .send(
+                    FutureRecord::to(topic).key(&key).payload(&payload),
+                    Timeout::After(Duration::from_secs(10)),
+                )
+                .await
+                .expect("produce event");
+            source_offset += 1;
+            total += 1;
+        }
+    }
+    total
+}
+
+fn build_consumer(
+    topic: &str,
+    group: &str,
+    store: CohortStore,
+    catalog: CatalogHandle,
+    handle: lifecycle::Handle,
+    sink: Arc<dyn MembershipSink>,
+    offset_commit_interval: Duration,
+) -> CohortStreamEventsConsumer {
+    let dispatcher = Arc::new(EventDispatcher::new(
+        PartitionRouter::new(64),
+        Arc::new(OffsetTracker::new()),
+        store,
+        Arc::new(catalog),
+        sink,
+    ));
+
+    let (context, rebalance_rx) = CohortConsumerContext::new(dispatcher.clone());
+    let consumer: StreamConsumer<CohortConsumerContext> = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", group)
+        .set("enable.auto.commit", "false")
+        .set("enable.auto.offset.store", "false")
+        .set("auto.offset.reset", "earliest")
+        .set("partition.assignment.strategy", "cooperative-sticky")
+        .set("session.timeout.ms", "6000")
+        .create_with_context(context)
+        .expect("create consumer");
+    consumer.subscribe(&[topic]).expect("subscribe");
+
+    let (consumer_command_tx, consumer_command_rx) = mpsc::unbounded_channel();
+    tokio::spawn(run_rebalance_worker(
+        rebalance_rx,
+        dispatcher.clone(),
+        consumer_command_tx,
+        handle.shutdown_token(),
+    ));
+
+    CohortStreamEventsConsumer::new(
+        consumer,
+        topic.to_string(),
+        dispatcher,
+        handle,
+        100,
+        Duration::from_millis(200),
+        offset_commit_interval,
+        consumer_command_rx,
+    )
+}
+
+/// Mirrors the service's `Config::build_kafka_config`; the `murmur2_random` partitioner is load-bearing.
+fn shadow_kafka_config() -> KafkaConfig {
+    KafkaConfig {
+        kafka_hosts: bootstrap_servers(),
+        kafka_tls: false,
+        kafka_client_rack: String::new(),
+        kafka_client_id: String::new(),
+        kafka_compression_codec: "none".to_string(),
+        kafka_producer_partitioner: Some("murmur2_random".to_string()),
+        kafka_producer_linger_ms: 20,
+        kafka_producer_queue_mib: 400,
+        kafka_producer_queue_messages: 10_000_000,
+        kafka_message_timeout_ms: 20_000,
+        kafka_producer_batch_size: None,
+        kafka_producer_batch_num_messages: None,
+        kafka_producer_enable_idempotence: None,
+        kafka_producer_max_in_flight_requests_per_connection: None,
+        kafka_producer_topic_metadata_refresh_interval_ms: None,
+        kafka_producer_message_max_bytes: None,
+        kafka_producer_sticky_partitioning_linger_ms: None,
+    }
+}
+
+/// Drain up to `expected` membership changes off the shadow topic, or whatever arrives by deadline.
+async fn drain_shadow_changes(topic: &str, expected: usize) -> Vec<CohortMembershipChange> {
+    let consumer: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", format!("shadow-verifier-{}", Uuid::new_v4()))
+        .set("enable.auto.commit", "false")
+        .set("auto.offset.reset", "earliest")
+        .create()
+        .expect("create shadow verifier");
+    consumer.subscribe(&[topic]).expect("subscribe shadow");
+
+    let mut changes = Vec::new();
+    let start = Instant::now();
+    while changes.len() < expected && start.elapsed() < Duration::from_secs(30) {
+        match tokio::time::timeout(Duration::from_secs(2), consumer.recv()).await {
+            Ok(Ok(message)) => {
+                if let Some(payload) = message.payload() {
+                    changes.push(
+                        serde_json::from_slice::<CohortMembershipChange>(payload)
+                            .expect("decode shadow membership change"),
+                    );
+                }
+            }
+            Ok(Err(err)) => panic!("shadow recv error: {err}"),
+            Err(_) => {} // poll tick elapsed with no message; re-check the deadline
+        }
+    }
+    changes
+}
+
+/// Sum of committed offsets across partitions; for a fresh topic this equals the events consumed
+/// (committed == next-offset-to-consume).
+fn committed_sum(consumer: &StreamConsumer, topic: &str) -> i64 {
+    let mut tpl = TopicPartitionList::new();
+    for partition in 0..NUM_PARTITIONS {
+        tpl.add_partition(topic, partition);
+    }
+    let committed = consumer
+        .committed_offsets(tpl, Duration::from_secs(5))
+        .expect("fetch committed offsets");
+    (0..NUM_PARTITIONS)
+        .filter_map(|partition| committed.find_partition(topic, partition))
+        .map(|elem| match elem.offset() {
+            Offset::Offset(value) => value,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Scans every partition because a person's partition depends on the producer's key hash.
+fn entered_persons(store: &CohortStore, lsk: LeafStateKey) -> usize {
+    (1..=PERSONS)
+        .filter(|&n| {
+            let p = person(n);
+            (0..NUM_PARTITIONS).any(|partition| {
+                let key = Stage1Key {
+                    partition_id: partition as u16,
+                    team_id: TEAM as u64,
+                    leaf_state_key: lsk,
+                    person_id: p,
+                };
+                matches!(
+                    store
+                        .get_stage1(&key)
+                        .unwrap()
+                        .map(|bytes| StatefulRecord::decode(&bytes).unwrap().state),
+                    Some(Stage1State::BehavioralSingle {
+                        has_match: true,
+                        ..
+                    }),
+                )
+            })
+        })
+        .count()
+}
+
+#[tokio::test]
+#[ignore = "requires a running Kafka broker (KAFKA_HOSTS); run with --ignored against a local stack"]
+async fn consumes_routes_and_commits_end_to_end() {
+    let suffix = Uuid::new_v4();
+    let topic = format!("cohort_stream_events_itest_{suffix}");
+    let group = format!("cohort-stream-processor-itest-{suffix}");
+
+    create_topic(&topic).await;
+    let total = produce_events(&topic).await;
+
+    let dir = TempDir::new().unwrap();
+    let store = CohortStore::open(&StoreConfig {
+        path: dir.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store");
+    let catalog = behavioral_catalog();
+    let lsk = behavioral_lsk(&catalog);
+
+    // Not subscribed, so reading committed offsets is an OffsetFetch RPC, not a group join that
+    // would rebalance the consumer under test.
+    let verifier: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", &group)
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("create verifier consumer");
+
+    let mut manager = Manager::builder("events-consumer-itest")
+        .with_trap_signals(false)
+        .build();
+    let handle = manager.register(
+        "consumer",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let shutdown_handle = handle.clone();
+    let _monitor = manager.monitor_background();
+
+    // CaptureSink always acks, which is enough to drive produce-before-commit offset marking here.
+    let consumer = build_consumer(
+        &topic,
+        &group,
+        store.clone(),
+        catalog,
+        handle,
+        Arc::new(CaptureSink::new()),
+        Duration::from_millis(250),
+    );
+    let task = tokio::spawn(consumer.process());
+
+    let deadline = Duration::from_secs(60);
+    let start = Instant::now();
+    loop {
+        if committed_sum(&verifier, &topic) == total as i64 {
+            break;
+        }
+        assert!(
+            start.elapsed() < deadline,
+            "timed out waiting for committed offsets to reach {total}; last sum {}",
+            committed_sum(&verifier, &topic),
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Dropping the router drains the workers before the final commit, so state is durable once
+    // `process()` returns.
+    shutdown_handle.request_shutdown();
+    task.await.expect("consumer task panicked");
+
+    assert_eq!(
+        entered_persons(&store, lsk),
+        PERSONS as usize,
+        "every produced person should have entered the behavioral leaf",
+    );
+
+    assert_eq!(
+        committed_sum(&verifier, &topic),
+        total as i64,
+        "committed offsets should cover all {total} produced events",
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Kafka broker (KAFKA_HOSTS); run with --ignored against a local stack"]
+async fn produces_membership_changes_and_commits_offsets() {
+    let suffix = Uuid::new_v4();
+    let input_topic = format!("cohort_stream_events_shadow_in_{suffix}");
+    let shadow_topic = format!("cohort_membership_changed_shadow_{suffix}");
+    let group = format!("cohort-stream-processor-shadow-{suffix}");
+
+    create_topic(&input_topic).await;
+    create_topic(&shadow_topic).await;
+    let total = produce_events(&input_topic).await;
+
+    let dir = TempDir::new().unwrap();
+    let store = CohortStore::open(&StoreConfig {
+        path: dir.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store");
+    let catalog = behavioral_catalog();
+
+    let verifier: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", &group)
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("create verifier consumer");
+
+    let sink: Arc<dyn MembershipSink> = Arc::new(
+        KafkaMembershipSink::new(&shadow_kafka_config(), shadow_topic.clone())
+            .await
+            .expect("create shadow sink"),
+    );
+
+    let mut manager = Manager::builder("shadow-itest")
+        .with_trap_signals(false)
+        .build();
+    let handle = manager.register(
+        "consumer",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let shutdown_handle = handle.clone();
+    let _monitor = manager.monitor_background();
+
+    let consumer = build_consumer(
+        &input_topic,
+        &group,
+        store.clone(),
+        catalog,
+        handle,
+        sink,
+        Duration::from_millis(250),
+    );
+    let task = tokio::spawn(consumer.process());
+
+    let start = Instant::now();
+    loop {
+        if committed_sum(&verifier, &input_topic) == total as i64 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "timed out waiting for committed input offsets to reach {total}",
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    shutdown_handle.request_shutdown();
+    task.await.expect("consumer task panicked");
+
+    // One entered per person: the first `$pageview` enters, repeats are already members. Produce-
+    // before-commit guarantees every change is on the topic now that offsets are committed.
+    let changes = drain_shadow_changes(&shadow_topic, PERSONS as usize).await;
+    assert_eq!(
+        changes.len(),
+        PERSONS as usize,
+        "one entered change per person on the shadow topic",
+    );
+    for change in &changes {
+        assert_eq!(change.team_id, TEAM);
+        assert_eq!(change.cohort_id, 1);
+        assert_eq!(change.status, MembershipStatus::Entered);
+        assert!(
+            Uuid::parse_str(&change.person_id).is_ok(),
+            "person_id is a UUID string",
+        );
+    }
+
+    assert_eq!(committed_sum(&verifier, &input_topic), total as i64);
+}
+
+/// One event at a time with a `gap`, so sends straddle commit deadlines (the low-traffic pattern).
+/// Each distinct person produces one matching `$pageview`. Returns the total produced.
+async fn produce_events_trickle(topic: &str, n: usize, gap: Duration) -> usize {
+    let producer: FutureProducer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("message.timeout.ms", "10000")
+        .create()
+        .expect("create producer");
+
+    for i in 0..n {
+        let p = person(i as u128 + 1);
+        let key = format!("{TEAM}:{p}");
+        let payload = envelope(p, 0, i as i64);
+        producer
+            .send(
+                FutureRecord::to(topic).key(&key).payload(&payload),
+                Timeout::After(Duration::from_secs(10)),
+            )
+            .await
+            .expect("produce event");
+        tokio::time::sleep(gap).await;
+    }
+    n
+}
+
+fn entered_persons_range(store: &CohortStore, lsk: LeafStateKey, n: usize) -> usize {
+    (1..=n as u128)
+        .filter(|&i| {
+            let p = person(i);
+            (0..NUM_PARTITIONS).any(|partition| {
+                let key = Stage1Key {
+                    partition_id: partition as u16,
+                    team_id: TEAM as u64,
+                    leaf_state_key: lsk,
+                    person_id: p,
+                };
+                matches!(
+                    store
+                        .get_stage1(&key)
+                        .unwrap()
+                        .map(|bytes| StatefulRecord::decode(&bytes).unwrap().state),
+                    Some(Stage1State::BehavioralSingle {
+                        has_match: true,
+                        ..
+                    }),
+                )
+            })
+        })
+        .count()
+}
+
+#[tokio::test]
+#[ignore = "requires a running Kafka broker (KAFKA_HOSTS); run with --ignored against a local stack"]
+async fn trickled_events_are_never_silently_dropped() {
+    // Regression: a commit tick cancelling an in-flight `consume_batch` in the same `select!` drops
+    // its already-`recv()`'d events while committing past them.
+    const N: usize = 60;
+
+    let suffix = Uuid::new_v4();
+    let topic = format!("cohort_stream_events_trickle_{suffix}");
+    let group = format!("cohort-stream-processor-trickle-{suffix}");
+
+    create_topic(&topic).await;
+
+    let dir = TempDir::new().unwrap();
+    let store = CohortStore::open(&StoreConfig {
+        path: dir.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store");
+    let catalog = behavioral_catalog();
+    let lsk = behavioral_lsk(&catalog);
+
+    let verifier: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", &group)
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("create verifier consumer");
+
+    let mut manager = Manager::builder("trickle-itest")
+        .with_trap_signals(false)
+        .build();
+    let handle = manager.register(
+        "consumer",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let shutdown_handle = handle.clone();
+    let _monitor = manager.monitor_background();
+
+    // Consumer must be live before producing: a 300ms commit interval against ~120ms gaps puts many
+    // sends mid-accumulation across a commit boundary.
+    let consumer = build_consumer(
+        &topic,
+        &group,
+        store.clone(),
+        catalog,
+        handle,
+        Arc::new(CaptureSink::new()),
+        Duration::from_millis(300),
+    );
+    let task = tokio::spawn(consumer.process());
+
+    let total = produce_events_trickle(&topic, N, Duration::from_millis(120)).await;
+
+    let start = Instant::now();
+    loop {
+        if committed_sum(&verifier, &topic) == total as i64 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "timed out waiting for committed offsets to reach {total}; last sum {}",
+            committed_sum(&verifier, &topic),
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    shutdown_handle.request_shutdown();
+    task.await.expect("consumer task panicked");
+
+    assert_eq!(
+        entered_persons_range(&store, lsk, N),
+        N,
+        "every trickled person must have entered the behavioral leaf (no silent consume-side loss)",
+    );
+    assert_eq!(
+        committed_sum(&verifier, &topic),
+        total as i64,
+        "committed offsets must cover all {total} produced events",
+    );
+}
+
+/// Blocks its first flush until released: while parked, the worker hasn't marked its offset, so no
+/// commit tick can advance past the blocked event.
+struct BarrierSink {
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    first: AtomicBool,
+    recorded: Arc<Mutex<Vec<CohortMembershipChange>>>,
+}
+
+impl BarrierSink {
+    /// `Notify` is permit-based for `notify_one`, so test and worker may signal in either order
+    /// without losing the wake-up.
+    fn new() -> (
+        Arc<Self>,
+        Arc<tokio::sync::Notify>,
+        Arc<tokio::sync::Notify>,
+    ) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let sink = Arc::new(Self {
+            entered: entered.clone(),
+            release: release.clone(),
+            first: AtomicBool::new(true),
+            recorded: Arc::new(Mutex::new(Vec::new())),
+        });
+        (sink, entered, release)
+    }
+
+    fn recorded_len(&self) -> usize {
+        self.recorded.lock().expect("BarrierSink poisoned").len()
+    }
+}
+
+#[async_trait]
+impl MembershipSink for BarrierSink {
+    async fn produce(
+        &self,
+        changes: Vec<CohortMembershipChange>,
+    ) -> Vec<Result<(), KafkaProduceError>> {
+        if self.first.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        let acks = (0..changes.len()).map(|_| Ok(())).collect();
+        self.recorded
+            .lock()
+            .expect("BarrierSink poisoned")
+            .extend(changes);
+        acks
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Kafka broker (KAFKA_HOSTS); run with --ignored against a local stack"]
+async fn does_not_commit_past_a_blocked_produce() {
+    let suffix = Uuid::new_v4();
+    let topic = format!("cohort_stream_events_barrier_{suffix}");
+    let group = format!("cohort-stream-processor-barrier-{suffix}");
+
+    create_topic(&topic).await;
+
+    // A single event, so exactly one worker performs exactly one (blocked) flush.
+    let producer: FutureProducer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("message.timeout.ms", "10000")
+        .create()
+        .expect("create producer");
+    let p = person(1);
+    let payload = envelope(p, 0, 0);
+    producer
+        .send(
+            FutureRecord::to(&topic)
+                .key(&format!("{TEAM}:{p}"))
+                .payload(&payload),
+            Timeout::After(Duration::from_secs(10)),
+        )
+        .await
+        .expect("produce event");
+
+    let dir = TempDir::new().unwrap();
+    let store = CohortStore::open(&StoreConfig {
+        path: dir.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store");
+    let catalog = behavioral_catalog();
+
+    let verifier: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", &group)
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("create verifier consumer");
+
+    let (sink, entered, release) = BarrierSink::new();
+
+    let mut manager = Manager::builder("barrier-itest")
+        .with_trap_signals(false)
+        .build();
+    let handle = manager.register(
+        "consumer",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let shutdown_handle = handle.clone();
+    let _monitor = manager.monitor_background();
+
+    // Fast cadence so a commit tick fires while the produce is blocked.
+    let consumer = build_consumer(
+        &topic,
+        &group,
+        store.clone(),
+        catalog,
+        handle,
+        sink.clone(),
+        Duration::from_millis(100),
+    );
+    let task = tokio::spawn(consumer.process());
+
+    tokio::time::timeout(Duration::from_secs(30), entered.notified())
+        .await
+        .expect("worker reached the produce barrier");
+
+    // The worker hasn't marked its offset, so several commit ticks must not advance past the event.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        committed_sum(&verifier, &topic),
+        0,
+        "no offset may be committed before its produce is acked",
+    );
+    assert_eq!(
+        sink.recorded_len(),
+        0,
+        "the blocked flush has recorded nothing yet",
+    );
+
+    release.notify_one();
+
+    let start = Instant::now();
+    loop {
+        if committed_sum(&verifier, &topic) == 1 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "offset did not advance after releasing the produce",
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        sink.recorded_len(),
+        1,
+        "the released flush recorded its change",
+    );
+
+    shutdown_handle.request_shutdown();
+    task.await.expect("consumer task panicked");
+}
+
+/// Whether any produced person has behavioral state under `partition` in `store`.
+fn partition_has_state(store: &CohortStore, partition: i32, lsk: LeafStateKey) -> bool {
+    (1..=PERSONS).any(|n| {
+        let key = Stage1Key {
+            partition_id: partition as u16,
+            team_id: TEAM as u64,
+            leaf_state_key: lsk,
+            person_id: person(n),
+        };
+        store.get_stage1(&key).unwrap().is_some()
+    })
+}
+
+/// Distinct persons that entered, across a set of shadow membership changes — collapses the
+/// idempotent re-produces a moved partition replays.
+fn distinct_entered(changes: &[CohortMembershipChange]) -> usize {
+    changes
+        .iter()
+        .filter(|change| change.status == MembershipStatus::Entered)
+        .map(|change| change.person_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+/// Poll the group's committed-offset sum until it reaches `target` or the deadline elapses.
+async fn wait_for_committed(
+    consumer: &StreamConsumer,
+    topic: &str,
+    target: i64,
+    deadline: Duration,
+) {
+    let start = Instant::now();
+    loop {
+        let sum = committed_sum(consumer, topic);
+        if sum >= target {
+            return;
+        }
+        assert!(
+            start.elapsed() < deadline,
+            "timed out waiting for committed sum to reach {target}; last {sum}",
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Two consumers in one group force a cooperative-sticky incremental migration. After it settles:
+/// (a) the committed-offset sum still covers every produced event (no Kafka-level loss), (b) the
+/// distinct persons that entered match the oracle (idempotent re-produce aside), and (c) the
+/// partition co-location invariant holds — no partition's state lives in both pods, and every person
+/// ends up in exactly one.
+///
+/// Batch 2 exercises the cold-rebuild path: a partition that moves to B carries no state, so B
+/// rebuilds it from the events that arrive after the migration.
+#[tokio::test]
+#[ignore = "requires a running Kafka broker (KAFKA_HOSTS); run with --ignored against a local stack"]
+async fn cooperative_sticky_migration_preserves_offsets_and_partition_colocation() {
+    let suffix = Uuid::new_v4();
+    let topic = format!("cohort_stream_events_migrate_{suffix}");
+    let group = format!("cohort-stream-processor-migrate-{suffix}");
+    create_topic(&topic).await;
+
+    // A fresh, identical catalog per pod (same conditionHash → same leaf-state key); `CatalogHandle`
+    // is not `Clone`, and each consumer owns its own.
+    let catalog_a = behavioral_catalog();
+    let catalog_b = behavioral_catalog();
+    let lsk = behavioral_lsk(&catalog_a);
+
+    let dir_a = TempDir::new().unwrap();
+    let store_a = CohortStore::open(&StoreConfig {
+        path: dir_a.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store A");
+    let dir_b = TempDir::new().unwrap();
+    let store_b = CohortStore::open(&StoreConfig {
+        path: dir_b.path().join("db"),
+        ..StoreConfig::default()
+    })
+    .expect("open store B");
+
+    // Per-pod capture sinks stand in for the shadow topic, so the test reads each pod's output
+    // directly without a second consumer group.
+    let sink_a = Arc::new(CaptureSink::new());
+    let sink_b = Arc::new(CaptureSink::new());
+
+    // Subscribed nowhere, so it reads committed offsets via OffsetFetch without joining the group.
+    let verifier: StreamConsumer = ClientConfig::new()
+        .set("bootstrap.servers", bootstrap_servers())
+        .set("group.id", &group)
+        .set("enable.auto.commit", "false")
+        .create()
+        .expect("create verifier");
+
+    let mut manager = Manager::builder("migrate-itest")
+        .with_trap_signals(false)
+        .build();
+    let handle_a = manager.register(
+        "consumer-a",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let handle_b = manager.register(
+        "consumer-b",
+        ComponentOptions::new().with_graceful_shutdown(Duration::from_secs(15)),
+    );
+    let shutdown = handle_a.clone();
+    let _monitor = manager.monitor_background();
+
+    // Batch 1: only A is up, so it builds state for every stateful partition.
+    let batch1 = produce_events(&topic).await;
+    let consumer_a = build_consumer(
+        &topic,
+        &group,
+        store_a.clone(),
+        catalog_a,
+        handle_a,
+        sink_a.clone(),
+        Duration::from_millis(250),
+    );
+    let task_a = tokio::spawn(consumer_a.process());
+    wait_for_committed(&verifier, &topic, batch1 as i64, Duration::from_secs(60)).await;
+
+    // B joins the same group → cooperative-sticky moves ~half the partitions off A, which deletes
+    // their state on revoke.
+    let consumer_b = build_consumer(
+        &topic,
+        &group,
+        store_b.clone(),
+        catalog_b,
+        handle_b,
+        sink_b.clone(),
+        Duration::from_millis(250),
+    );
+    let task_b = tokio::spawn(consumer_b.process());
+
+    // Batch 2: now split across both pods; B rebuilds state for the partitions it gained.
+    let batch2 = produce_events(&topic).await;
+    let total = (batch1 + batch2) as i64;
+    wait_for_committed(&verifier, &topic, total, Duration::from_secs(60)).await;
+    // Let any in-flight revoke cleanup settle.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    shutdown.request_shutdown();
+    task_a.await.expect("consumer A panicked");
+    task_b.await.expect("consumer B panicked");
+
+    // (a) No Kafka-level loss across the migration.
+    assert_eq!(
+        committed_sum(&verifier, &topic),
+        total,
+        "committed offsets cover every produced event",
+    );
+
+    // (c) Co-location: no partition's state lives in both pods at once.
+    for partition in 0..NUM_PARTITIONS {
+        assert!(
+            !(partition_has_state(&store_a, partition, lsk)
+                && partition_has_state(&store_b, partition, lsk)),
+            "partition {partition} has state in both pods — affinity invariant violated",
+        );
+    }
+    let entered_a = entered_persons(&store_a, lsk);
+    let entered_b = entered_persons(&store_b, lsk);
+    assert_eq!(
+        entered_a + entered_b,
+        PERSONS as usize,
+        "every person has state in exactly one pod (a={entered_a}, b={entered_b})",
+    );
+
+    // (b) Distinct entered persons across both pods' output match the oracle.
+    let mut changes = sink_a.changes();
+    changes.extend(sink_b.changes());
+    assert_eq!(
+        distinct_entered(&changes),
+        PERSONS as usize,
+        "every person entered exactly once (idempotent re-produce aside)",
+    );
+}
