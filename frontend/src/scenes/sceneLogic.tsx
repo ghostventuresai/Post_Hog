@@ -1369,26 +1369,32 @@ export const sceneLogic = kea<sceneLogicType>([
                 )
             }
         }
-        mapping['/'] = (_params, searchParams) => {
+        // Resolve the user's configured homepage (set via the Configure home modal) to a
+        // concrete location, or null when the homepage is the launchpad (the /home scene itself).
+        const resolveHomepageTarget = (): { pathname: string; search: string; hash: string } | null => {
             const homepage = values.homepage
+            if (!homepage) {
+                return null
+            }
+            let targetPathname = homepage.pathname ? addProjectIdIfMissing(homepage.pathname) : urls.projectHomepage()
+            if (targetPathname === '/') {
+                targetPathname = urls.projectHomepage()
+            }
+            return { pathname: targetPathname, search: homepage.search || '', hash: homepage.hash || '' }
+        }
 
-            if (homepage) {
-                let targetPathname = homepage.pathname
-                    ? addProjectIdIfMissing(homepage.pathname)
-                    : urls.projectHomepage()
-                if (targetPathname === '/') {
-                    targetPathname = urls.projectHomepage()
-                }
-                const targetSearch = homepage.search || ''
-                const targetHash = homepage.hash || ''
+        mapping['/'] = (_params, searchParams) => {
+            const target = resolveHomepageTarget()
+
+            if (target) {
                 const loc = router.values.currentLocation
                 // Already at homepage: skip replace or replaceState loops (e.g. homepage === project root).
                 const alreadyAtHomepage =
-                    addProjectIdIfMissing(loc.pathname) === addProjectIdIfMissing(targetPathname) &&
-                    (loc.search || '') === targetSearch &&
-                    (loc.hash || '') === targetHash
+                    addProjectIdIfMissing(loc.pathname) === addProjectIdIfMissing(target.pathname) &&
+                    (loc.search || '') === target.search &&
+                    (loc.hash || '') === target.hash
                 if (!alreadyAtHomepage) {
-                    router.actions.replace(targetPathname, targetSearch, targetHash)
+                    router.actions.replace(target.pathname, target.search, target.hash)
                     return
                 }
             }
@@ -1412,6 +1418,22 @@ export const sceneLogic = kea<sceneLogicType>([
                     },
                     method
                 )
+            }
+        }
+
+        // Visiting /home directly should honor the configured homepage the same way the Home
+        // button (which routes through /) does, instead of always showing the launchpad. When
+        // the homepage is the launchpad or already points at /home, fall through to the scene.
+        const projectHomepagePath = urls.projectHomepage()
+        const openProjectHomepageScene = mapping[projectHomepagePath]
+        if (openProjectHomepageScene) {
+            mapping[projectHomepagePath] = (params, searchParams, hashParams, payload) => {
+                const target = resolveHomepageTarget()
+                if (target && addProjectIdIfMissing(target.pathname) !== addProjectIdIfMissing(projectHomepagePath)) {
+                    router.actions.replace(target.pathname, target.search, target.hash)
+                    return
+                }
+                return openProjectHomepageScene(params, searchParams, hashParams, payload)
             }
         }
 
