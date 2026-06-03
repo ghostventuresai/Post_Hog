@@ -54,6 +54,8 @@ export interface HogExecutorConfig {
 export interface HogExecutorAsyncContext {
     teamManager: TeamManager
     siteUrl: string
+    llmGatewayUrl: string
+    llmGatewayApiKey: string
 }
 
 const cdpEmailQueuedTotal = new Counter({
@@ -751,6 +753,10 @@ export class HogExecutorService {
 
         if (!['GET', 'HEAD'].includes(method) && params.body) {
             fetchParams.body = params.body
+        }
+
+        if (params.timeout_ms) {
+            fetchParams.timeoutMs = params.timeout_ms
         }
 
         const { fetchError, fetchResponse, fetchDuration } = await cdpTrackedFetch({

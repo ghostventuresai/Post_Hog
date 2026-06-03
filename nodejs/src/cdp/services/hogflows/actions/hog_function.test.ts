@@ -62,7 +62,12 @@ describe('HogFunctionHandler', () => {
                 fetchBackoffMaxMs: hub.CDP_FETCH_BACKOFF_MAX_MS,
                 emailQueueRouting: hub.CDP_EMAIL_QUEUE_ROUTING,
             },
-            { teamManager: hub.teamManager, siteUrl: hub.SITE_URL },
+            {
+                teamManager: hub.teamManager,
+                siteUrl: hub.SITE_URL,
+                llmGatewayUrl: hub.LLM_GATEWAY_URL,
+                llmGatewayApiKey: hub.LLM_GATEWAY_API_KEY,
+            },
             hogInputsService,
             emailService,
             recipientTokensService
