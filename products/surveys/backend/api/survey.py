@@ -1,5 +1,7 @@
 import re
+import json
 import builtins
+from collections import Counter
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Optional, TypedDict, cast
@@ -9,7 +11,7 @@ from uuid import UUID
 from django.conf import settings
 from django.contrib.postgres.search import TrigramSimilarity, TrigramWordSimilarity
 from django.core.cache import cache
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F, Min, Q, QuerySet, Value
 from django.db.models.functions import Coalesce
 from django.http import HttpRequest, HttpResponse
@@ -1435,7 +1437,80 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
             detail=Detail(name=instance.name),
         )
 
+        report_user_action(
+            self.context["request"].user,
+            "survey created",
+            self._survey_analytics_properties(instance),
+            team=team,
+            request=self.context["request"],
+        )
+
         return instance
+
+    def _survey_analytics_properties(self, instance: Survey) -> dict:
+        translations = instance.translations or {}
+        questions = instance.questions or []
+        translation_languages = sorted(translations.keys())
+        has_question_translations = any(bool((q or {}).get("translations")) for q in questions)
+
+        ai_translation_status = self._classify_ai_translation_status(
+            instance.ai_translations_snapshot or {}, translations, questions
+        )
+        status_counts = Counter(ai_translation_status.values())
+
+        return {
+            "name": instance.name,
+            "id": instance.id,
+            "survey_type": instance.type,
+            "question_types": [q.get("type") for q in questions] if questions else [],
+            "created_at": instance.created_at,
+            "start_date": instance.start_date,
+            "end_date": instance.end_date,
+            "base_language": instance.base_language,
+            "has_translations": bool(translation_languages) or has_question_translations,
+            "translation_languages": translation_languages,
+            "translation_language_count": len(translation_languages),
+            "has_question_translations": has_question_translations,
+            "ai_translation_status": ai_translation_status,
+            "ai_unmodified_language_count": status_counts.get("ai_unmodified", 0),
+            "ai_modified_language_count": status_counts.get("ai_modified", 0),
+            "manual_translation_language_count": status_counts.get("manual_only", 0),
+        }
+
+    @staticmethod
+    def _classify_ai_translation_status(snapshot: dict, translations: dict, questions: list) -> dict[str, str]:
+        used_languages = set(translations.keys())
+        for q in questions:
+            if isinstance(q, dict):
+                used_languages.update((q.get("translations") or {}).keys())
+
+        statuses: dict[str, str] = {}
+        for lang in used_languages:
+            lang_snapshot = snapshot.get(lang)
+            if not lang_snapshot:
+                statuses[lang] = "manual_only"
+                continue
+
+            survey_snapshot = lang_snapshot.get("survey") or {}
+            current_survey = translations.get(lang) or {}
+            survey_matches = all(current_survey.get(field) == value for field, value in survey_snapshot.items())
+
+            questions_snapshot = lang_snapshot.get("questions") or {}
+            questions_match = True
+            for q in questions:
+                if not isinstance(q, dict):
+                    continue
+                qid = q.get("id")
+                if not qid or qid not in questions_snapshot:
+                    continue
+                current_q_translations = (q.get("translations") or {}).get(lang) or {}
+                expected = questions_snapshot[qid] or {}
+                if not all(current_q_translations.get(field) == value for field, value in expected.items()):
+                    questions_match = False
+                    break
+
+            statuses[lang] = "ai_unmodified" if survey_matches and questions_match else "ai_modified"
+        return statuses
 
     def update(self, instance: Survey, validated_data):
         before_update = Survey.objects.get(pk=instance.pk)
@@ -1543,15 +1618,7 @@ class SurveySerializerCreateUpdateOnly(serializers.ModelSerializer):
 
         # Report survey events based on start_date and end_date changes
 
-        properties = {
-            "name": instance.name,
-            "id": instance.id,
-            "survey_type": instance.type,
-            "question_types": [question.get("type") for question in instance.questions] if instance.questions else [],
-            "created_at": instance.created_at,
-            "start_date": instance.start_date,
-            "end_date": instance.end_date,
-        }
+        properties = self._survey_analytics_properties(instance)
         if before_update.start_date is None and instance.start_date is not None:
             report_user_action(
                 user,
@@ -2940,12 +3007,40 @@ class SurveyViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, viewsets.
             team_id=self.team.pk,
         )
 
+        # Persist a snapshot of what the AI produced so we can later classify whether the saved
+        # survey still matches the AI output verbatim, was edited, or replaced manually. Updated
+        # atomically via `jsonb_set` so concurrent generations for different languages cannot
+        # clobber each other's entries.
+        target_language = data["target_language"]
+        snapshot_entry = {
+            "survey": (translations or {}).get(target_language, {}),
+            "questions": {
+                q["id"]: (q.get("translations") or {}).get(target_language, {})
+                for q in (questions or [])
+                if isinstance(q, dict) and q.get("id")
+            },
+        }
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE posthog_survey
+                SET ai_translations_snapshot = jsonb_set(
+                    COALESCE(ai_translations_snapshot, '{}'::jsonb),
+                    ARRAY[%s],
+                    %s::jsonb,
+                    true
+                )
+                WHERE id = %s
+                """,
+                [target_language, json.dumps(snapshot_entry), saved_survey.id],
+            )
+
         posthoganalytics.capture(
             event="survey translations generated",
             distinct_id=str(user.distinct_id),
             properties={
                 "survey_id": kwargs["pk"],
-                "target_language": data["target_language"],
+                "target_language": target_language,
                 "field_count": len(generated_field_paths),
             },
         )
