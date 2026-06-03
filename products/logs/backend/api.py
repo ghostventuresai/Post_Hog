@@ -25,6 +25,8 @@ from posthog.schema import (
     PropertyGroupFilter,
 )
 
+from posthog.hogql.errors import ExposedHogQLError
+
 from posthog.api.documentation import _FallbackSerializer
 from posthog.api.mixins import PydanticModelMixin
 from posthog.api.property_value_metrics import PROPERTY_VALUES_DURATION
@@ -1008,20 +1010,32 @@ class LogsViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, viewsets.ViewSet):
             except ValueError:
                 offset = 0
 
-            query = LogValuesQuery(
-                dateRange=dateRange,
-                attributeKey=attributeKey,
-                attributeType=attributeType,
-                search=search,
-                limit=limit,
-                offset=offset,
-                serviceNames=serviceNames,
-                filterGroup=filterGroup,
-            )
+            try:
+                query = LogValuesQuery(
+                    dateRange=dateRange,
+                    attributeKey=attributeKey,
+                    attributeType=attributeType,
+                    search=search,
+                    limit=limit,
+                    offset=offset,
+                    serviceNames=serviceNames,
+                    filterGroup=filterGroup,
+                )
+            except ValidationError as exc:
+                return Response(
+                    {"error": "Invalid values query parameters", "detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             runner = LogValuesQueryRunner(team=self.team, query=query)
 
-            result = runner.calculate()
+            try:
+                result = runner.calculate()
+            except ExposedHogQLError as exc:
+                return Response(
+                    {"error": "Invalid values query", "detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             span.set_attribute("result_count", len(result.results))
             return Response(
                 {"results": [r.model_dump() for r in result.results], "refreshing": False},
