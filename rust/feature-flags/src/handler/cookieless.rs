@@ -1,7 +1,7 @@
 use crate::{api::errors::FlagError, flags::flag_request::FlagRequest, team::team_models::Team};
 use axum::http::{header::ORIGIN, header::USER_AGENT};
 use chrono;
-use common_cookieless::{CookielessServerHashMode, EventData, TeamData};
+use common_cookieless::{EventData, TeamData};
 
 use super::types::RequestContext;
 
@@ -35,9 +35,6 @@ pub async fn handle_distinct_id(
     let team_data = TeamData {
         team_id: team.id,
         timezone: team.timezone.clone(),
-        cookieless_server_hash_mode: CookielessServerHashMode::from(
-            team.cookieless_server_hash_mode.unwrap_or(0),
-        ),
     };
 
     context
