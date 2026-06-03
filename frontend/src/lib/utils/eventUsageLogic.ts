@@ -596,6 +596,10 @@ export const eventUsageLogic = kea<eventUsageLogicType>([
             warningKey,
         }),
         reportExperimentBiasWarningShown: (experiment: Experiment) => ({ experiment }),
+        reportExperimentHighMultipleExposureWarningShown: (
+            experiment: Experiment,
+            multipleVariantPercentage: number
+        ) => ({ experiment, multipleVariantPercentage }),
         reportExperimentMetricsRefreshed: (
             experiment: Experiment,
             forceRefresh: boolean,
@@ -1597,6 +1601,12 @@ export const eventUsageLogic = kea<eventUsageLogicType>([
         reportExperimentBiasWarningShown: ({ experiment }) => {
             posthog.capture('experiment bias warning shown', {
                 ...getEventPropertiesForExperiment(experiment),
+            })
+        },
+        reportExperimentHighMultipleExposureWarningShown: ({ experiment, multipleVariantPercentage }) => {
+            posthog.capture('experiment high multiple exposure warning shown', {
+                ...getEventPropertiesForExperiment(experiment),
+                multiple_variant_percentage: multipleVariantPercentage,
             })
         },
         reportExperimentMetricsRefreshed: ({ experiment, forceRefresh, context }) => {
