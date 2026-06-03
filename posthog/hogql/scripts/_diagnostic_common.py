@@ -35,7 +35,7 @@ import traceback
 import subprocess
 import dataclasses
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -133,6 +133,79 @@ def _format_diff_path(steps: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# AST coverage metrics — generation-steering signals for the PBT grind
+# ---------------------------------------------------------------------------
+#
+# `pbt_diagnostic.py` feeds these to Hypothesis's `target()` so the search
+# climbs toward structurally novel / deeply-nested queries — the long-tail
+# grammar surface where the two visitors are most likely to disagree. They
+# read the oracle AST already parsed during the grind and reuse `_node_fields`,
+# so they track exactly the dataclass structure the visitors build. Node-type
+# k-paths are an AST analogue of the grammar k-paths from Havrikov & Zeller,
+# "Systematically Covering Input Structure" (ASE 2019): a k-path is a window of
+# k node-type names along one root->descendant descent. AST-shape coverage is a
+# better steering signal here than raw grammar coverage because the divergences
+# are visitor bugs, and the visitor's output IS the AST.
+
+
+def _iter_child_nodes(value: Any) -> Iterator[Any]:
+    """Yield the AST dataclass nodes one level below `value`, descending
+    through intervening lists / tuples / dicts (which hold child nodes in the
+    HogQL AST) but stopping at scalars. A dataclass *type* (as opposed to an
+    instance) is a scalar for our purposes."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        yield value
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            yield from _iter_child_nodes(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_child_nodes(item)
+
+
+def ast_kpaths(root: Any, k: int = 2, *, max_depth: int = 64) -> set[tuple[str, ...]]:
+    """All node-type k-paths in `root`: the set of length-`k` windows of AST
+    node-type names along each root->descendant path. `k=1` is the set of node
+    types present, `k=2` every parent->child edge, `k=3` every
+    grandparent->parent->child triple. Depth-bounded so a pathological tree
+    can't blow the stack."""
+    out: set[tuple[str, ...]] = set()
+
+    def walk(node: Any, chain: tuple[str, ...]) -> None:
+        chain = (*chain, _node_type(node))
+        if len(chain) >= k:
+            out.add(chain[-k:])
+        if len(chain) >= max_depth:
+            return
+        for _, value in _node_fields(node):
+            for child in _iter_child_nodes(value):
+                walk(child, chain)
+
+    walk(root, ())
+    return out
+
+
+def ast_depth(root: Any, *, max_depth: int = 256) -> int:
+    """Maximum AST node nesting depth (root = depth 1). Capped so a pathological
+    tree returns the cap rather than recursing without bound."""
+    best = 0
+
+    def walk(node: Any, d: int) -> None:
+        nonlocal best
+        if d > best:
+            best = d
+        if d >= max_depth:
+            return
+        for _, value in _node_fields(node):
+            for child in _iter_child_nodes(value):
+                walk(child, d + 1)
+
+    walk(root, 1)
+    return best
+
+
+# ---------------------------------------------------------------------------
 # Divergence shape (a stable bucket key — used for shrinking + corpus dedup)
 # ---------------------------------------------------------------------------
 #
@@ -200,13 +273,16 @@ def _ast_mismatch_shape(root_pair: tuple[str, str], steps: list) -> DivergenceSh
 # ---------------------------------------------------------------------------
 
 _GOT_RE = re.compile(r"got\s+\S+", re.IGNORECASE)
+# Collapse a single token trailing a "<reason>: <value>" message (e.g. the operand in "Unsupported interval count: a") so the same reject with a different value buckets as one shape instead of streaming near-duplicates; a multi-token tail like "expected one of: SELECT, WITH" has no single-token match and is left intact.
+_TRAILING_VALUE_RE = re.compile(r":\s*\S*\s*$")
 
 
 def _normalize_error(msg: str) -> str:
-    """Strip position-dependent suffixes so similar rejects bucket
-    together — e.g. `expected ), got Keyword(Order)` and `expected ),
-    got Number` collapse to `expected ), got <X>`."""
-    return _GOT_RE.sub("got <X>", msg)[:120]
+    """Strip variable operands so same-cause rejects bucket together. E.g.
+    `expected ), got Keyword(Order)` and `expected ), got Number` collapse to
+    `expected ), got <X>`; `Unsupported interval count: a` and `: b` collapse to
+    `Unsupported interval count: <X>`."""
+    return _TRAILING_VALUE_RE.sub(": <X>", _GOT_RE.sub("got <X>", msg))[:120]
 
 
 def _strip_locations() -> bool:

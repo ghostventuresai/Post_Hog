@@ -70,6 +70,61 @@ python -c "import hogql_parser_rs; print(hogql_parser_rs.parse_expr_json('1 + 2'
 musllinux 1_2) and macOS arm64/x86_64; see
 [`.github/workflows/build-hogql-parser-rs.yml`](../../../.github/workflows/build-hogql-parser-rs.yml).
 
+## Coverage-instrumented build (for the parser-parity grind)
+
+A second build path exists for fuzz-driven parser-parity work: build the crate
+with `--features coverage` and SanitizerCoverage's `trace-pc-guard` pass, and
+the resulting wheel exposes two PyO3 functions (`cov_snapshot()`,
+`cov_reset()`) that the Python diagnostic uses to feed a per-example
+`rust_edges` novelty count into Hypothesis `target()`. See
+[`src/cov.rs`](src/cov.rs) and the `rust_edges` wiring in
+[`pbt_diagnostic.py`](../../../posthog/hogql/scripts/pbt_diagnostic.py). The
+production wheel is unchanged: without the feature, neither `cov.rs` nor the
+sancov pass are compiled, and the diagnostic detects the absence via
+`hasattr(hogql_parser_rs, "cov_snapshot")` and silently skips the third
+steering label.
+
+Cargo applies `RUSTFLAGS` globally to every crate it compiles, including
+dependency proc macros and build scripts, and those don't have our
+`__sanitizer_cov_trace_pc_guard*` callbacks linked in, so a naive
+`RUSTFLAGS=… maturin build --features coverage` segfaults the host build
+scripts on macOS (and fails to link on Linux). The fix is a small per-crate
+rustc wrapper that strips the sancov flags from every invocation except the
+one for `hogql_parser_rs`. That wrapper lives at
+[`scripts/cov-rustc-wrapper.py`](scripts/cov-rustc-wrapper.py):
+
+```bash
+WRAPPER=$PWD/rust/hogql/parser/scripts/cov-rustc-wrapper.py
+
+# Build the instrumented wheel into a temp dir.
+RUSTC_WRAPPER="$WRAPPER" \
+RUSTFLAGS="-C passes=sancov-module \
+           -C llvm-args=-sanitizer-coverage-level=3 \
+           -C llvm-args=-sanitizer-coverage-trace-pc-guard" \
+maturin build --release --manifest-path rust/hogql/parser/Cargo.toml \
+              --features coverage --out /tmp/cov-wheel
+
+# Install it into the active venv (in the same shell session — see the
+# `project_hogql_rust_parser_local_dev` memory note: the shared flox venv
+# prunes manually-installed wheels otherwise).
+VIRTUAL_ENV=$PWD/.flox/cache/venv uv pip install --reinstall --no-deps \
+    /tmp/cov-wheel/hogql_parser_rs-*.whl
+
+# Verify and run the diagnostic; rust_edges should appear in the stats.
+python -c "import hogql_parser_rs; print(hasattr(hogql_parser_rs, 'cov_snapshot'))"
+PYTHONPATH=. python posthog/hogql/scripts/pbt_diagnostic.py --rule expr --n 300
+```
+
+The grind's "Highest target scores" section will now show a `rust_edges` line
+alongside the existing `ast_depth` and `novel_kpaths`. The wrapper has been
+verified to work locally on macOS aarch64. On a normal install (no coverage
+build) the diagnostic just doesn't emit the third label; nothing else changes.
+
+If you want a production CI job to produce this wheel as a sidecar, mirror the
+above invocation in `.github/workflows/build-hogql-parser-rs-cov.yml` and
+publish it under a separate package name (e.g. `hogql_parser_rs_cov`) so
+production deploys can't accidentally pull the instrumented wheel.
+
 ## Publishing
 
 The crate is pinned via the `hogql-parser-rs==X.Y.Z` line in the
@@ -88,6 +143,75 @@ Version is intentionally locked in step with
 PyPI package) so a bump signals "both parsers move together." The
 publish workflow builds wheels, pushes to PyPI via trusted publishing,
 then opens a follow-up PR that updates the repo-root pin.
+
+## Building a new candidate parser
+
+Bringing a new candidate to cpp parity is a phased effort. Divergences are
+abundant early on and rare in the long tail; different tools fit different
+phases, and chasing the long tail before locking in real-traffic parity
+wastes time. In rough order:
+
+1. **Hand-write the easy stuff.** Get the candidate parsing a basic subset
+   (simple `SELECT`, identifiers, literals, common operators). Validate with
+   a handful of unit tests.
+
+2. **Pin every case in
+   [`parser_test_factory`](../../../posthog/hogql/test/_test_parser.py).**
+   Each case runs against all four backends (`cpp-json`, `python`,
+   `rust-json`, `rust-py`), so candidate-only failures surface immediately.
+   This file is where every found-and-fixed divergence eventually lands.
+
+3. **Hunt divergences in bulk with the streamable fuzzer.** In this phase
+   divergences are abundant, so the survey-stream mode of
+   [`pbt_diagnostic.py`](../../../posthog/hogql/scripts/pbt_diagnostic.py)
+   produces shrunk repros faster than you can fix them. Pair with the
+   rejection-parity contract via `--mutate` / `--grammar-mutate`:
+
+   ```bash
+   PYTHONPATH=. python posthog/hogql/scripts/pbt_diagnostic.py \
+       --rule select --n 20000 --shrink-failures --dedup-stream \
+       --write-divergences /tmp/div.jsonl
+   ```
+
+   Background-grind / foreground-fixer loop: a fixer agent tails the JSONL
+   as the grind produces it.
+
+4. **Validate against the production distribution.** Once the streamable
+   fuzzer is mostly clean, run
+   [`log_corpus_diagnostic.py`](../../../posthog/hogql/scripts/log_corpus_diagnostic.py)
+   (production SELECTs from the last 7 days) and
+   [`hog_corpus_diagnostic.py`](../../../posthog/hogql/scripts/hog_corpus_diagnostic.py)
+   (Hog programs). These are the right shipping bar; don't chase 100% on
+   adversarial PBT before real-traffic parity is locked.
+
+5. **Promote findings to the regression suite.**
+   [`pbt_corpus.py extract`](../../../posthog/hogql/scripts/pbt_corpus.py)
+   deduplicates a JSONL log into a stable corpus; `check` replays it against
+   the current parsers to verify each entry still triggers what it used to.
+   Lift entries from the corpus into `parser_test_factory` cases.
+
+6. **Adversarial / long tail.** The pytest grammar PBT
+   (`RUN_PBT=1 hogli test posthog/hogql/test/test_parser_grammar_pbt.py`)
+   is the slower offline-audit variant of the diagnostic with the same
+   coverage-guided generation. Pair it with **agent-driven edge-case
+   hunting**: an LLM picking constructs the fuzzer is unlikely to invent
+   (deeply-nested `BETWEEN`, `WITHIN GROUP` shapes, mode-stack transitions
+   across HogQLX / template strings) and producing test cases by hand.
+   After real-traffic parity, this is the only model that closes the long
+   tail.
+
+7. **Perf parity.** Run
+   [`parser_bench.py`](../../../posthog/hogql/scripts/parser_bench.py)
+   before and after non-trivial changes. The candidate should be at parity
+   or better on the bench corpus.
+
+8. **Ship via shadow mode.** Enable the candidate as the shadow backend
+   (`CPP_WITH_RUST_SHADOW` or `CPP_WITH_RUST_PY_SHADOW` in
+   [`parser.py`](../../../posthog/hogql/parser.py)). TEST mode raises on
+   mismatch — any remaining divergence surfaces as a test failure.
+   Production runs it at a 1% sample, logging mismatches via
+   `hogql_parser_shadow_comparisons_total`. Graduate from shadow to primary
+   when the mismatch rate is within your budget.
 
 ## Adding a new grammar feature
 
@@ -236,6 +360,78 @@ oracle and candidate, buckets divergences by AST shape, and prints
 shrunk reproducers. Use `--shrink-failures` to auto-reduce each
 divergence to a minimal example.
 
+Generation is **coverage-guided by default**: each oracle-accepted query
+is scored by its AST k-path coverage and nesting depth and fed to
+Hypothesis's `target()`, so the search climbs toward the structurally
+novel, deeply-nested long tail instead of sampling the grammar uniformly.
+The high-coverage Pareto front persists to a Hypothesis example database
+and is replayed first on the next run, so a long grind warm-starts from
+the best inputs found so far.
+
+If the `hogql_parser_rs` wheel was built with `--features coverage` (see the
+[Coverage-instrumented build](#coverage-instrumented-build-for-the-parser-parity-grind)
+section above), the diagnostic auto-detects it and adds a third `rust_edges`
+target label that counts edges hit by *this* parse in the rust parser but not
+yet in the cumulative `seen_edges` bitmap. That puts a real per-input
+edge-novelty signal into the Pareto front next to the two AST-shape proxies,
+which is the holy-grail coverage-guided fuzzing signal the AST proxies can
+only approximate. Production wheels do not expose the bitmap, so the
+diagnostic silently degrades to AST-only steering on a normal install.
+
+The same coverage-guided `target()` + `event()` + example-database wiring is
+shared by the pytest PBTs (`test_parser_grammar_pbt.py`,
+`test_parser_pbt.py`, `test_printer_pbt.py`) — see
+[`_pbt_corpus_db.py`](../../../posthog/hogql/test/_pbt_corpus_db.py).
+
+By default the database is `MultiplexedDatabase(local, ReadOnlyDatabase(committed))`:
+runs replay the committed corpus at
+[`posthog/hogql/test/parser_pbt_corpus/`](../../../posthog/hogql/test/parser_pbt_corpus/)
+read-only and write new examples only to the local `.hypothesis` db. That
+committed dir **ships empty** (offline-only tooling didn't justify committing
+blobs — see its README), so by default there's no warm-start; everything else
+works and nothing churns. Knobs:
+
+```bash
+--no-steer            # disable target()-guided steering (uniform sampling)
+--kpath-k 3           # k-path window for the coverage signal (default 2)
+--shrink-failures     # token-reduce each divergence to a minimal repro
+--write-divergences X # stream one flushed JSON line per finding to X
+--dedup-stream        # stream only the first repro per distinct shape (see below)
+--update-corpus       # write read-write straight to the committed dir (opt-in seed)
+--corpus-dir PATH     # use an explicit read-write db dir instead (e.g. an ephemeral /tmp run)
+--no-database         # disable the example database entirely
+```
+
+To opt into a shared seed, populate it with `--update-corpus` and commit the
+new blobs; see the corpus
+[README](../../../posthog/hogql/test/parser_pbt_corpus/README.md).
+
+The run-end summary prints Hypothesis's own statistics — the per-outcome
+`event()` distribution and the best `target()` score per label (peak
+k-path novelty and AST depth reached). `--write-divergences PATH` is the
+streaming, agent-readable feed (one flushed JSON line per finding, as found),
+complementary to the opaque-blob example database.
+
+**Background grind feeding a foreground fixer.** The grind is non-raising — it
+surveys the whole divergence space in one steered pass rather than fail-fasting
+on the first divergence — so `--shrink-failures --write-divergences X` already
+streams a token-shrunk repro per finding as it goes. Add `--dedup-stream` to
+collapse that to one repro per distinct shape (reject signature, over-accept
+root, or ast_mismatch root pair), so the fixer sees each bug once instead of
+every occurrence:
+
+```bash
+PYTHONPATH=. python posthog/hogql/scripts/pbt_diagnostic.py \
+    --rule select --n 20000 --shrink-failures --dedup-stream \
+    --write-divergences /tmp/divergences.jsonl
+```
+
+(An earlier `find()`-driven "streaming native-shrink" mode was tried and
+dropped: Hypothesis's structure-aware shrinker can't reduce an
+externally-discovered query without re-deriving it, and re-finding a specific
+rare shape from scratch is infeasible, so it reduced to this same
+survey-plus-token-shrink path with no added value.)
+
 ### Real-query corpora via `log_corpus_diagnostic.py` / `hog_corpus_diagnostic.py`
 
 ```bash
@@ -281,6 +477,25 @@ regression slips past the PBT but shows up in the suite.
 from posthog.hogql.constants import HogQLParserBackend
 parse_expr(src, backend=HogQLParserBackend.CPP_WITH_RUST_SHADOW)
 ```
+
+### Tool index
+
+A one-line map of every parser-parity tool, grouped by use:
+
+| Use case | Tool |
+|---|---|
+| Pin a known case as a regression | [`parser_test_factory`](../../../posthog/hogql/test/_test_parser.py) (runs across all 4 backends) |
+| Hunt divergences in bulk, streaming | `pbt_diagnostic.py --shrink-failures --dedup-stream --write-divergences PATH` |
+| Exercise the rejection / over-acceptance contract | `pbt_diagnostic.py --mutate` / `--grammar-mutate` |
+| Promote JSONL findings to a stable corpus | [`pbt_corpus.py extract`](../../../posthog/hogql/scripts/pbt_corpus.py) / `check` |
+| Validate real-traffic parity (SQL queries) | [`log_corpus_diagnostic.py`](../../../posthog/hogql/scripts/log_corpus_diagnostic.py) |
+| Validate real-traffic parity (Hog programs) | [`hog_corpus_diagnostic.py`](../../../posthog/hogql/scripts/hog_corpus_diagnostic.py) |
+| Regenerate PBT strategies after grammar edits | `python -m posthog.hogql.scripts.build_grammar_strategies` |
+| Perf parity benchmark | [`parser_bench.py`](../../../posthog/hogql/scripts/parser_bench.py) |
+| Production safety net | `HogQLParserMode.CPP_WITH_RUST_*_SHADOW` in [`parser.py`](../../../posthog/hogql/parser.py) |
+| Offline audit with deeper steering | `RUN_PBT=1 hogli test posthog/hogql/test/test_parser_grammar_pbt.py` |
+| Adversarial / edge-case hunting | Agent (no tool — point an LLM at the grammar surface) |
+| Real Rust edge coverage as a `target()` signal | [Coverage-instrumented build](#coverage-instrumented-build-for-the-parser-parity-grind): `--features coverage` + `RUSTC_WRAPPER` |
 
 ## Rules of thumb for the parity loop
 
