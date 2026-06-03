@@ -14,6 +14,7 @@ class SloOperation(StrEnum):
     SUBSCRIPTION_DELETE = "subscription_delete"
     ALERT_CHECK = "alert_check"
     QUERY_SERVICE = "query_service"
+    DASHBOARD_WIDGET_DELIVERY = "dashboard_widget_delivery"
 
 
 class SloOutcome(StrEnum):
