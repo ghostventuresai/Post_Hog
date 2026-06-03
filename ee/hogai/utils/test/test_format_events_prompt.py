@@ -1,14 +1,21 @@
 import datetime
 import xml.etree.ElementTree as ET
 
+from freezegun import freeze_time
 from posthog.test.base import BaseTest
 from unittest.mock import ANY, Mock, patch
+
+from parameterized import parameterized
 
 from posthog.schema import CachedTeamTaxonomyQueryResponse, MaxEventContext, TeamTaxonomyItem, TeamTaxonomyQuery
 
 from posthog.hogql_queries.query_runner import ExecutionMode
 
-from ee.hogai.utils.helpers import format_events_xml
+from ee.hogai.utils.helpers import _format_event_recency, _format_relative_time, format_events_xml, format_events_yaml
+
+# Fixed reference instant used by relative-time parameterised tests so the
+# `now=` injection produces deterministic output regardless of wall-clock.
+_REF_NOW = datetime.datetime(2026, 5, 14, 12, 0, 0, tzinfo=datetime.UTC)
 
 # Mock CORE_FILTER_DEFINITIONS_BY_GROUP for consistent testing
 MOCK_CORE_FILTER_DEFINITIONS = {
@@ -66,8 +73,19 @@ class TestFormatEventsPrompt(BaseTest):
         )
 
     def _create_taxonomy_items(self, events_with_counts):
-        """Helper to create TeamTaxonomyItem list from event name and count pairs."""
-        return [TeamTaxonomyItem(event=event, count=count) for event, count in events_with_counts]
+        """Helper to create TeamTaxonomyItem list from event name and count pairs.
+
+        Each entry may be `(event, count)` or `(event, count, last_seen_at, count_24h)`.
+        """
+        items = []
+        for entry in events_with_counts:
+            if len(entry) == 4:
+                event, count, last_seen_at, count_24h = entry
+                items.append(TeamTaxonomyItem(event=event, count=count, last_seen_at=last_seen_at, count_24h=count_24h))
+            else:
+                event, count = entry
+                items.append(TeamTaxonomyItem(event=event, count=count))
+        return items
 
     def _create_context_events(self, events_with_descriptions):
         """Helper to create MaxEventContext list from event name and description pairs."""
@@ -381,3 +399,103 @@ class TestFormatEventsPrompt(BaseTest):
             ExecutionMode.RECENT_CACHE_CALCULATE_ASYNC_IF_STALE_AND_BLOCKING_ON_MISS,
             analytics_props=ANY,
         )
+
+    @parameterized.expand(
+        [
+            ("seconds", datetime.timedelta(seconds=5), "5s ago"),
+            ("minutes", datetime.timedelta(minutes=38), "38m ago"),
+            ("hours", datetime.timedelta(hours=3), "3h ago"),
+            ("days", datetime.timedelta(days=8), "8d ago"),
+        ]
+    )
+    def test_format_relative_time_datetime_buckets(self, _name, delta, expected):
+        self.assertEqual(_format_relative_time(_REF_NOW - delta, now=_REF_NOW), expected)
+
+    @parameterized.expand(
+        [
+            ("iso_with_offset", "2026-05-14T11:59:55+00:00", "5s ago"),
+            ("iso_with_z_suffix", "2026-05-14T11:59:55Z", "5s ago"),
+            ("iso_naive_falls_back_to_utc", "2026-05-14T11:59:55", "5s ago"),
+        ]
+    )
+    def test_format_relative_time_string_input(self, _name, value, expected):
+        self.assertEqual(_format_relative_time(value, now=_REF_NOW), expected)
+
+    @parameterized.expand(
+        [
+            ("none", None),
+            ("invalid_string", "not-a-date"),
+            ("unsupported_type", 12345),
+        ]
+    )
+    def test_format_relative_time_invalid_returns_none(self, _name, value):
+        self.assertIsNone(_format_relative_time(value))
+
+    @parameterized.expand(
+        [
+            (
+                "both_fields_populated",
+                {"last_seen_at": (_REF_NOW - datetime.timedelta(minutes=5)).isoformat(), "count_24h": 12},
+                "last seen 5m ago, 12 in 24h",
+            ),
+            (
+                "count_zero_with_recent_last_seen",
+                {"last_seen_at": (_REF_NOW - datetime.timedelta(minutes=5)).isoformat(), "count_24h": 0},
+                "no events in 24h, last seen 5m ago",
+            ),
+            (
+                "count_zero_no_last_seen",
+                {"last_seen_at": None, "count_24h": 0},
+                "no events in 24h",
+            ),
+            (
+                "neither_field_present",
+                {"name": "some_event"},
+                None,
+            ),
+        ]
+    )
+    def test_format_event_recency(self, _name, event_data, expected):
+        # `last_seen_at` deltas are anchored to _REF_NOW; the helper internally calls datetime.now(UTC),
+        # so freeze time to keep "5m ago" stable regardless of wall-clock at test time.
+        with freeze_time(_REF_NOW):
+            self.assertEqual(_format_event_recency(event_data), expected)
+
+    @patch("ee.hogai.utils.helpers.TeamTaxonomyQueryRunner")
+    def test_format_events_yaml_includes_recency_fields(self, mock_runner_class):
+        """Tool output appends `(last seen X, N in 24h)` when recency fields are present."""
+        # Use an ISO timestamp recent enough that the relative-time formatter produces something stable in the assertion.
+        # The actual delta from `now()` varies at test time, so we assert on the suffix shape rather than the exact value.
+        recent_iso = datetime.datetime.now(datetime.UTC).isoformat()
+        taxonomy_items = self._create_taxonomy_items(
+            [
+                ("$pageview", 100, recent_iso, 42),
+                ("custom_event", 5, recent_iso, 0),
+            ]
+        )
+        self._setup_mock_runner(mock_runner_class, taxonomy_items)
+
+        result = format_events_yaml([], self.team)
+
+        # Recency suffix is appended to each event line in the YAML output.
+        self.assertIn("`$pageview`", result)
+        self.assertIn("42 in 24h", result)
+        self.assertIn("`custom_event`", result)
+        self.assertIn("no events in 24h", result)
+
+    @patch("ee.hogai.utils.helpers.TeamTaxonomyQueryRunner")
+    def test_format_events_yaml_omits_recency_when_absent(self, mock_runner_class):
+        """If recency fields are not set (e.g. from a cached pre-enrichment response), no suffix is appended."""
+        taxonomy_items = self._create_taxonomy_items(
+            [
+                ("legacy_event", 10),
+            ]
+        )
+        self._setup_mock_runner(mock_runner_class, taxonomy_items)
+
+        result = format_events_yaml([], self.team)
+
+        # No parenthesized recency suffix on the event line
+        self.assertIn("`legacy_event`", result)
+        self.assertNotIn("in 24h", result)
+        self.assertNotIn("last seen", result)
