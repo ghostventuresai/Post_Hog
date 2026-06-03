@@ -43,6 +43,10 @@ from products.tasks.backend.temporal.process_task.activities.post_slack_update i
     PostSlackUpdateInput,
     post_slack_update,
 )
+from products.tasks.backend.temporal.process_task.activities.set_actor_on_run import (
+    SetActorOnRunInput,
+    set_actor_on_run,
+)
 from products.tasks.backend.temporal.process_task.activities.track_workflow_event import (
     TrackWorkflowEventInput,
     track_workflow_event,
@@ -175,6 +179,11 @@ class TaskManagementWorkflow(PostHogWorkflow):
         # the sandbox workflow. We assign ack_ids when we forward.
         self._pending_external_followups: list[PendingExternalFollowup] = []
         self._pending_external_complete: Optional[tuple[str, Optional[str]]] = None
+        # The Slack user id of whoever last engaged the agent in this thread.
+        # ``None`` means "nothing pending"; ``("",)`` would be a clear request.
+        # Wrapping in a single-element list lets us distinguish "no pending
+        # change" from "pending change to None" without a sentinel.
+        self._pending_actor_change: Optional[tuple[Optional[str]]] = None
         # Last payload we wrote to TaskRun.state, so `_persist_pending_followups`
         # can skip the DB roundtrip when nothing changed (e.g., draining an
         # already-empty queue still triggers a persist call).
@@ -238,6 +247,20 @@ class TaskManagementWorkflow(PostHogWorkflow):
         self._pending_external_followups.append(
             PendingExternalFollowup(message=message, artifact_ids=artifact_ids or [], source=FOLLOWUP_SOURCE_USER)
         )
+
+    @workflow.signal
+    async def set_current_actor(self, slack_user_id: Optional[str] = None) -> None:
+        """Record who the agent is currently responding to.
+
+        A multiplayer Slack thread can have follow-ups from different teammates
+        over the lifetime of one task run; the bot's replies must tag whoever
+        spoke last rather than the original mentioner. The followup handler
+        signals us with each new sender, and we persist the value via the
+        ``set_actor_on_run`` activity so the relay workflow (a separate
+        workflow that can't be signaled) can read it from ``TaskRun.state``.
+        """
+        # Wrap so ``None`` is "explicit clear" rather than "no pending change".
+        self._pending_actor_change = (slack_user_id,)
 
     @workflow.signal
     async def heartbeat(self, agent_active: bool = False) -> None:
@@ -334,6 +357,11 @@ class TaskManagementWorkflow(PostHogWorkflow):
                     "team_id": self.context.team_id,
                 },
             )
+            # Seed the actor field before any Slack-facing activity runs so
+            # the first ``post_slack_update`` already reflects the workflow's
+            # input rather than relying on the followup-signal path.
+            if self._slack_thread_context:
+                await self._persist_current_actor(self._slack_thread_context.get("mentioning_slack_user_id"))
             await self._post_slack_update()
 
             # Restore any follow-ups that a prior orchestrator execution
@@ -411,6 +439,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
             lambda: (
                 self._pending_external_complete is not None
                 or len(self._pending_external_followups) > 0
+                or self._pending_actor_change is not None
                 or len(self._child_acks) > 0
                 or self._heartbeat_received
                 or self._child_completion is not None
@@ -424,7 +453,11 @@ class TaskManagementWorkflow(PostHogWorkflow):
             return TaskEvent.CHILD_COMPLETED
         # Prefer external signals when both classes are pending — the child
         # signal drain is cheap and rarely time-critical.
-        if self._pending_external_complete is not None or self._pending_external_followups:
+        if (
+            self._pending_external_complete is not None
+            or self._pending_external_followups
+            or self._pending_actor_change is not None
+        ):
             return TaskEvent.EXTERNAL_SIGNAL
         return TaskEvent.CHILD_FORWARDED
 
@@ -488,6 +521,15 @@ class TaskManagementWorkflow(PostHogWorkflow):
     # ------------------------------------------------------------------
 
     async def _drain_external_signals(self) -> None:
+        # The actor change is independent of sandbox state — it just stamps
+        # ``TaskRun.state`` so cross-workflow reply paths know who to tag.
+        # Handle it before the sandbox-bootstrap dance so a pure actor-change
+        # signal (no follow-up) doesn't accidentally spin up a sandbox.
+        if self._pending_actor_change is not None:
+            (slack_user_id,) = self._pending_actor_change
+            self._pending_actor_change = None
+            await self._persist_current_actor(slack_user_id)
+
         # Lazy re-bootstrap: if a prior sandbox session ended and we now have
         # follow-ups to deliver, spin up a fresh sandbox first. A standalone
         # `complete_task` arriving without follow-ups is dropped — there's
@@ -998,4 +1040,23 @@ class TaskManagementWorkflow(PostHogWorkflow):
             ),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+    async def _persist_current_actor(self, slack_user_id: Optional[str]) -> None:
+        """Stamp the active Slack user id onto ``TaskRun.state`` so cross-workflow
+        reply paths (the separate ``posthog-code-agent-relay`` workflow, plus
+        the PR-opened notification in ``post_slack_update``) can tag them.
+
+        Called from workflow bootstrap with the seed from
+        ``slack_thread_context.mentioning_slack_user_id`` and from
+        ``set_current_actor`` for each follow-up.
+        """
+        run_id = self._run_id
+        if run_id is None:
+            return
+        await workflow.execute_activity(
+            set_actor_on_run,
+            SetActorOnRunInput(run_id=run_id, slack_user_id=slack_user_id),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )

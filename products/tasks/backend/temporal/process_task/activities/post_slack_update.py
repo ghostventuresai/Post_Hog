@@ -40,7 +40,11 @@ def _viewer_has_posthog_code_access(viewer: User | None) -> bool:
 @activity.defn
 def post_slack_update(input: PostSlackUpdateInput) -> None:
     """Post Slack update based on current task run state. Idempotent."""
-    from products.slack_app.backend.slack_thread import SlackThreadContext, SlackThreadHandler
+    from products.slack_app.backend.slack_thread import (
+        SlackThreadContext,
+        SlackThreadHandler,
+        resolve_reply_target_slack_user_id,
+    )
     from products.tasks.backend.models import TaskRun
 
     try:
@@ -51,14 +55,10 @@ def post_slack_update(input: PostSlackUpdateInput) -> None:
 
     try:
         context = SlackThreadContext.from_dict(input.slack_thread_context)
-        # The workflow input is frozen at task start, so for a thread that has
-        # since switched to a different participant (multiplayer follow-up,
-        # resume by another teammate), we layer the live actor from run state
-        # on top before posting.
-        acting = (task_run.state or {}).get("acting_slack_user_id")
-        if acting:
-            context.acting_slack_user_id = acting
         handler = SlackThreadHandler(context)
+        reply_target_slack_user_id = resolve_reply_target_slack_user_id(
+            task_run, context.integration_id, context.mentioning_slack_user_id
+        )
         creator_has_access = _viewer_has_posthog_code_access(task_run.task.created_by)
         task_url: str | None = (
             f"{settings.SITE_URL}/project/{task_run.task.team_id}/tasks/{task_run.task_id}?runId={task_run.id}"
@@ -103,7 +103,7 @@ def post_slack_update(input: PostSlackUpdateInput) -> None:
             handler.post_error(error, task_url)
         else:
             if pr_url:
-                _post_pr_opened_notification_once(task_run, handler, pr_url, task_url)
+                _post_pr_opened_notification_once(task_run, handler, pr_url, task_url, reply_target_slack_user_id)
                 handler.update_reaction("hedgehog")
                 handler.delete_progress()
                 return
@@ -128,11 +128,17 @@ def _get_stage_from_status(status: str, stage: str | None = None) -> str:
     return status_map.get(status, "In progress...")
 
 
-def _post_pr_opened_notification_once(task_run, handler, pr_url: str, task_url: str | None) -> None:
+def _post_pr_opened_notification_once(
+    task_run,
+    handler,
+    pr_url: str,
+    task_url: str | None,
+    reply_target_slack_user_id: str | None,
+) -> None:
     if _is_pr_opened_notified(task_run, pr_url):
         return
 
-    handler.post_pr_opened(pr_url, task_url)
+    handler.post_pr_opened(pr_url, task_url, reply_target_slack_user_id=reply_target_slack_user_id)
 
     _mark_pr_opened_notified(task_run, pr_url)
 

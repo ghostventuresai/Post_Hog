@@ -36,16 +36,6 @@ class SlackThreadContext:
     thread_ts: str
     user_message_ts: str | None = None
     mentioning_slack_user_id: str | None = None
-    # Slack user id of the most recent participant in this thread. Differs from
-    # ``mentioning_slack_user_id`` when a teammate follows up after the original
-    # author started the thread (multiplayer); the bot's reply tags them so the
-    # ping reaches whoever actually asked, not the user who opened the task.
-    acting_slack_user_id: str | None = None
-
-    @property
-    def reply_target_slack_user_id(self) -> str | None:
-        """Slack user id the bot should tag in replies — actor first, mentioner as fallback."""
-        return self.acting_slack_user_id or self.mentioning_slack_user_id
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -57,8 +47,6 @@ class SlackThreadContext:
             d["user_message_ts"] = self.user_message_ts
         if self.mentioning_slack_user_id is not None:
             d["mentioning_slack_user_id"] = self.mentioning_slack_user_id
-        if self.acting_slack_user_id is not None:
-            d["acting_slack_user_id"] = self.acting_slack_user_id
         return d
 
     @classmethod
@@ -69,7 +57,6 @@ class SlackThreadContext:
             thread_ts=data["thread_ts"],
             user_message_ts=data.get("user_message_ts"),
             mentioning_slack_user_id=data.get("mentioning_slack_user_id"),
-            acting_slack_user_id=data.get("acting_slack_user_id"),
         )
 
 
@@ -228,10 +215,20 @@ class SlackThreadHandler:
 
         self._delete_progress_and_post(header, blocks)
 
-    def post_pr_opened(self, pr_url: str, task_url: str | None) -> None:
-        """Post PR opened message with action buttons."""
-        target = self.context.reply_target_slack_user_id
-        mention_prefix = f"<@{target}> " if target else ""
+    def post_pr_opened(
+        self,
+        pr_url: str,
+        task_url: str | None,
+        reply_target_slack_user_id: str | None = None,
+    ) -> None:
+        """Post PR opened message with action buttons.
+
+        ``reply_target_slack_user_id`` is the resolved actor — typically the
+        most recent thread participant, computed by the caller via
+        ``resolve_reply_target_slack_user_id``. ``None`` produces an untagged
+        message.
+        """
+        mention_prefix = f"<@{reply_target_slack_user_id}> " if reply_target_slack_user_id else ""
         header = f"{mention_prefix}Pull request opened."
 
         buttons: list[dict[str, Any]] = [
@@ -401,3 +398,46 @@ class SlackThreadHandler:
             )
         except Exception as e:
             logger.exception("slack_completion_post_failed", error=str(e))
+
+
+def resolve_reply_target_slack_user_id(
+    task_run: Any,
+    integration_id: int,
+    mapping_mentioner: str | None,
+) -> str | None:
+    """Pick the Slack user id the bot should tag in its next reply.
+
+    The task processing workflow stamps the live actor onto
+    ``TaskRun.state["acting_slack_user_id"]`` on every follow-up. When that's
+    missing — e.g. a run from before the field was added, or a non-Slack
+    code path — fall back to the task creator's Slack id via
+    ``SlackUserProfileCache``. ``mapping_mentioner`` is the last-resort default
+    so multiplayer runs always tag *someone* rather than going untagged.
+
+    The integration lookup is done lazily here so callers that hit the
+    fast state-actor path pay nothing.
+    """
+    state = task_run.state or {}
+    state_actor = state.get("acting_slack_user_id")
+    if state_actor:
+        return state_actor
+
+    created_by = getattr(task_run.task, "created_by", None)
+    email = getattr(created_by, "email", None) if created_by else None
+    if email:
+        # Imported lazily to avoid an import cycle: api.py already imports from
+        # slack_thread.py via models / serializers.
+        from products.slack_app.backend.api import lookup_slack_user_id_by_email  # noqa: PLC0415 — break import cycle
+
+        try:
+            # nosemgrep: idor-lookup-without-team (internal context; integration id from workflow input/mapping)
+            integration = Integration.objects.get(id=integration_id)
+            slack = SlackIntegration(integration)
+            looked_up = lookup_slack_user_id_by_email(slack, integration, email)
+        except Exception as e:
+            logger.warning("slack_reply_target_email_lookup_failed", error=str(e))
+            looked_up = None
+        if looked_up:
+            return looked_up
+
+    return mapping_mentioner
