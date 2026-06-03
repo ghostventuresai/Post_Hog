@@ -710,9 +710,10 @@ describe('Tool Filtering - Feature Flags', () => {
                 'replay-vision',
                 'tasks',
                 'promoted-product',
+                'heatmaps-mcp',
             ])
         )
-        expect(flags).toHaveLength(11)
+        expect(flags).toHaveLength(12)
     })
 
     // Exercise the real predicate (toolPassesFlagGate) over hand-rolled entries
