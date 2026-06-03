@@ -25,9 +25,13 @@ import { MCPEventView } from './MCPEventView'
 interface EventDetailsProps {
     event: ErrorPropertyTabEvent
     tableProps?: Partial<LemonTableProps<Record<string, any>>>
+    /** When provided, the Properties tab renders an "add to columns shown" button per row. */
+    onAddAsColumn?: (key: string) => void
+    /** When provided, hides the add-as-column button for keys this returns true for (already a column). */
+    isColumnShown?: (key: string) => boolean
 }
 
-export function EventDetails({ event, tableProps }: EventDetailsProps): JSX.Element {
+export function EventDetails({ event, tableProps, onAddAsColumn, isColumnShown }: EventDetailsProps): JSX.Element {
     const getEventId = (event: ErrorPropertyTabEvent): string => {
         if ('uuid' in event && event.uuid) {
             return event.uuid
@@ -183,7 +187,8 @@ export function EventDetails({ event, tableProps }: EventDetailsProps): JSX.Elem
                                 />
                             </div>
                         )
-                    default:
+                    default: {
+                        const isPropertiesTab = tabKey === 'properties'
                         return (
                             <div className="mx-3">
                                 <PropertiesTable
@@ -191,18 +196,32 @@ export function EventDetails({ event, tableProps }: EventDetailsProps): JSX.Elem
                                     properties={properties}
                                     useDetectedPropertyType={['flags', 'properties'].includes(tabKey)}
                                     tableProps={tableProps}
-                                    filterable={tabKey === 'properties'}
+                                    filterable={isPropertiesTab}
                                     sortProperties
                                     // metadata is so short, that serachable is wasted space
                                     searchable={tabKey !== 'metadata'}
                                     parent={
-                                        tabKey === 'properties'
-                                            ? (event.event as KNOWN_PROMOTED_PROPERTY_PARENTS)
+                                        isPropertiesTab ? (event.event as KNOWN_PROMOTED_PROPERTY_PARENTS) : undefined
+                                    }
+                                    onAddAsColumn={
+                                        isPropertiesTab && onAddAsColumn
+                                            ? (key) => {
+                                                  if (key === '$timestamp') {
+                                                      return
+                                                  }
+                                                  onAddAsColumn(key)
+                                              }
+                                            : undefined
+                                    }
+                                    isColumnShown={
+                                        isPropertiesTab && onAddAsColumn
+                                            ? (key) => key === '$timestamp' || !!isColumnShown?.(key)
                                             : undefined
                                     }
                                 />
                             </div>
                         )
+                    }
                 }
             }}
         />
