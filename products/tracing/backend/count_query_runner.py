@@ -80,11 +80,6 @@ class TraceSpansCountQueryRunner(TraceSpansQueryRunnerMixin, AnalyticsQueryRunne
         assert isinstance(query, ast.SelectQuery)
         return query
 
-    def run(self, *args, **kwargs) -> TraceSpansQueryResponse | CachedTraceSpansQueryResponse:
-        response = super().run(*args, **kwargs)
-        assert isinstance(response, TraceSpansQueryResponse | CachedTraceSpansQueryResponse)
-        return response
-
 
 def run_count_query(
     *,
@@ -102,4 +97,6 @@ def run_count_query(
         filterGroup=filter_group,
     )
     runner = TraceSpansCountQueryRunner(query, team)
-    return runner.run(ExecutionMode.CALCULATE_BLOCKING_ALWAYS)
+    response = runner.run(ExecutionMode.CALCULATE_BLOCKING_ALWAYS)
+    assert isinstance(response, TraceSpansQueryResponse | CachedTraceSpansQueryResponse)
+    return response

@@ -3,6 +3,8 @@ import datetime as dt
 
 from posthog.test.base import APIBaseTest, ClickhouseTestMixin
 
+from parameterized import parameterized
+
 from posthog.schema import DateRange
 
 from posthog.clickhouse.client import sync_execute
@@ -73,9 +75,21 @@ class TestTraceSpansCount(ClickhouseTestMixin, APIBaseTest):
         sync_execute(TRACE_SPANS_DISTRIBUTED_TABLE_SQL())
         super().tearDownClass()
 
-    def test_unfiltered_count_returns_all_spans(self):
-        response = run_count_query(team=self.team, date_range=DateRange(date_from=DATE_FROM, date_to=DATE_TO))
-        self.assertEqual(response.results, {"count": NUM_TRACES * 3})
+    @parameterized.expand(
+        [
+            # No service filter → every span in the window.
+            ("unfiltered_returns_all_spans", None, NUM_TRACES * 3),
+            # A service that emitted nothing → zero.
+            ("no_match_returns_zero", ["does-not-exist"], 0),
+        ]
+    )
+    def test_count(self, _name, service_names, expected_count):
+        response = run_count_query(
+            team=self.team,
+            date_range=DateRange(date_from=DATE_FROM, date_to=DATE_TO),
+            service_names=service_names,
+        )
+        self.assertEqual(response.results, {"count": expected_count})
 
     def test_count_via_api_with_name_filter(self):
         body = {
@@ -88,11 +102,3 @@ class TestTraceSpansCount(ClickhouseTestMixin, APIBaseTest):
         self.assertEqual(res.status_code, 200, res.content)
         # One root span named process_query_model per trace.
         self.assertEqual(res.json(), {"count": NUM_TRACES})
-
-    def test_count_zero_when_nothing_matches(self):
-        response = run_count_query(
-            team=self.team,
-            date_range=DateRange(date_from=DATE_FROM, date_to=DATE_TO),
-            service_names=["does-not-exist"],
-        )
-        self.assertEqual(response.results, {"count": 0})
