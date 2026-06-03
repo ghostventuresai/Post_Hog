@@ -40574,6 +40574,10 @@
                 "dateRange": {
                     "$ref": "#/definitions/DateRange"
                 },
+                "excludeAttributes": {
+                    "description": "Omit the per-span `attributes` map from results to keep payloads compact",
+                    "type": "boolean"
+                },
                 "filterGroup": {
                     "$ref": "#/definitions/PropertyGroupFilter"
                 },
