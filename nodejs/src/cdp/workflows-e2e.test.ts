@@ -46,7 +46,7 @@ import { CyclotronJobQueueKafka } from './services/job-queue/job-queue-kafka'
 import { CyclotronJobQueuePostgres } from './services/job-queue/job-queue-postgres'
 import { CyclotronJobQueuePostgresV2 } from './services/job-queue/job-queue-postgres-v2'
 import { JobQueue } from './services/job-queue/job-queue.interface'
-import { HogFunctionInvocationGlobals } from './types'
+import { HogFunctionInvocationGlobalEvent, HogFunctionInvocationGlobals } from './types'
 import { convertBatchHogFlowRequestToHogFunctionInvocationGlobals } from './utils'
 import { convertToHogFunctionFilterGlobal } from './utils/hog-function-filtering'
 
@@ -168,9 +168,7 @@ describe.each(['postgres-v2' as const, 'postgres' as const])('Workflows E2E (%s)
 
     // ── Helpers ──────────────────────────────────────────────────────
 
-    function createGlobals(
-        overrides: Partial<HogFunctionInvocationGlobals['event']> = {}
-    ): HogFunctionInvocationGlobals {
+    function createGlobals(overrides: Partial<HogFunctionInvocationGlobalEvent> = {}): HogFunctionInvocationGlobals {
         return createHogExecutionGlobals({
             project: { id: team.id } as any,
             event: {

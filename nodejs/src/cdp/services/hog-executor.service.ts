@@ -268,7 +268,7 @@ export class HogExecutorService {
                     instance_id: new UUIDT().toString(), // random UUID, like it would be for an invocation
                     timestamp: DateTime.now(),
                     level: 'error',
-                    message: `Error building inputs for event ${triggerGlobals.event.uuid}: ${error.message}`,
+                    message: `Error building inputs for trigger ${triggerGlobals.event?.uuid ?? hogFunction.id}: ${error.message}`,
                 })
 
                 metrics.push({
@@ -671,7 +671,7 @@ export class HogExecutorService {
                     messages.push(`Sync: ${formatNumber(execRes.state.syncDuration)}ms.`)
                     messages.push(`Mem: ${formatNumber(execRes.state.maxMemUsed / 1024)}kb.`)
                     messages.push(`Ops: ${execRes.state.ops}.`)
-                    messages.push(`Event: '${globals.event.url}'`)
+                    messages.push(`Event: '${globals.event?.url}'`)
 
                     hogFunctionStateMemory.observe(execRes.state.maxMemUsed / 1024)
 
@@ -681,7 +681,7 @@ export class HogExecutorService {
                             hogFunctionId: invocation.hogFunction.id,
                             hogFunctionName: invocation.hogFunction.name,
                             teamId: invocation.teamId,
-                            eventId: invocation.state.globals.event.url,
+                            eventId: invocation.state.globals.event?.url,
                             memoryUsedKb: execRes.state.maxMemUsed / 1024,
                         })
                     }

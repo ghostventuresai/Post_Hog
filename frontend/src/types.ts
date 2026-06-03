@@ -6801,7 +6801,9 @@ export type CyclotronJobInvocationGlobals = {
         name: string
         url: string
     }
-    event: {
+    // Not present for sources without a captured event (e.g. data-warehouse table rows,
+    // which expose their columns under `record` instead).
+    event?: {
         uuid: string
         event: string
         elements_chain: string
@@ -6810,6 +6812,8 @@ export type CyclotronJobInvocationGlobals = {
         timestamp: string
         url: string
     }
+    // A synced data-warehouse table row, keyed by column name. Set for data-warehouse-table sources.
+    record?: Record<string, any>
     person?: {
         id: string
         properties: Record<string, any>
