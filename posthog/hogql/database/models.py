@@ -1,3 +1,4 @@
+import copy
 import datetime
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,65 @@ if TYPE_CHECKING:
     from posthog.hogql.ast import LazyJoinType, SelectQuery
     from posthog.hogql.base import ConstantType
     from posthog.hogql.context import HogQLContext
+
+
+class _FrozenFields(dict):
+    """A table `fields` mapping that rejects in-place mutation.
+
+    The catalog is a process-wide shared singleton; this makes editing a shared table raise at the
+    call site instead of silently corrupting it. `model_copy(deep=True)` downgrades to a plain dict
+    (see `__deepcopy__`), so private clones from `Database.get_table()` stay editable.
+    """
+
+    __slots__ = ()
+
+    def _frozen(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError(
+            "HogQL catalog table fields are frozen (shared process-wide singleton); "
+            "take a mutable copy via Database.get_table(...) before editing."
+        )
+
+    __setitem__ = _frozen
+    __delitem__ = _frozen
+    pop = _frozen
+    popitem = _frozen
+    clear = _frozen
+    update = _frozen
+    setdefault = _frozen
+    __ior__ = _frozen
+
+    def __copy__(self) -> dict:
+        return dict(self)
+
+    def __deepcopy__(self, memo: dict) -> dict:
+        result: dict = {}
+        memo[id(self)] = result
+        for key, value in self.items():
+            result[copy.deepcopy(key, memo)] = copy.deepcopy(value, memo)
+        return result
+
+
+def freeze_table_tree(table: "FieldOrTable", _seen: set[int] | None = None) -> None:
+    # Recursively swap a catalog table's `fields` mappings (and those of nested virtual tables and
+    # lazy-join targets) for write-protected ones. Applied once at import to the shared root tables.
+    if _seen is None:
+        _seen = set()
+    if id(table) in _seen:
+        return
+    _seen.add(id(table))
+
+    fields = getattr(table, "fields", None)
+    if not isinstance(fields, dict) or isinstance(fields, _FrozenFields):
+        return
+
+    for value in fields.values():
+        if hasattr(value, "fields"):
+            freeze_table_tree(value, _seen)
+        join_table = getattr(value, "join_table", None)
+        if join_table is not None and hasattr(join_table, "fields"):
+            freeze_table_tree(join_table, _seen)
+
+    table.__dict__["fields"] = _FrozenFields(fields)
 
 
 class FieldOrTable(BaseModel):
@@ -188,6 +248,16 @@ class Table(FieldOrTable):
     workload: Optional[Workload] = None
     model_config = ConfigDict(extra="forbid")
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Block attribute writes on a frozen singleton (extends _FrozenFields' guard to attrs); clones
+        # carry a plain dict so stay writable, and model_copy sets __dict__ directly, bypassing this.
+        if type(self.__dict__.get("fields")) is _FrozenFields:
+            raise TypeError(
+                "HogQL catalog table is frozen (shared process-wide singleton); "
+                "take a mutable copy via Database.get_table(...) before editing."
+            )
+        super().__setattr__(name, value)
+
     def has_field(self, name: str | int) -> bool:
         return str(name) in self.fields
 
@@ -247,6 +317,14 @@ class TableNode(BaseModel):
         if self.table is None:
             raise ResolutionError(f"Table is not set at `{self.name}`")
 
+        return self.table
+
+    def ensure_materialized(self) -> FieldOrTable | None:
+        # Copy-on-write: clone a shared frozen table on first access so edits stay private; model_copy
+        # downgrades its frozen fields to a plain dict (see _FrozenFields.__deepcopy__). The freeze
+        # state is the only "needs cloning" signal, so there's no separate flag to keep in sync.
+        if isinstance(self.table, Table) and isinstance(self.table.fields, _FrozenFields):
+            self.table = self.table.model_copy(deep=True)
         return self.table
 
     # NOTE: This only returns True if the path we pass in
