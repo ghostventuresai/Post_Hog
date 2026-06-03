@@ -101,6 +101,7 @@ import {
     DASHBOARD_MIN_REFRESH_INTERVAL_MINUTES,
     IS_TEST_MODE,
     DEFAULT_AUTO_PREVIEW_TILE_LIMIT,
+    PREVIEW_REFRESH_DEBOUNCE_MS,
     QUICK_FILTER_DEBOUNCE_MS,
     SEARCH_PARAM_FILTERS_KEY,
     SEARCH_PARAM_QUERY_VARIABLES_KEY,
@@ -1028,7 +1029,6 @@ export const dashboardLogic = kea<dashboardLogicType>([
                     [shortId]: { errored: true, error, timer: state[shortId]?.timer || null },
                 }),
                 refreshDashboardItems: () => ({}),
-                abortQuery: () => ({}),
                 cancelDashboardRefresh: () => ({}),
             },
         ],
@@ -2312,6 +2312,14 @@ export const dashboardLogic = kea<dashboardLogicType>([
             }
         },
         refreshDashboardItems: async ({ action, forceRefresh }, breakpoint) => {
+            // Coalesce rapid filter/mode toggles — without this, every filter
+            // change tears down the in-flight abort controller and restarts
+            // every tile, leaving aborted requests surfacing as user-visible errors.
+            // Only debounce Preview actions; Refresh/Initial/Update should run immediately.
+            if (action === RefreshDashboardItemsAction.Preview) {
+                await breakpoint(PREVIEW_REFRESH_DEBOUNCE_MS)
+            }
+
             const dashboardRefreshStartTime = performance.now()
             const isInitialLoad =
                 action === DashboardLoadAction.InitialLoad || action === DashboardLoadAction.InitialLoadWithVariables
@@ -2418,6 +2426,10 @@ export const dashboardLogic = kea<dashboardLogicType>([
                     } catch (e: any) {
                         if (shouldCancelQuery(e)) {
                             console.warn(`Insight refresh cancelled for ${insight.short_id} due to abort signal:`, e)
+                            // Clear this tile's refresh state explicitly. abortQuery used to wipe
+                            // the entire refreshStatus map, which raced with the new refresh wave
+                            // and stranded its queued tiles in a stuck loading state.
+                            actions.setRefreshStatus(insight.short_id)
                             actions.abortQuery({ queryId, queryStartTime })
                             tilesAbortedCount++
                         } else {
