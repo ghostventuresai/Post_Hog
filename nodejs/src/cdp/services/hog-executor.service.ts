@@ -9,6 +9,7 @@ import { FetchOptions, FetchResponse, InvalidRequestError, SecureRequestError, f
 import { tryCatch } from '~/utils/try-catch'
 
 import { PluginsServerConfig } from '../../types'
+import { CohortMembershipResolver } from '../../utils/cohort-membership-resolver'
 import { parseJSON } from '../../utils/json-parse'
 import { logger } from '../../utils/logger'
 import { TeamManager } from '../../utils/team-manager'
@@ -28,7 +29,12 @@ import type {
 } from '../types'
 import { createAddLogFunction, destinationE2eLagMsSummary, sanitizeLogMessage } from '../utils'
 import { execHog } from '../utils/hog-exec'
-import { convertToHogFunctionFilterGlobal, filterFunctionInstrumented } from '../utils/hog-function-filtering'
+import {
+    FilterFunctionsProvider,
+    buildCohortFunctionsProvider,
+    convertToHogFunctionFilterGlobal,
+    filterFunctionInstrumented,
+} from '../utils/hog-function-filtering'
 import { createInvocation, createInvocationResult } from '../utils/invocation-utils'
 import { isNonFailureStatus } from '../utils/non-failure-status-codes'
 import { HogInputsService } from './hog-inputs.service'
@@ -185,7 +191,8 @@ export class HogExecutorService {
         private asyncContext: HogExecutorAsyncContext,
         private hogInputsService: HogInputsService,
         private emailService: EmailService,
-        private recipientTokensService: RecipientTokensService
+        private recipientTokensService: RecipientTokensService,
+        private cohortMembershipResolver: CohortMembershipResolver
     ) {}
 
     async buildInputsWithGlobals(
@@ -211,6 +218,15 @@ export class HogExecutorService {
         // TRICKY: The frontend generates filters matching the Clickhouse event type so we are converting back
         const filterGlobals = convertToHogFunctionFilterGlobal(triggerGlobals)
 
+        // Build lazy VM function providers
+        const functionProviders: FilterFunctionsProvider[] = [
+            buildCohortFunctionsProvider(
+                this.cohortMembershipResolver,
+                triggerGlobals.project.id,
+                triggerGlobals.person?.id
+            ),
+        ]
+
         const _filterHogFunction = async (
             hogFunction: HogFunctionType,
             filters: HogFunctionType['filters'],
@@ -220,6 +236,7 @@ export class HogExecutorService {
                 fn: hogFunction,
                 filters,
                 filterGlobals,
+                functionProviders,
             })
 
             // Add any generated metrics and logs to our collections

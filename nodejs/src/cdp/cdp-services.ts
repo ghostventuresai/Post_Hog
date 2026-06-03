@@ -5,6 +5,7 @@ import type { CommonConfig } from '../common/config'
 import { InternalCaptureService } from '../common/services/internal-capture'
 import { AppMetricsOutput, HogInvocationResultsOutput, LogEntriesOutput } from '../ingestion/common/outputs'
 import { IngestionOutputs } from '../ingestion/outputs/ingestion-outputs'
+import { CohortMembershipResolver } from '../utils/cohort-membership-resolver'
 import { KafkaProducerRegistry } from '../ingestion/outputs/kafka-producer-registry'
 import { PostgresRouter } from '../utils/db/postgres'
 import { logger } from '../utils/logger'
@@ -385,6 +386,7 @@ export function createCdpCoreServices(
         config.SITE_URL
     )
     const recipientTokensService = new RecipientTokensService(config.ENCRYPTION_SALT_KEYS, config.SITE_URL)
+    const cohortMembershipResolver = new CohortMembershipResolver(deps.postgres)
 
     const hogExecutor = new HogExecutorService(
         {
@@ -397,7 +399,8 @@ export function createCdpCoreServices(
         { teamManager: deps.teamManager, siteUrl: config.SITE_URL },
         hogInputsService,
         emailService,
-        recipientTokensService
+        recipientTokensService,
+        cohortMembershipResolver
     )
 
     const hogFunctionTemplateManager = new HogFunctionTemplateManagerService(deps.postgres)
@@ -414,6 +417,7 @@ export function createCdpCoreServices(
     const hogFlowExecutor = new HogFlowExecutorService(
         hogFlowFunctionsService,
         recipientPreferencesService,
+        cohortMembershipResolver,
         hogFlowDuplicateObserver
     )
 
