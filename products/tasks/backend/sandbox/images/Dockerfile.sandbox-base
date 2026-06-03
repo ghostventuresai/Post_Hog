@@ -1,5 +1,12 @@
 # Dockerfile for the base sandbox image.
 
+# uv (fast Python package manager) — pinned to an explicit version so rebuilds
+# are reproducible and supply-chain substitutions via :latest are caught at the
+# Dockerfile change level. The ARG must live before any FROM so it is visible
+# to the FROM uv-stage line below.
+ARG UV_VERSION=0.7.2
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-stage
+
 FROM ubuntu:24.04
 
 # Set environment variables to prevent interactive prompts
@@ -23,8 +30,10 @@ RUN apt-get update && \
     unzip \
     zip \
     jq \
+    tar \
     # Build tools
     build-essential \
+    cmake \
     pkg-config \
     # Languages and runtimes
     python3 \
@@ -47,6 +56,15 @@ RUN apt-get update && \
     tk-dev \
     libxml2-dev \
     libxmlsec1-dev \
+    # Remote access and terminal multiplexers
+    openssh-client \
+    tmux \
+    screen \
+    # Fast file search
+    ripgrep \
+    # Text processing (ensure available)
+    diffutils \
+    patch \
     # Other useful tools
     ca-certificates \
     gnupg \
@@ -58,8 +76,68 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install additional language package managers
-RUN npm install -g yarn pnpm typescript ts-node nodemon
+# Install additional language package managers (including Bun)
+RUN npm install -g yarn pnpm typescript ts-node nodemon bun
+
+# Install uv (copied from the version-pinned uv-stage at the top of this file)
+COPY --from=uv-stage /uv /uvx /usr/local/bin/
+
+# Install Go (with checksum verification against go.dev's official .sha256)
+ARG GO_VERSION=1.24.2
+RUN set -eu; \
+    ARCH=$(dpkg --print-architecture); \
+    GO_TARBALL="go${GO_VERSION}.linux-${ARCH}.tar.gz"; \
+    curl -fsSL "https://go.dev/dl/${GO_TARBALL}" -o "/tmp/${GO_TARBALL}"; \
+    EXPECTED=$(curl -fsSL "https://go.dev/dl/${GO_TARBALL}.sha256" | awk '{print $1}'); \
+    ACTUAL=$(sha256sum "/tmp/${GO_TARBALL}" | awk '{print $1}'); \
+    if [ "${EXPECTED}" != "${ACTUAL}" ]; then \
+        echo "Go SHA256 mismatch: expected ${EXPECTED}, got ${ACTUAL}" >&2; \
+        exit 1; \
+    fi; \
+    rm -rf /usr/local/go; \
+    tar -C /usr/local -xzf "/tmp/${GO_TARBALL}"; \
+    rm -f "/tmp/${GO_TARBALL}"
+ENV PATH="/usr/local/go/bin:$PATH"
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Install Java 21, Maven, Ruby, and PHP in a single apt layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openjdk-21-jdk-headless \
+        maven \
+        ruby-full \
+        php-cli \
+        php-mbstring \
+        php-xml \
+        php-curl \
+        php-zip && \
+    rm -rf /var/lib/apt/lists/* && \
+    gem install bundler
+
+# Install Gradle (with checksum verification against services.gradle.org's official .sha256)
+ARG GRADLE_VERSION=8.12
+RUN set -eu; \
+    curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip; \
+    EXPECTED=$(curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip.sha256" | awk '{print $1}'); \
+    ACTUAL=$(sha256sum /tmp/gradle.zip | awk '{print $1}'); \
+    if [ "${EXPECTED}" != "${ACTUAL}" ]; then \
+        echo "Gradle SHA256 mismatch: expected ${EXPECTED}, got ${ACTUAL}" >&2; \
+        exit 1; \
+    fi; \
+    unzip -d /opt /tmp/gradle.zip; \
+    ln -s "/opt/gradle-${GRADLE_VERSION}/bin/gradle" /usr/local/bin/gradle; \
+    rm /tmp/gradle.zip
+
+# Install Composer (with installer signature verification per Composer's official docs)
+RUN curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && \
+    EXPECTED_SIGNATURE="$(curl -fsSL https://composer.github.io/installer.sig)" && \
+    ACTUAL_SIGNATURE="$(php -r "echo hash_file('sha384', '/tmp/composer-setup.php');")" && \
+    [ "$EXPECTED_SIGNATURE" = "$ACTUAL_SIGNATURE" ] && \
+    php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && \
+    rm -f /tmp/composer-setup.php
 
 # Install GitHub CLI without adding another apt repository refresh.
 ARG GH_CLI_VERSION=2.92.0
@@ -131,6 +209,18 @@ WORKDIR /tmp/workspace
 
 RUN python3 --version && \
     node --version && \
-    npm --version
+    npm --version && \
+    bun --version && \
+    go version && \
+    rustc --version && \
+    cargo --version && \
+    java --version && \
+    mvn --version && \
+    gradle --version && \
+    ruby --version && \
+    bundler --version && \
+    php --version && \
+    composer --version && \
+    uv --version
 
 CMD ["/bin/bash"]
