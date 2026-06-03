@@ -27,6 +27,12 @@
         margin-bottom: 0.5em;
     }
 
+    // Inline <code>: monospace reads visually larger, so size it ~1px down.
+    // Keep it relative to local text; block code uses CodeSnippet sizing.
+    :not(pre) > code {
+        font-size: calc(1em - 1px);
+    }
+
     hr {
         margin: 1em 0;
     }
