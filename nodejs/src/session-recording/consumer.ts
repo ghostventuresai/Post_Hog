@@ -1,5 +1,5 @@
 import { S3Client, S3ClientConfig } from '@aws-sdk/client-s3'
-import { CODES, Message, TopicPartition, TopicPartitionOffset, features, librdkafkaVersion } from 'node-rdkafka'
+import { Assignment, Message, TopicPartition, TopicPartitionOffset, features, librdkafkaVersion } from 'node-rdkafka'
 
 import { instrumentFn } from '~/common/tracing/tracing-utils'
 
@@ -21,7 +21,8 @@ import {
     runSessionReplayPipeline,
 } from '../ingestion/session_replay'
 import { TopHog } from '../ingestion/tophog/tophog'
-import { KafkaConsumer } from '../kafka/consumer/consumer-v1'
+import { KafkaConsumerInterface, createKafkaConsumer } from '../kafka/consumer'
+import { EachBatchResult } from '../kafka/consumer/consumer-v2'
 import { getBlockEncryptor } from '../session-replay/shared/crypto'
 import { SessionFeatureStore } from '../session-replay/shared/features/session-feature-store'
 import { getKeyStore } from '../session-replay/shared/keystore'
@@ -35,7 +36,6 @@ import { HealthCheckResult, PluginServerService, RedisPool, ValueMatcher } from 
 import { PostgresRouter } from '../utils/db/postgres'
 import { EventIngestionRestrictionManager } from '../utils/event-ingestion-restrictions'
 import { logger } from '../utils/logger'
-import { captureException } from '../utils/posthog'
 import { PromiseScheduler } from '../utils/promise-scheduler'
 import { SessionRecordingApiConfig, SessionRecordingConfig, SessionReplayOutputsConfig } from './config'
 import { KafkaOffsetManager } from './kafka/offset-manager'
@@ -63,10 +63,9 @@ export type SessionRecordingIngesterConfig = SessionRecordingConfig &
     >
 
 export class SessionRecordingIngester {
-    kafkaConsumer: KafkaConsumer
+    kafkaConsumer: KafkaConsumerInterface
     topic: string
     consumerGroupId: string
-    totalNumPartitions = 0
     isStopping = false
 
     private isDebugLoggingEnabled: ValueMatcher<number>
@@ -108,12 +107,17 @@ export class SessionRecordingIngester {
 
         this.promiseScheduler = new PromiseScheduler()
 
-        this.kafkaConsumer = new KafkaConsumer({
+        // callEachBatchWhenEmpty=true so shouldFlush() is polled on the consume cadence
+        // — no separate wall-clock flush timer is needed under either v1 or v2.
+        // autoOffsetStore stays false because flush() drives offsetsStore() manually via
+        // KafkaOffsetManager.commit().
+        this.kafkaConsumer = createKafkaConsumer({
             topic: this.topic,
             groupId: this.consumerGroupId,
             callEachBatchWhenEmpty: true,
             autoCommit: true,
             autoOffsetStore: false,
+            onPartitionsRevoked: (partitions) => this.handlePartitionsRevoked(partitions),
         })
 
         this.redisPool = redisPool
@@ -228,7 +232,9 @@ export class SessionRecordingIngester {
         }
     }
 
-    public async handleEachBatch(messages: Message[]): Promise<void> {
+    public async handleEachBatch(messages: Message[]): Promise<EachBatchResult> {
+        // heartbeat() is a no-op on v2 (auto-driven by the consume loop) and updates v1's
+        // health watchdog. Calling it unconditionally is safe and uniform.
         this.kafkaConsumer.heartbeat()
 
         if (messages.length > 0) {
@@ -239,7 +245,10 @@ export class SessionRecordingIngester {
             })
         }
 
-        await instrumentFn(
+        // Both v1 and v2 understand `{ backgroundTask }` — they await it before storing
+        // offsets, apply backpressure, and drain it on REVOKE. The flush stays serialized
+        // against the next batch via `CONSUMER_MAX_BACKGROUND_TASKS` (default 1).
+        return instrumentFn(
             {
                 key: `recordingingesterv2.handleEachBatch`,
                 sendException: false,
@@ -248,7 +257,7 @@ export class SessionRecordingIngester {
         )
     }
 
-    private async processBatchMessages(messages: Message[]): Promise<void> {
+    private async processBatchMessages(messages: Message[]): Promise<EachBatchResult> {
         messages.forEach((message) => {
             SessionRecordingIngesterMetrics.incrementMessageReceived(message.partition)
         })
@@ -266,10 +275,15 @@ export class SessionRecordingIngester {
         this.kafkaConsumer.heartbeat()
 
         if (this.sessionBatchManager.shouldFlush()) {
-            await instrumentFn(`recordingingesterv2.handleEachBatch.flush`, async () =>
+            // Return the flush promise as the post-batch side effect. The consumer
+            // (v1 or v2) awaits this before storing offsets; KafkaOffsetManager.commit()
+            // inside flush() drives offsetsStore() via the existing commitOffsets callback.
+            const backgroundTask = instrumentFn(`recordingingesterv2.handleEachBatch.flush`, () =>
                 this.sessionBatchManager.flush()
             )
+            return { backgroundTask }
         }
+        return undefined
     }
 
     public async start(): Promise<void> {
@@ -286,38 +300,6 @@ export class SessionRecordingIngester {
         await this.fileStorage.checkHealth()
         await this.kafkaConsumer.connect((messages) => this.handleEachBatch(messages))
 
-        this.totalNumPartitions = (await this.kafkaConsumer.getPartitionsForTopic(this.topic)).length
-
-        this.kafkaConsumer.on('rebalance', async (err, topicPartitions) => {
-            logger.info('🔁', 'blob_ingester_consumer_v2 - rebalancing', { err, topicPartitions })
-            /**
-             * see https://github.com/Blizzard/node-rdkafka#rebalancing
-             *
-             * This event is received when the consumer group starts _or_ finishes rebalancing.
-             *
-             * NB if the partition assignment strategy changes then this code may need to change too.
-             * e.g. round-robin and cooperative strategies will assign partitions differently
-             */
-
-            if (err.code === CODES.ERRORS.ERR__ASSIGN_PARTITIONS) {
-                return
-            }
-
-            if (err.code === CODES.ERRORS.ERR__REVOKE_PARTITIONS) {
-                return this.promiseScheduler.schedule(this.onRevokePartitions(topicPartitions))
-            }
-
-            // We had a "real" error
-            logger.error('🔥', 'blob_ingester_consumer_v2 - rebalancing error', { err })
-            captureException(err)
-            // TODO: immediately die? or just keep going?
-        })
-
-        // nothing happens here unless we configure SESSION_RECORDING_KAFKA_CONSUMPTION_STATISTICS_EVENT_INTERVAL_MS
-        this.kafkaConsumer.on('event.stats', (stats) => {
-            logger.info('🪵', 'blob_ingester_consumer_v2 - kafka stats', { stats })
-        })
-
         // Start periodic flushing of TopHog metrics
         this.topHog.start()
     }
@@ -329,11 +311,19 @@ export class SessionRecordingIngester {
         // Stop TopHog and flush final metrics
         await this.topHog.stop()
 
-        const assignedPartitions = this.assignedTopicPartitions
         await this.kafkaConsumer.disconnect()
 
-        void this.promiseScheduler.schedule(this.onRevokePartitions(assignedPartitions))
-
+        // Disconnect semantics differ between v1 and v2:
+        // - v1 fires its rebalance handler on the final REVOKE, which invokes
+        //   onPartitionsRevoked → handlePartitionsRevoked → discardPartitions.
+        // - v2's disconnect sets running=false; the final REVOKE from librdkafka is
+        //   handled inline in rebalanceCallback's `if (!this.running)` short-circuit,
+        //   which calls incrementalUnassign but bypasses invokeLifecycleCallback.
+        //   handlePartitionsRevoked does NOT run on v2 shutdown. This is functionally
+        //   safe — drainAll('shutdown') has already settled in-flight flushes, and the
+        //   process is exiting so abandoning the in-memory session buffer is fine.
+        // The promiseScheduler is kept around for any in-flight pipeline side effects
+        // (handleIngestionWarnings, etc.).
         const promiseResults = await this.promiseScheduler.waitForAllSettled()
 
         this.keyStore.stop()
@@ -358,17 +348,17 @@ export class SessionRecordingIngester {
         return this.assignedTopicPartitions.map((x) => x.partition)
     }
 
-    private onRevokePartitions(topicPartitions: TopicPartition[]): Promise<void> {
-        /**
-         * The revoke_partitions indicates that the consumer group has had partitions revoked.
-         * As a result, we need to drop all sessions currently managed for the revoked partitions
-         */
-
-        const revokedPartitions = topicPartitions.map((x) => x.partition)
+    /**
+     * Lifecycle callback fired by the consumer when partitions are revoked. Drops
+     * buffered sessions for the revoked partitions so the new owner re-reads them from
+     * Kafka. v2 awaits this between drain and unassign; v1 fires it fire-and-forget.
+     * Local in-memory cleanup is safe under either semantic.
+     */
+    private handlePartitionsRevoked(partitions: Assignment[]): Promise<void> {
+        const revokedPartitions = partitions.map((p) => p.partition)
         if (!revokedPartitions.length) {
             return Promise.resolve()
         }
-
         SessionRecordingIngesterMetrics.resetSessionsHandled()
         this.sessionBatchManager.discardPartitions(revokedPartitions)
         return Promise.resolve()
