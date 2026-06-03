@@ -587,8 +587,8 @@ class TestSetupActionTokenCheck:
         _write(tmp_path, "wf.yml", _setup_step(_SETUP_UV, "version: '0.11.14'"))
         assert SetupActionTokenCheck().run(_read_all(tmp_path)).issues == []
 
-    def test_is_non_blocking(self) -> None:
-        assert SetupActionTokenCheck().blocking is False
+    def test_is_blocking(self) -> None:
+        assert SetupActionTokenCheck().blocking is True
 
 
 # ---------------------------------------------------------------------------
