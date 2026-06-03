@@ -21,6 +21,7 @@ from products.web_analytics.backend.hogql_queries.web_analytics_query_runner imp
 from products.web_analytics.backend.hogql_queries.web_overview_lazy_precompute import (
     can_use_lazy_precompute,
     execute_lazy_precomputed_read,
+    execute_lazy_precomputed_sparkline,
 )
 from products.web_analytics.backend.hogql_queries.web_overview_pre_aggregated import (
     WebOverviewPreAggregatedQueryBuilder,
@@ -88,6 +89,26 @@ class WebOverviewQueryRunner(WebAnalyticsQueryRunner[WebOverviewQueryResponse]):
             return None
         return execute_lazy_precomputed_read(self)
 
+    def get_lazy_precomputed_sparkline(self) -> Optional[dict[str, list[float]]]:
+        """Per-day series for each metric, read from the lazy precompute table. Only runs when the
+        query requested sparklines and the lazy precompute path is eligible; otherwise returns None
+        and the frontend falls back to a raw trends query. Conversion goals are unsupported."""
+        if not self.query.includeSparkline or self.query.conversionGoal:
+            return None
+        if not can_use_lazy_precompute(self):
+            return None
+        return execute_lazy_precomputed_sparkline(self)
+
+    def _attach_sparkline(self, results: list[dict]) -> list[dict]:
+        sparkline = self.get_lazy_precomputed_sparkline()
+        if not sparkline:
+            return results
+        for item in results:
+            series = sparkline.get(item["key"])
+            if series is not None:
+                item["series"] = series
+        return results
+
     def _build_response_from_row(
         self,
         row: list,
@@ -115,7 +136,7 @@ class WebOverviewQueryRunner(WebAnalyticsQueryRunner[WebOverviewQueryResponse]):
         ]
 
         return WebOverviewQueryResponse(
-            results=results,
+            results=self._attach_sparkline(results),
             samplingRate=self._sample_rate,
             modifiers=self.modifiers,
             dateFrom=self.query_date_range.date_from_str,
