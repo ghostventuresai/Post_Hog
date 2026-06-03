@@ -116,7 +116,13 @@ export function getToolbarBuildConfig(dirname) {
         entryPoints: ['src/toolbar/index.tsx'],
         format: 'iife',
         outfile: path.resolve(dirname, 'dist', 'toolbar.js'),
-        banner: { js: 'var __posthogToolbarModule = (function () { var define = undefined;' },
+        // The IIFE wrapper shadows `define` and `require` inside the closure so any
+        // UMD/CJS factory code that survives bundling (e.g. transitive vendored deps)
+        // takes the global-assignment branch instead of throwing
+        // `ReferenceError: require is not defined` on customer sites. Customer pages
+        // that legitimately load AMD/CJS shims on the same page are unaffected
+        // because the shadowing is scoped to the toolbar's own IIFE.
+        banner: { js: 'var __posthogToolbarModule = (function () { var define = undefined; var require = undefined;' },
         footer: { js: 'return __posthogToolbarModule })();' },
         publicPath: isDev ? '/static/' : toolbarPublicPathOverride || 'https://us.posthog.com/static/',
         // Inject TOOLBAR_PUBLIC_PATH at build time as a bare global so runtime
