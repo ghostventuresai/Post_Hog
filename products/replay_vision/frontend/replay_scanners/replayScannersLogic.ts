@@ -127,8 +127,8 @@ export const replayScannersLogic = kea<replayScannersLogicType>([
             try {
                 const response = await visionScannersList(String(teamId))
                 actions.loadScannersSuccess(scannersFromApi(response.results ?? []))
-            } catch (error) {
-                lemonToast.error(`Failed to load scanners: ${String(error)}`)
+            } catch (error: any) {
+                lemonToast.error(error.detail || 'Failed to load scanners')
                 actions.loadScannersFailure(String(error))
             }
         },
@@ -142,8 +142,8 @@ export const replayScannersLogic = kea<replayScannersLogicType>([
                 await visionScannersDestroy(String(teamId), id)
                 actions.deleteScannerSuccess(id)
                 lemonToast.success('Scanner deleted')
-            } catch (error) {
-                lemonToast.error(`Failed to delete scanner: ${String(error)}`)
+            } catch (error: any) {
+                lemonToast.error(error.detail || 'Failed to delete scanner')
             }
         },
 
@@ -173,8 +173,8 @@ export const replayScannersLogic = kea<replayScannersLogicType>([
             try {
                 const response = await visionScannersCreate(String(teamId), scannerToApiBody(duplicate))
                 actions.duplicateScannerSuccess(scannerFromApi(response))
-            } catch (error) {
-                lemonToast.error(`Failed to duplicate scanner: ${String(error)}`)
+            } catch (error: any) {
+                lemonToast.error(error.detail || 'Failed to duplicate scanner')
             }
         },
 
@@ -192,8 +192,9 @@ export const replayScannersLogic = kea<replayScannersLogicType>([
             try {
                 await visionScannersPartialUpdate(String(teamId), id, { enabled: scanner.enabled })
                 actions.toggleScannerEnabledDone(id)
-            } catch (error) {
-                lemonToast.error(`Failed to ${scanner.enabled ? 'enable' : 'disable'} scanner: ${String(error)}`)
+            } catch (error: any) {
+                const verb = scanner.enabled ? 'enable' : 'disable'
+                lemonToast.error(error.detail || `Failed to ${verb} scanner`)
                 actions.revertScannerEnabled(id)
             }
         },
