@@ -280,6 +280,14 @@ class FullUsageReport(OrgReport, InstanceMetadata):
     pass
 
 
+def _billing_sync_execute(*args: Any, **kwargs: Any) -> Any:
+    # Usage-report and quota-limiting queries are billing infrastructure jobs, so they run as the
+    # dedicated billing ClickHouse user (resource isolation, kill-switch exemption). The per-query
+    # product tags stay as-is for observability. Callers can still override ch_user explicitly.
+    kwargs.setdefault("ch_user", ClickHouseUser.BILLING)
+    return sync_execute(*args, **kwargs)
+
+
 def fetch_table_size(table_name: str) -> int:
     return fetch_sql("SELECT pg_total_relation_size(%s) as size", (table_name,))[0].size
 
@@ -484,7 +492,7 @@ def _execute_split_query(
         split_params["end"] = split_end
 
         # Execute the query for this time split
-        split_result = sync_execute(
+        split_result = _billing_sync_execute(
             query_template,
             split_params,
             workload=Workload.OFFLINE,
@@ -607,7 +615,7 @@ def get_teams_with_billable_enhanced_persons_event_count_in_period(
 @retry(tries=QUERY_RETRIES, delay=QUERY_RETRY_DELAY, backoff=QUERY_RETRY_BACKOFF)
 def get_teams_with_event_count_with_groups_in_period(begin: datetime, end: datetime) -> list[tuple[int, int]]:
     with tags_context(product=Product.GROUP_ANALYTICS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, count(1) as count
             FROM events
@@ -728,7 +736,7 @@ def get_teams_with_recording_count_in_period(
         product=Product.MOBILE_REPLAY if snapshot_source == "mobile" else Product.REPLAY,
         feature=Feature.USAGE_REPORT,
     ):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, count(distinct session_id) as count
             FROM (
@@ -770,7 +778,7 @@ def get_teams_with_zero_duration_recording_count_in_period(begin: datetime, end:
     previous_begin = begin - (end - begin)
 
     with tags_context(product=Product.REPLAY, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, count(distinct session_id) as count
             FROM (
@@ -807,7 +815,7 @@ def get_teams_with_mobile_billable_recording_count_in_period(begin: datetime, en
     previous_begin = begin - (end - begin)
 
     with tags_context(product=Product.MOBILE_REPLAY, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, count(distinct session_id) as count
             FROM (
@@ -862,7 +870,7 @@ def get_teams_with_api_queries_metrics(
         feature=Feature.USAGE_REPORT,
         usage_report="get_teams_with_api_queries_metrics",
     ):
-        results = sync_execute(
+        results = _billing_sync_execute(
             query,
             {
                 "begin": begin,
@@ -909,7 +917,7 @@ def get_teams_with_query_metric(
         GROUP BY team_id
     """
     with tags_context(product=Product.PRODUCT_ANALYTICS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             query,
             {
                 "begin": begin,
@@ -935,7 +943,7 @@ def get_teams_with_feature_flag_requests_count_in_period(
     target_event = "decide usage" if request_type == FlagRequestType.DECIDE else "local evaluation usage"
 
     with tags_context(product=Product.FEATURE_FLAGS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT distinct_id as team, sum(JSONExtractInt(properties, 'count')) as sum
             FROM events
@@ -971,7 +979,7 @@ def get_teams_with_feature_flag_requests_sdk_breakdown_in_period(
     target_event = "decide usage" if request_type == FlagRequestType.DECIDE else "local evaluation usage"
 
     with tags_context(product=Product.FEATURE_FLAGS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT
                 distinct_id as team,
@@ -1045,7 +1053,7 @@ def get_teams_with_survey_responses_count_in_period(
         params["product_tour_survey_ids"] = [str(sid) for sid in product_tour_survey_ids]
 
     with tags_context(product=Product.SURVEYS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             query,
             params,
             workload=Workload.OFFLINE,
@@ -1061,7 +1069,7 @@ def get_teams_with_ai_event_count_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.LLM_ANALYTICS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, COUNT() as count
             FROM events
@@ -1155,7 +1163,7 @@ def get_teams_with_ai_credits_used_in_period(
     with tags_context(
         product=Product.MAX_AI, feature=Feature.USAGE_REPORT, usage_report="ai_credits", kind="usage_report"
     ):
-        results = sync_execute(
+        results = _billing_sync_execute(
             """
             WITH trace_analysis AS (
                 WITH %(excluded_tools)s AS excluded_tools
@@ -1435,7 +1443,7 @@ def get_teams_with_exceptions_captured_in_period(
 
     with tags_context(product=Product.ERROR_TRACKING, feature=Feature.USAGE_REPORT):
         # nosemgrep: clickhouse-fstring-param-audit - lib_expression from internal materialized column helper
-        results = sync_execute(
+        results = _billing_sync_execute(
             f"""
             SELECT
                 team_id,
@@ -1497,7 +1505,7 @@ def get_teams_with_hog_function_calls_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.PIPELINE_DESTINATIONS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1518,7 +1526,7 @@ def get_teams_with_hog_function_fetch_calls_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.PIPELINE_DESTINATIONS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1539,7 +1547,7 @@ def get_teams_with_cdp_billable_invocations_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.PIPELINE_DESTINATIONS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1564,7 +1572,7 @@ def get_teams_with_recording_bytes_in_period(
         product=Product.MOBILE_REPLAY if snapshot_source == "mobile" else Product.REPLAY,
         feature=Feature.USAGE_REPORT,
     ):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, sum(total_size) as bytes
             FROM (
@@ -1635,7 +1643,7 @@ def get_teams_with_workflow_emails_sent_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.WORKFLOWS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1656,7 +1664,7 @@ def get_teams_with_workflow_push_sent_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.WORKFLOWS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1677,7 +1685,7 @@ def get_teams_with_workflow_sms_sent_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.WORKFLOWS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1698,7 +1706,7 @@ def get_teams_with_workflow_billable_invocations_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.WORKFLOWS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1719,7 +1727,7 @@ def get_teams_with_logs_bytes_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.LOGS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
@@ -1740,7 +1748,7 @@ def get_teams_with_logs_records_in_period(
     end: datetime,
 ) -> list[tuple[int, int]]:
     with tags_context(product=Product.LOGS, feature=Feature.USAGE_REPORT):
-        return sync_execute(
+        return _billing_sync_execute(
             """
             SELECT team_id, SUM(count) as count
             FROM app_metrics2
