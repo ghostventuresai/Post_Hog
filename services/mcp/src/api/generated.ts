@@ -30746,8 +30746,11 @@ export namespace Schemas {
          * @maximum 43200
          */
       run_interval_minutes?: number;
-      /** When the coordinator last dispatched this scout. Null if it has never run. */
-      readonly last_run_at?: string;
+      /**
+         * When the coordinator last dispatched this scout. Null if it has never run.
+         * @nullable
+         */
+      readonly last_run_at?: string | null;
       readonly created_at?: string;
     }
 
@@ -36895,8 +36898,11 @@ export namespace Schemas {
          * @maximum 43200
          */
       run_interval_minutes?: number;
-      /** When the coordinator last dispatched this scout. Null if it has never run. */
-      readonly last_run_at: string;
+      /**
+         * When the coordinator last dispatched this scout. Null if it has never run.
+         * @nullable
+         */
+      readonly last_run_at: string | null;
       readonly created_at: string;
     }
 
