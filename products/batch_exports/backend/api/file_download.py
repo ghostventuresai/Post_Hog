@@ -13,7 +13,7 @@ import boto3
 import structlog
 from botocore.client import Config
 from botocore.exceptions import ClientError
-from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema, extend_schema_field
 from rest_framework import mixins, response, serializers, status, viewsets
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 
@@ -60,44 +60,76 @@ class FileDownloadDestinationFileConfigSerializer(serializers.Serializer):
     )
 
 
-class FileDownloadEventsRequestSerializer(serializers.Serializer):
-    """Typed configuration for the events model."""
+class FileDownloadEventsModelSerializer(serializers.Serializer):
+    """Events model, with optional event-name filters."""
 
-    file = FileDownloadDestinationFileConfigSerializer()
-    model = serializers.ChoiceField(choices=["events"])
+    type = serializers.ChoiceField(choices=["events"])
     include = serializers.ListField(child=serializers.CharField(), required=False)
     exclude = serializers.ListField(child=serializers.CharField(), required=False)
-    data_interval_start = serializers.DateTimeField(default_timezone=dt.UTC)
-    data_interval_end = serializers.DateTimeField(default_timezone=dt.UTC)
 
 
-class FileDownloadPersonsRequestSerializer(serializers.Serializer):
-    """Typed configuration for the persons model."""
+class FileDownloadPersonsModelSerializer(serializers.Serializer):
+    """Persons model."""
 
-    file = FileDownloadDestinationFileConfigSerializer()
-    model = serializers.ChoiceField(choices=["persons"])
-    data_interval_start = serializers.DateTimeField(default_timezone=dt.UTC)
-    data_interval_end = serializers.DateTimeField(default_timezone=dt.UTC)
+    type = serializers.ChoiceField(choices=["persons"])
 
 
-class FileDownloadSessionsRequestSerializer(serializers.Serializer):
-    """Typed configuration for the sessions model."""
+class FileDownloadSessionsModelSerializer(serializers.Serializer):
+    """Sessions model."""
 
-    file = FileDownloadDestinationFileConfigSerializer()
-    model = serializers.ChoiceField(choices=["sessions"])
-    data_interval_start = serializers.DateTimeField(default_timezone=dt.UTC)
-    data_interval_end = serializers.DateTimeField(default_timezone=dt.UTC)
+    type = serializers.ChoiceField(choices=["sessions"])
+
+
+_FILE_DOWNLOAD_MODEL_SERIALIZERS: dict[str, type[serializers.Serializer]] = {
+    "events": FileDownloadEventsModelSerializer,
+    "persons": FileDownloadPersonsModelSerializer,
+    "sessions": FileDownloadSessionsModelSerializer,
+}
+
+
+@extend_schema_field(
+    PolymorphicProxySerializer(
+        component_name="FileDownloadModel",
+        serializers={
+            "events": FileDownloadEventsModelSerializer,
+            "persons": FileDownloadPersonsModelSerializer,
+            "sessions": FileDownloadSessionsModelSerializer,
+        },
+        resource_type_field_name="type",
+    )
+)
+class FileDownloadModelField(serializers.Field):
+    """Discriminated union over the export model, nested so the request stays a plain object.
+
+    The Anthropic API (and other strict MCP clients) reject a top-level
+    `anyOf`/`oneOf`/`allOf`, so the polymorphism lives one level down: the value is
+    an object whose `type` selects the variant. Only `events` carries `include` /
+    `exclude` event-name filters.
+    """
+
+    def to_internal_value(self, data: dict) -> dict:
+        if not isinstance(data, dict):
+            raise ValidationError("Expected an object describing the model to export.")
+
+        model_type = data.get("type")
+        if not isinstance(model_type, str) or model_type not in _FILE_DOWNLOAD_MODEL_SERIALIZERS:
+            raise ValidationError(
+                {"type": f"Unknown model type. Expected one of {sorted(_FILE_DOWNLOAD_MODEL_SERIALIZERS)}."}
+            )
+
+        serializer = _FILE_DOWNLOAD_MODEL_SERIALIZERS[model_type](data=data)
+        serializer.is_valid(raise_exception=True)
+        return dict(serializer.validated_data)
+
+    def to_representation(self, value: dict) -> dict:
+        return value
 
 
 class FileDownloadBatchExportOnDemandSerializer(serializers.Serializer):
     """Request shape for a FileDownload batch export on demand."""
 
     file = FileDownloadDestinationFileConfigSerializer()
-    model = serializers.ChoiceField(choices=["events", "persons", "sessions"])
-
-    # Only specific to events
-    include = serializers.ListField(child=serializers.CharField(), required=False)
-    exclude = serializers.ListField(child=serializers.CharField(), required=False)
+    model = FileDownloadModelField()
 
     # Run attributes
     data_interval_start = serializers.DateTimeField(default_timezone=dt.UTC)
@@ -128,15 +160,16 @@ class FileDownloadBatchExportOnDemandSerializer(serializers.Serializer):
         data_interval_start = validated_data.pop("data_interval_start")
         data_interval_end = validated_data.pop("data_interval_end")
 
-        model = validated_data["model"]
-        if (include := validated_data.pop("include", None)) is not None and model == "events":
-            config["include_events"] = include
-
-        if (exclude := validated_data.pop("exclude", None)) is not None and model == "events":
-            config["exclude_events"] = exclude
+        model_spec = validated_data.pop("model")
+        model = model_spec["type"]
+        if model == "events":
+            if (include := model_spec.get("include")) is not None:
+                config["include_events"] = include
+            if (exclude := model_spec.get("exclude")) is not None:
+                config["exclude_events"] = exclude
 
         destination = BatchExportDestination(type=BatchExportDestination.Destination.FILE_DOWNLOAD, config=config)
-        batch_export = BatchExportOnDemand(team_id=team_id, destination=destination, **validated_data)
+        batch_export = BatchExportOnDemand(team_id=team_id, destination=destination, model=model)
         batch_export_run = BatchExportRun(
             status=BatchExportRun.Status.STARTING,
             batch_export_on_demand=batch_export,
@@ -240,15 +273,7 @@ class FileDownloadBatchExportOnDemandViewSet(
         return FileDownloadBatchExportOnDemandSerializer
 
     @extend_schema(
-        request=PolymorphicProxySerializer(
-            component_name="CreateFileDownloadRequest",
-            serializers={
-                "events": FileDownloadEventsRequestSerializer,
-                "persons": FileDownloadPersonsRequestSerializer,
-                "sessions": FileDownloadSessionsRequestSerializer,
-            },
-            resource_type_field_name="model",
-        ),
+        request=FileDownloadBatchExportOnDemandSerializer,
         responses={202: CreateOutputSerializer},
     )
     def create(self, request, *args, **kwargs):
