@@ -3,6 +3,7 @@ import types
 import typing
 import datetime as dt
 from dataclasses import Field, asdict, dataclass, fields
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 from django.conf import settings
@@ -11,6 +12,7 @@ import structlog
 import temporalio
 import temporalio.common
 from asgiref.sync import async_to_sync
+from temporalio.api.common.v1 import Payload
 from temporalio.client import (
     Client,
     Schedule,
@@ -879,6 +881,7 @@ async def start_backfill_batch_export_workflow(
         inputs,
         id=workflow_id,
         task_queue=settings.BATCH_EXPORTS_TASK_QUEUE,
+        memo=_build_batch_export_memo(workflow_id=workflow_id),
     )
 
     return workflow_id
@@ -1091,6 +1094,55 @@ def _get_schedule_spec(batch_export: BatchExport) -> ScheduleSpec:
         )
 
 
+def _build_batch_export_memo(workflow_id: str) -> dict[str, Payload] | None:
+    """Build a memo with a logs URL for a batch export workflow.
+
+    Returns None if TEMPORAL_LOGS_PROJECT_ID is not configured.
+
+    Memo values are returned as pre-encoded ``Payload`` objects with
+    ``encoding: json/plain``. The Temporal Python SDK treats already-encoded
+    memo values as opaque and does not run the ``payload_codec`` on them, so
+    passing a Payload here bypasses ``EncryptionCodec``. This lets the
+    Temporal UI render the memo without a codec server.
+    """
+    project_id = settings.TEMPORAL_LOGS_PROJECT_ID
+    if not project_id:
+        return None
+
+    base_url = f"{settings.SITE_URL}/project/{project_id}/logs"
+    filter_group = json.dumps(
+        {
+            "type": "AND",
+            "values": [
+                {
+                    "type": "AND",
+                    "values": [
+                        {
+                            "key": "workflow_id",
+                            "value": [workflow_id],
+                            "operator": "exact",
+                            "type": "log_attribute",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    query_string = urlencode(
+        {
+            "serviceNames": json.dumps(["temporal-worker-batch-exports"]),
+            "filterGroup": filter_group,
+        },
+        quote_via=quote,
+    )
+    return {
+        "logs_url": Payload(
+            metadata={"encoding": b"json/plain"},
+            data=json.dumps(f"{base_url}?{query_string}").encode(),
+        ),
+    }
+
+
 def sync_batch_export(batch_export: BatchExport, created: bool):
     workflow, workflow_inputs = DESTINATION_WORKFLOWS[batch_export.destination.type]
     state = ScheduleState(
@@ -1146,6 +1198,7 @@ def sync_batch_export(batch_export: BatchExport, created: bool):
                 maximum_attempts=2,
                 non_retryable_error_types=["ActivityError", "ApplicationError", "CancelledError"],
             ),
+            memo=_build_batch_export_memo(workflow_id=str(batch_export.id)),
         ),
         spec=_get_schedule_spec(batch_export),
         state=state,
