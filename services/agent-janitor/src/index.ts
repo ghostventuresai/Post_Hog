@@ -27,7 +27,9 @@ import {
     PgRevisionStore,
     PgSessionQueue,
     S3BundleStore,
+    S3JsonlTabularStore,
     S3MemoryStore,
+    TabularStore,
 } from '@posthog/agent-shared'
 
 import { loadAgentJanitorConfig } from './config'
@@ -100,6 +102,9 @@ async function main(): Promise<void> {
     // /memory/* endpoints (503), keeping local dev that hasn't wired
     // SeaweedFS bootable.
     let memoryStore: MemoryStore | undefined
+    // Tabular store shares the memory S3 client + bucket (agent_tables prefix);
+    // serves the console Tables view via /tables/* routes.
+    let tabularStore: TabularStore | undefined
     if (config.memoryS3Bucket && config.memoryS3Endpoint) {
         const s3 = new S3Client({
             endpoint: config.memoryS3Endpoint,
@@ -118,6 +123,7 @@ async function main(): Promise<void> {
             bucket: config.memoryS3Bucket,
             bucketPrefix: config.memoryS3Prefix,
         })
+        tabularStore = new S3JsonlTabularStore({ client: s3, bucket: config.memoryS3Bucket, bucketPrefix: 'agent_tables' })
         log.info(
             { bucket: config.memoryS3Bucket, endpoint: config.memoryS3Endpoint, prefix: config.memoryS3Prefix },
             'memory.s3.enabled'
@@ -132,6 +138,7 @@ async function main(): Promise<void> {
         revisions,
         bundles,
         memoryStore,
+        tabularStore,
         internalSecret: config.internalSecret,
     })
     app.listen(config.port, () => {

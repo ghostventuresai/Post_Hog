@@ -80,6 +80,21 @@ def _with_auth(spec: dict) -> dict:
                 "triggers": [{"type": "mcp", "config": {}}],
             },
         ),
+        # External MCP ref with a mix of bare-string and object tool entries,
+        # all distinct names — accepted.
+        (
+            "external_mcp_unique_tools",
+            {
+                "model": "x",
+                "mcps": [
+                    {
+                        "id": "linear",
+                        "url": "https://mcp.linear.app/sse",
+                        "tools": ["list-issues", {"name": "create-issue", "requires_approval": True}],
+                    }
+                ],
+            },
+        ),
         # Registry-pin shapes the freeze pipeline resolves: a skill carrying
         # `from_template` + `alias` (+ optional `version`) alongside the
         # runtime id/path, and a `custom_template` tool ref. Before these
@@ -153,6 +168,39 @@ def test_validate_spec_accepts_valid_payloads(name: str, spec: dict) -> None:
             "cron_missing_schedule",
             {"model": "x", "triggers": [{"type": "cron", "config": {"timezone": "UTC"}}]},
             "triggers.0",
+        ),
+        # Duplicate tool names in `mcps[].external.tools[]` — JSON Schema can't
+        # express this across the string/object union, so the Python-level
+        # check mirrors the zod `.refine()`. Bare-string vs bare-string.
+        (
+            "external_mcp_duplicate_tool_strings",
+            {
+                "model": "x",
+                "mcps": [
+                    {
+                        "id": "linear",
+                        "url": "https://mcp.linear.app/sse",
+                        "tools": ["create-issue", "create-issue"],
+                    }
+                ],
+            },
+            "unique names",
+        ),
+        # Bare-string colliding with an object of the same name — the case
+        # JSON Schema's `uniqueItems` would miss entirely.
+        (
+            "external_mcp_duplicate_tool_string_and_object",
+            {
+                "model": "x",
+                "mcps": [
+                    {
+                        "id": "linear",
+                        "url": "https://mcp.linear.app/sse",
+                        "tools": ["create-issue", {"name": "create-issue", "requires_approval": True}],
+                    }
+                ],
+            },
+            "unique names",
         ),
         # The exact drift that poisoned the cron sweep: a cron trigger without
         # the now-required `prompt` (or `name`). The node schema rejects these
