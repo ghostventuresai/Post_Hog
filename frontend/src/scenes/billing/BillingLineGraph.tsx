@@ -4,8 +4,7 @@ import 'chartjs-adapter-dayjs-3'
 
 import annotationPlugin from 'chartjs-plugin-annotation'
 import { useValues } from 'kea'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Root, createRoot } from 'react-dom/client'
+import { useEffect, useRef, useState } from 'react'
 
 import { IconInfo } from '@posthog/icons'
 
@@ -14,7 +13,6 @@ import { getSeriesColor } from 'lib/colors'
 import { getGraphColors } from 'lib/colors'
 import { Dayjs } from 'lib/dayjs'
 import { useChart } from 'lib/hooks/useChart'
-import { useOnMountEffect } from 'lib/hooks/useOnMountEffect'
 import { Tooltip } from 'lib/lemon-ui/Tooltip'
 
 import { themeLogic } from '~/layout/navigation-3000/themeLogic'
@@ -22,6 +20,7 @@ import { themeLogic } from '~/layout/navigation-3000/themeLogic'
 // eslint-disable-next-line import/no-cycle
 import { BillingLineGraphTooltip } from './BillingLineGraphTooltip'
 import { useBillingMarkersPositioning } from './useBillingMarkersPositioning'
+import { useBillingTooltip } from './useBillingTooltip'
 
 Chart.register(annotationPlugin)
 
@@ -50,46 +49,6 @@ export interface BillingLineGraphProps {
 }
 
 const defaultFormatter = (value: number): string => value.toLocaleString()
-
-function useBillingTooltip(): {
-    ensureBillingTooltip: () => [Root, HTMLElement]
-    hideBillingTooltip: () => void
-} {
-    const tooltipElRef = useRef<HTMLElement | null>(null)
-    const tooltipRootRef = useRef<Root | null>(null)
-
-    const ensureBillingTooltip = useCallback((): [Root, HTMLElement] => {
-        if (!tooltipElRef.current) {
-            tooltipElRef.current = document.createElement('div')
-            tooltipElRef.current.id = 'BillingTooltipWrapper'
-            tooltipElRef.current.className =
-                'BillingTooltipWrapper hidden absolute z-10 p-2 bg-bg-light rounded shadow-md text-xs pointer-events-none border border-border'
-            document.body.appendChild(tooltipElRef.current)
-        }
-        if (!tooltipRootRef.current) {
-            tooltipRootRef.current = createRoot(tooltipElRef.current)
-        }
-        return [tooltipRootRef.current, tooltipElRef.current]
-    }, [])
-
-    const hideBillingTooltip = useCallback((): void => {
-        if (tooltipElRef.current) {
-            tooltipElRef.current.classList.add('hidden')
-            tooltipElRef.current.classList.remove('block')
-        }
-    }, [])
-
-    useOnMountEffect(() => {
-        return () => {
-            if (tooltipRootRef.current) {
-                tooltipRootRef.current.unmount()
-            }
-            tooltipElRef.current?.remove()
-        }
-    })
-
-    return { ensureBillingTooltip, hideBillingTooltip }
-}
 
 export function SeriesColorDot({ colorIndex }: { colorIndex: number }): JSX.Element {
     return <div className={`series-color-dot series-color-dot-${colorIndex % 15}`} />
