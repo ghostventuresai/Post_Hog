@@ -33,6 +33,7 @@ from ee.hogai.tools import (
     TodoWriteTool,
 )
 from ee.hogai.tools.call_mcp_server.tool import CallMCPServerTool
+from ee.hogai.tools.edit_notebook import EditNotebookTool
 from ee.hogai.tools.finalize_plan.tool import FinalizePlanTool
 from ee.hogai.utils.feature_flags import (
     get_llm_gateway_variant,
@@ -52,6 +53,7 @@ DEFAULT_TOOLS: list[type[MaxTool]] = [
     SwitchModeTool,
     CreateFormTool,
     CreateNotebookTool,
+    EditNotebookTool,
     ListLLMSkillsTool,
     GetLLMSkillTool,
     GetLLMSkillFileTool,

@@ -493,6 +493,7 @@ export type AssistantTool =
     | 'upsert_dashboard'
     | 'manage_memories'
     | 'create_notebook'
+    | 'edit_notebook'
     | 'list_data'
     | 'upsert_alert'
     | 'finalize_plan'

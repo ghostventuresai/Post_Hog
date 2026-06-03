@@ -13,8 +13,9 @@ import submitFeedback from './feedback/submit'
 import { GENERATED_TOOL_MAP } from './generated'
 // Insights
 import queryInsight from './insights/query'
-// Notebooks (edit is hand-written — generated CRUD lives in generated/notebooks.ts)
-import notebookEdit from './notebooks/edit'
+// Notebooks (edit tools are hand-written — generated CRUD lives in generated/notebooks.ts)
+import createNotebookFromMarkdown from './notebooks/createFromMarkdown'
+import notebookEdit from './notebooks/editByReplacement'
 // Organizations
 import setActiveOrganization from './organizations/setActive'
 // PostHog AI tools
@@ -65,6 +66,7 @@ export const TOOL_MAP: Record<string, () => ToolBase<ZodObjectAny>> = {
 
     // Notebooks
     'notebook-edit': notebookEdit,
+    'notebooks-create-from-markdown': createNotebookFromMarkdown,
 
     // Debug
     'debug-mcp-ui-apps': debugMcpUiApps,

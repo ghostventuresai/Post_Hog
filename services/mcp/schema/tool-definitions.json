@@ -156,7 +156,8 @@
         }
     },
     "notebook-edit": {
-        "description": "Edit part of a notebook's content. Use this for any change inside a notebook — text, headings, attributes, whole paragraphs. Call `notebooks-retrieve` first to see what to target.\n\nMatching is by content. The tool finds `old_value` anywhere in the notebook and swaps it for `new_value` in place.\n\nOn success, returns the updated notebook with the new content and bumped version. On a 409 or 410 error, the notebook has changed since you loaded it — call `notebooks-retrieve` and re-apply your edit against the latest content.",
+        "description": "Edit notebook content via collab save. Prefer `edits`: append/insert_after/insert_before/insert_after_heading/insert_between/replace_block/replace_text. Small SQL change? Use replace_text with anchor=query title or section heading; it edits query/code attrs too. Heading anchor searches section. Also accepts old_value/new_value subtree replacement.",
+        "system_prompt_hint": "Notebook edit: retrieve, then notebook-edit. Prefer edits. For SQL changes use replace_text anchor=query title/heading; do not rebuild query blocks.",
         "category": "Notebooks",
         "feature": "notebooks",
         "summary": "Edit part of a notebook's content.",
@@ -336,6 +337,21 @@
             "idempotentHint": true,
             "openWorldHint": true,
             "readOnlyHint": true
+        }
+    },
+    "notebooks-create-from-markdown": {
+        "description": "Create a notebook from agent-friendly markdown. Use this instead of notebooks-create when writing a new multi-node analysis. Content supports normal markdown plus <query title=\"...\">{...query JSON...}</query> blocks for old-style query nodes. For SQL analysis, prefer <query> blocks containing HogQLQuery or InsightVizNode query JSON. Use execute-sql or query-run first when you need to inspect live values before deciding which nodes to create.",
+        "category": "Notebooks",
+        "feature": "notebooks",
+        "summary": "Create a notebook from markdown with query nodes.",
+        "title": "Create notebook from markdown",
+        "required_scopes": ["notebook:write"],
+        "system_prompt_hint": "For new multi-node analyses, use notebooks-create-from-markdown with markdown plus <query> blocks. Prefer old-style HogQLQuery query nodes for SQL; inspect values first with execute-sql/query-run when needed.",
+        "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
         }
     },
     "debug-mcp-ui-apps": {

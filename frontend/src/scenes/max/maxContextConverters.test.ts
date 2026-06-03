@@ -102,6 +102,38 @@ describe('maxContextConverters', () => {
                 },
             },
             {
+                name: 'converts notebook with request location',
+                input: {
+                    notebook: {
+                        short_id: 'abc123',
+                        title: 'My notebook',
+                        request_location: {
+                            type: 'notebook_position' as const,
+                            position: 42,
+                            current_block_text: '<AI id="placeholder-1">Thinking...</AI>',
+                            previous_block_text: 'Previous paragraph',
+                            next_block_text: 'Next paragraph',
+                        },
+                    },
+                },
+                expected: {
+                    notebooks: [
+                        {
+                            id: 'abc123',
+                            name: 'My notebook',
+                            request_location: {
+                                type: 'notebook_position',
+                                position: 42,
+                                current_block_text: '<AI id="placeholder-1">Thinking...</AI>',
+                                previous_block_text: 'Previous paragraph',
+                                next_block_text: 'Next paragraph',
+                            },
+                            type: MaxContextType.NOTEBOOK,
+                        },
+                    ],
+                },
+            },
+            {
                 name: 'returns empty object for empty context',
                 input: {},
                 expected: {},

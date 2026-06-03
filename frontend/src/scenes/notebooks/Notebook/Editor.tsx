@@ -61,6 +61,7 @@ import { textContent } from '../utils'
 import { CollapsibleHeading } from './CollapsibleHeading'
 import { DropAndPasteHandlerExtension } from './DropAndPasteHandlerExtension'
 import { InlineMenu } from './InlineMenu'
+import { NotebookAI, NotebookAIPrompt, NotebookAIPromptExtension, NotebookAIPromptStatus } from './NotebookAIPrompt'
 import { notebookCollabLogic } from './notebookCollabLogic'
 import { NotebookDefaultBlockOnEnter } from './NotebookDefaultBlockOnEnter'
 import { notebookLogic } from './notebookLogic'
@@ -162,6 +163,13 @@ export function Editor(): JSX.Element {
         NotebookNodeGroupProperties,
         RichContentNodeMention,
         NotebookNodeEmbed,
+        NotebookAI,
+        NotebookAIPrompt,
+        NotebookAIPromptStatus,
+        NotebookAIPromptExtension.configure({
+            shortId,
+            title: notebook?.title,
+        }),
         SlashCommandsExtension,
         MentionsExtension,
         NotebookNodePersonFeed,

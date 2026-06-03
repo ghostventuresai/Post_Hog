@@ -8,7 +8,9 @@ from ee.hogai.artifacts.types import StoredBlock, VisualizationRefBlock
 from ee.hogai.tools.create_notebook.tiptap import (
     _parse_inline,
     blocks_to_tiptap_doc,
+    content_uses_executable_analysis_blocks,
     markdown_to_tiptap_nodes,
+    nodes_use_executable_analysis_blocks,
     tiptap_doc_to_text,
 )
 
@@ -174,6 +176,84 @@ class TestMarkdownToTiptapNodes(SimpleTestCase):
         assert nodes[2]["type"] == "bulletList"
         assert nodes[3]["type"] == "codeBlock"
 
+    def test_analysis_blocks(self):
+        md = """# Analysis
+
+<hogql title="Recent events" return_variable="events_df">
+SELECT event, count() FROM events GROUP BY event
+</hogql>
+
+<python title="Summarize">
+print(events_df.head())
+</python>
+
+<ducksql title="Top events" return_variable="top_events">
+SELECT * FROM events_df LIMIT 5
+</ducksql>
+
+<query title="Active users">
+{"kind":"InsightVizNode","source":{"kind":"TrendsQuery"}}
+</query>
+"""
+        nodes = markdown_to_tiptap_nodes(md, allow_executable_analysis_blocks=True)
+
+        assert [node["type"] for node in nodes] == [
+            "heading",
+            "ph-hogql-sql",
+            "ph-python",
+            "ph-duck-sql",
+            "ph-query",
+        ]
+        assert nodes[1]["attrs"]["title"] == "Recent events"
+        assert nodes[1]["attrs"]["returnVariable"] == "events_df"
+        assert nodes[1]["attrs"]["code"] == "SELECT event, count() FROM events GROUP BY event"
+        assert nodes[2]["attrs"]["title"] == "Summarize"
+        assert nodes[2]["attrs"]["code"] == "print(events_df.head())"
+        assert nodes[3]["attrs"]["returnVariable"] == "top_events"
+        assert nodes[4]["attrs"]["query"] == {"kind": "InsightVizNode", "source": {"kind": "TrendsQuery"}}
+
+    def test_executable_analysis_blocks_can_be_disabled(self):
+        md = """<hogql>
+SELECT 1
+</hogql>
+
+<query title="Active users">
+{"kind":"HogQLQuery","query":"SELECT 1"}
+</query>
+"""
+        nodes = markdown_to_tiptap_nodes(md, allow_executable_analysis_blocks=False)
+
+        assert [node["type"] for node in nodes] == ["paragraph", "ph-query"]
+        assert nodes[0]["content"][0]["text"] == "<hogql> SELECT 1 </hogql>"
+        assert nodes[1]["attrs"]["query"] == {"kind": "HogQLQuery", "query": "SELECT 1"}
+
+    def test_executable_analysis_blocks_are_disabled_by_default(self):
+        nodes = markdown_to_tiptap_nodes("<python>\nprint(1)\n</python>")
+
+        assert [node["type"] for node in nodes] == ["paragraph"]
+        assert nodes[0]["content"][0]["text"] == "<python> print(1) </python>"
+
+    @parameterized.expand(
+        [
+            ("hogql", "<hogql>\nSELECT 1\n</hogql>", True),
+            ("ducksql", "<ducksql>\nSELECT 1\n</ducksql>", True),
+            ("python", "<python>\nprint(1)\n</python>", True),
+            ("query", '<query>\n{"kind":"HogQLQuery","query":"SELECT 1"}\n</query>', False),
+            ("plain", "SELECT 1", False),
+        ]
+    )
+    def test_content_uses_executable_analysis_blocks(self, _name, markdown, expected):
+        assert content_uses_executable_analysis_blocks(markdown) is expected
+
+    def test_nodes_use_executable_analysis_blocks(self):
+        assert nodes_use_executable_analysis_blocks([{"type": "ph-hogql-sql", "attrs": {"code": "SELECT 1"}}])
+        assert nodes_use_executable_analysis_blocks(
+            [{"type": "paragraph", "content": [{"type": "ph-python", "attrs": {"code": "print(1)"}}]}]
+        )
+        assert not nodes_use_executable_analysis_blocks(
+            [{"type": "ph-query", "attrs": {"query": {"kind": "HogQLQuery"}}}]
+        )
+
 
 class TestBlocksToTiptapDoc(SimpleTestCase):
     def test_empty_blocks_with_title(self):
@@ -332,6 +412,33 @@ class TestTiptapDocToText(SimpleTestCase):
                 '<session_replay id="sess-abc" />',
             ),
             (
+                "ph_python",
+                {
+                    "type": "doc",
+                    "content": [
+                        {"type": "ph-python", "attrs": {"title": "Summarize", "code": "print(events_df.head())"}}
+                    ],
+                },
+                '<python title="Summarize">\nprint(events_df.head())\n</python>',
+            ),
+            (
+                "ph_hogql_sql",
+                {
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "ph-hogql-sql",
+                            "attrs": {
+                                "title": "Recent events",
+                                "returnVariable": "events_df",
+                                "code": "SELECT * FROM events LIMIT 10",
+                            },
+                        }
+                    ],
+                },
+                '<hogql title="Recent events" return_variable="events_df">\nSELECT * FROM events LIMIT 10\n</hogql>',
+            ),
+            (
                 "inline_bold",
                 {
                     "type": "doc",
@@ -469,6 +576,16 @@ class TestTiptapDocToText(SimpleTestCase):
         result = tiptap_doc_to_text(doc)
         assert '<insight title="Untitled"' in result
         assert 'query_kind="unknown"' in result
+
+    def test_ph_ai_node(self):
+        doc = {"type": "doc", "content": [{"type": "ph-ai", "attrs": {"id": "placeholder-1"}}]}
+        result = tiptap_doc_to_text(doc)
+        assert result == '<AI id="placeholder-1">Thinking...</AI>'
+
+    def test_ph_ai_node_escapes_id(self):
+        doc = {"type": "doc", "content": [{"type": "ph-ai", "attrs": {"id": 'bad"id'}}]}
+        result = tiptap_doc_to_text(doc)
+        assert result == '<AI id="bad&quot;id">Thinking...</AI>'
 
     @parameterized.expand(
         [

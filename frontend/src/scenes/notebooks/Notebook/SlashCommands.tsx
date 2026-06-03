@@ -5,6 +5,7 @@ import { useValues } from 'kea'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react'
 
 import {
+    IconAI,
     IconCode,
     IconCursor,
     IconDatabase,
@@ -44,6 +45,7 @@ import { addInsightsToNotebookModalLogic } from '../AddInsightsToNotebookModal/a
 import { NODE_ICONS } from '../nodeIcons'
 import { buildInsightVizQueryContent, buildNodeEmbed, buildNodeQueryContent } from '../Nodes/nodeBuilders'
 import { NotebookNodeType } from '../types'
+import { insertNotebookAIPrompt, submitNotebookAIPromptFromRange } from './NotebookAIPrompt'
 import NotebookIconHeading from './NotebookIconHeading'
 import { notebookLogic } from './notebookLogic'
 
@@ -88,6 +90,8 @@ type SlashCommandCategory = {
     items: SlashCommandsItem[]
 }
 
+const NOTEBOOK_AI_COMMAND_TITLE = 'AI'
+
 const TEXT_CONTROLS: SlashCommandsItem[] = [
     {
         title: 'h1',
@@ -117,6 +121,18 @@ const TEXT_CONTROLS: SlashCommandsItem[] = [
 ]
 
 const SLASH_COMMAND_CATEGORIES: SlashCommandCategory[] = [
+    {
+        title: 'AI',
+        icon: <IconAI />,
+        items: [
+            {
+                title: NOTEBOOK_AI_COMMAND_TITLE,
+                search: 'ai max posthog ai ask',
+                icon: <IconAI />,
+                command: (chain) => chain,
+            },
+        ],
+    },
     {
         title: 'Insight',
         icon: <IconGraph color="currentColor" />,
@@ -513,11 +529,19 @@ function flattenCommands(
     )
 }
 
+function getAiPromptFromQuery(query?: string): string | null {
+    const match = query?.trim().match(/^ai(?:\s+(.*))?$/i)
+    if (!match) {
+        return null
+    }
+    return (match[1] ?? '').trim()
+}
+
 export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(function SlashCommands(
     { mode, range, getPos, onClose, query }: SlashCommandsProps,
     ref
 ): JSX.Element | null {
-    const { editor } = useValues(notebookLogic)
+    const { editor, notebook, shortId } = useValues(notebookLogic)
     const { featureFlags } = useValues(featureFlagLogic)
     // We start with 1 because the first item is the text controls
     const [selectedIndex, setSelectedIndex] = useState(0)
@@ -525,6 +549,7 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
 
     const allFlatCommands = useMemo(() => flattenCommands(SLASH_COMMAND_CATEGORIES, featureFlags), [featureFlags])
     const allCommmands = [...TEXT_CONTROLS, ...allFlatCommands]
+    const aiPrompt = getAiPromptFromQuery(query)
 
     const fuse = useMemo(() => {
         return createFuse(allCommmands, {
@@ -536,12 +561,15 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
     const isSearching = !!query
 
     const filteredCommands = useMemo(() => {
+        if (aiPrompt !== null) {
+            return allFlatCommands.filter((item) => item.title === NOTEBOOK_AI_COMMAND_TITLE)
+        }
         if (!query) {
             return allCommmands
         }
         return fuse.search(query).map((result) => result.item)
         // oxlint-disable-next-line exhaustive-deps
-    }, [query, fuse])
+    }, [query, fuse, aiPrompt, allFlatCommands])
 
     const filteredSlashCommands = useMemo(
         () => filteredCommands.filter((item) => allFlatCommands.includes(item)),
@@ -561,6 +589,29 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
                 const isTextCommand = TEXT_CONTROLS.map((c) => c.title).includes(item.title)
 
                 const position = mode === 'slash' ? range.from : getPos()
+
+                if (item.title === NOTEBOOK_AI_COMMAND_TITLE) {
+                    if (mode === 'slash' && (aiPrompt === '' || aiPrompt === null)) {
+                        insertNotebookAIPrompt(editor, range)
+                        onClose?.()
+                        return
+                    }
+
+                    const prompt = aiPrompt === null ? '' : aiPrompt
+                    if (mode === 'slash' && prompt) {
+                        submitNotebookAIPromptFromRange(editor, range, prompt, {
+                            shortId: notebook?.short_id ?? shortId,
+                            title: notebook?.title,
+                        })
+                        onClose?.()
+                        return
+                    }
+
+                    insertNotebookAIPrompt(editor, position, { insertAsParagraph: true })
+                    onClose?.()
+                    return
+                }
+
                 let chain = mode === 'slash' ? editor.deleteRange(range) : editor.chain()
 
                 if (!isTextNode && isTextCommand) {
@@ -574,20 +625,22 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
             }
         },
         // oxlint-disable-next-line exhaustive-deps
-        [editor, mode, range, getPos, onClose]
+        [editor, mode, range, getPos, onClose, aiPrompt, notebook, shortId]
     )
 
     const onPressEnter = async (): Promise<void> => {
         const command =
             selectedIndex === -1 ? TEXT_CONTROLS[selectedHorizontalIndex] : filteredSlashCommands[selectedIndex]
 
-        await execute(command)
+        if (command) {
+            await execute(command)
+        }
     }
     const onPressUp = (): void => {
         setSelectedIndex(Math.max(selectedIndex - 1, -1))
     }
     const onPressDown = (): void => {
-        setSelectedIndex(Math.min(selectedIndex + 1, allFlatCommands.length - 1))
+        setSelectedIndex(Math.min(selectedIndex + 1, filteredSlashCommands.length - 1))
     }
 
     const onPressLeft = (): void => {
@@ -599,6 +652,14 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
 
     const onKeyDown = useCallback(
         (event: KeyboardEvent): boolean => {
+            if (mode === 'slash' && aiPrompt === '' && [' ', 'Enter', 'Tab'].includes(event.key)) {
+                const aiCommand = allFlatCommands.find((item) => item.title === NOTEBOOK_AI_COMMAND_TITLE)
+                if (aiCommand) {
+                    void execute(aiCommand)
+                    return true
+                }
+            }
+
             if (isSearching) {
                 // When searching, keep the flat list keyboard navigation
                 const keyMappings = {
@@ -618,7 +679,16 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
             return false
         },
         // oxlint-disable-next-line exhaustive-deps
-        [selectedIndex, selectedHorizontalIndex, filteredCommands, isSearching]
+        [
+            selectedIndex,
+            selectedHorizontalIndex,
+            filteredCommands,
+            isSearching,
+            mode,
+            aiPrompt,
+            allFlatCommands,
+            execute,
+        ]
     )
 
     // Expose the keydown handler to the tiptap extension
@@ -646,6 +716,10 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
     const categorizedMenuData = useMemo(
         () =>
             SLASH_COMMAND_CATEGORIES.flatMap((category) => {
+                if (mode === 'add' && category.title === NOTEBOOK_AI_COMMAND_TITLE) {
+                    return []
+                }
+
                 const availableItems = category.items.filter(
                     (item) => !item.featureFlag || featureFlags[item.featureFlag]
                 )
@@ -666,7 +740,7 @@ export const SlashCommands = forwardRef<SlashCommandsRef, SlashCommandsProps>(fu
                     },
                 ]
             }),
-        [featureFlags, execute]
+        [featureFlags, execute, mode]
     )
 
     if (!editor) {
@@ -772,6 +846,7 @@ export const SlashCommandsExtension = Extension.create({
             Suggestion({
                 editor: this.editor,
                 char: '/',
+                allowSpaces: true,
                 startOfLine: true,
                 render: () => {
                     let renderer: ReactRenderer<SlashCommandsRef>

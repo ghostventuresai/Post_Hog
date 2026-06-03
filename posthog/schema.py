@@ -786,6 +786,7 @@ class AssistantTool(StrEnum):
     UPSERT_DASHBOARD = "upsert_dashboard"
     MANAGE_MEMORIES = "manage_memories"
     CREATE_NOTEBOOK = "create_notebook"
+    EDIT_NOTEBOOK = "edit_notebook"
     LIST_DATA = "list_data"
     UPSERT_ALERT = "upsert_alert"
     FINALIZE_PLAN = "finalize_plan"
@@ -3529,15 +3530,6 @@ class MaxExperimentVariantResultFrequentist(BaseModel):
     key: str
     p_value: float | None = None
     significant: bool
-
-
-class MaxNotebookContext(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    id: str
-    name: str | None = None
-    type: Literal["notebook"] = "notebook"
 
 
 class MaxProductInfo(BaseModel):
@@ -7910,6 +7902,17 @@ class MaxExperimentSummaryContext(BaseModel):
     secondary_metrics_results: list[MaxExperimentMetricResult]
     stats_method: ExperimentStatsMethod
     variants: list[str]
+
+
+class MaxNotebookRequestLocationContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    current_block_text: str | None = None
+    next_block_text: str | None = None
+    position: int
+    previous_block_text: str | None = None
+    type: Literal["notebook_position"] = "notebook_position"
 
 
 class MaxRecordingEventFilter(BaseModel):
@@ -17531,6 +17534,16 @@ class MaxBillingContext(BaseModel):
     total_current_amount_usd: str | None = None
     trial: MaxBillingContextTrial | None = None
     usage_history: list[UsageHistoryItem] | None = None
+
+
+class MaxNotebookContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: str
+    name: str | None = None
+    request_location: MaxNotebookRequestLocationContext | None = None
+    type: Literal["notebook"] = "notebook"
 
 
 class MultiQuestionForm(BaseModel):
