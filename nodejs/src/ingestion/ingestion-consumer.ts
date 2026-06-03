@@ -303,6 +303,9 @@ export class IngestionConsumer {
     }
 
     public async stop(): Promise<void> {
+        if (this.isStopping) {
+            return
+        }
         logger.info('🔁', `${this.name} - stopping`)
         this.isStopping = true
 
@@ -313,6 +316,8 @@ export class IngestionConsumer {
         await this.topHog.stop()
         logger.info('🔁', `${this.name} - stopping hog transformer`)
         await this.hogTransformer.stop()
+        await this.personsStore.shutdown()
+        await this.groupStore.shutdown()
         logger.info('👍', `${this.name} - stopped!`)
     }
 

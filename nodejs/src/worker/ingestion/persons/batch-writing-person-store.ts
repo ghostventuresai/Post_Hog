@@ -5,8 +5,6 @@ import { Properties } from '~/plugin-scaffold'
 import { NoRowsUpdatedError } from '~/utils/utils'
 
 import { emitIngestionWarning } from '../../../ingestion/common/ingestion-warnings'
-import { IngestionWarningsOutput } from '../../../ingestion/common/outputs'
-import { IngestionOutputs } from '../../../ingestion/outputs/ingestion-outputs'
 import {
     InternalPerson,
     PersonBatchWritingDbWriteMode,
@@ -36,6 +34,7 @@ import {
     personWriteMethodAttemptCounter,
     totalPersonUpdateLatencyPerBatchHistogram,
 } from './metrics'
+import { PersonOutputs } from './person-context'
 import { isFilteredPersonUpdateProperty } from './person-property-utils'
 import { getMetricKey } from './person-update'
 import { PersonUpdate, fromInternalPerson, toInternalPerson } from './person-update-batch'
@@ -91,6 +90,12 @@ export interface BatchWritingPersonsStoreOptions {
     optimisticUpdateRetryInterval: number
     /** When true, all property changes trigger person updates (disables batch-level filtering) */
     updateAllProperties: boolean
+    /**
+     * Interval at which accumulated per-distinct_id metrics are emitted and
+     * cleared. Set to 0 to disable the timer (used by tests; production
+     * always wants a positive interval).
+     */
+    metricEmissionIntervalMs: number
 }
 
 const DEFAULT_OPTIONS: BatchWritingPersonsStoreOptions = {
@@ -100,6 +105,7 @@ const DEFAULT_OPTIONS: BatchWritingPersonsStoreOptions = {
     maxOptimisticUpdateRetries: 5,
     optimisticUpdateRetryInterval: 50,
     updateAllProperties: false,
+    metricEmissionIntervalMs: 30_000,
 }
 
 interface CacheMetrics {
@@ -110,10 +116,13 @@ interface CacheMetrics {
 }
 
 /**
- * This class is used to write persons to the database in batches.
- * It will use a cache to avoid reading the same person from the database multiple times.
- * And will accumulate all changes for the same person in a single batch. At the
- * end of the batch processing, it flushes all changes to the database.
+ * Writes persons to the database in batches, accumulating all changes for the
+ * same person across events and flushing them on `flush()` calls. The cache
+ * persists across batches under concurrentBatches > 1.
+ *
+ * **Lifecycle:** construction starts a metric-emission timer. Callers MUST
+ * invoke `shutdown()` on graceful exit to stop the timer and flush any
+ * remaining dirty entries.
  */
 export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore {
     private personCheckCache: Map<string, InternalPerson | null>
@@ -128,10 +137,21 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
     private options: BatchWritingPersonsStoreOptions
     // Cache for batch personless distinct ID insert results (is_merged values)
     private personlessBatchResults: Map<string, boolean>
+    // Batch-scoped eviction tracking: maps batchId → set of distinctCacheKeys seen in that batch
+    private batchDistinctKeys = new Map<number, Set<string>>()
+    // Reference count per distinctCacheKey: how many active batches reference this key
+    private distinctKeyRefCount = new Map<string, number>()
+    // Distinct keys that were released while their personUpdateCache was dirty.
+    // processDeferredEvictions() re-checks these after each flush and evicts them once clean.
+    private deferredEvictions = new Set<string>()
+    // Periodic metric emitter — emits accumulated per-distinct_id metrics on
+    // a fixed cadence rather than at batch boundaries (which are unreliable
+    // under concurrentBatches > 1).
+    private metricEmissionTimer: NodeJS.Timeout | undefined
 
     constructor(
         private personRepository: PersonRepository,
-        private ingestionWarningsOutputs: IngestionOutputs<IngestionWarningsOutput>,
+        private ingestionWarningsOutputs: PersonOutputs,
         options?: Partial<BatchWritingPersonsStoreOptions>
     ) {
         this.options = { ...DEFAULT_OPTIONS, ...options }
@@ -149,6 +169,15 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             updateCacheMisses: 0,
             checkCacheHits: 0,
             checkCacheMisses: 0,
+        }
+
+        if (this.options.metricEmissionIntervalMs > 0) {
+            this.metricEmissionTimer = setInterval(
+                () => this.emitAccumulatedMetrics(),
+                this.options.metricEmissionIntervalMs
+            )
+            // Don't keep the process alive solely for this timer.
+            this.metricEmissionTimer.unref?.()
         }
     }
 
@@ -226,42 +255,51 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
     async flush(): Promise<FlushResult[]> {
         const flushStartTime = performance.now()
 
-        // Track outcomes for all person updates that were actually modified and filter to only those that should write
-        const updateEntries = Array.from(this.personUpdateCache.entries()).filter(
-            (entry): entry is [string, PersonUpdate] => {
-                const [_, update] = entry
-
-                // Skip null entries - these are deleted persons or cleared cache entries
-                if (!update) {
-                    return false
-                }
-
-                // Skip entries not marked for write - these are read-only cache entries from fetchForUpdate
-                // that were cached but never modified (no events tried to update their properties)
-                if (!update.needs_write) {
-                    return false
-                }
-
-                // Determine outcome and track metrics for this person update
-                const outcome = this.getPersonUpdateOutcome(update)
-                personProfileBatchUpdateOutcomeCounter.labels({ outcome }).inc()
-
-                // Track which property keys caused person updates (only for 'changed' outcomes)
-                if (outcome === 'changed') {
-                    const metricsKeys = new Set<string>()
-                    Object.keys(update.properties_to_set).forEach((key) => {
-                        metricsKeys.add(getMetricKey(key))
-                    })
-                    update.properties_to_unset.forEach((key) => {
-                        metricsKeys.add(getMetricKey(key))
-                    })
-                    metricsKeys.forEach((key) => personPropertyKeyUpdateCounter.labels({ key: key }).inc())
-                }
-
-                // Only write to database if outcome is 'changed'
-                return outcome === 'changed'
+        // SYNCHRONOUS LINEARIZATION POINT for cross-batch correctness.
+        // Walk every dirty entry, decide whether it needs a DB write, and
+        // clear `needs_write` before any await below. Concurrent batches
+        // that mutate an entry between this clear and the async DB write
+        // will re-set `needs_write=true` and be picked up by the next flush.
+        // DO NOT introduce any `await` inside this block.
+        const updateEntries: [string, PersonUpdate][] = []
+        for (const [key, update] of this.personUpdateCache.entries()) {
+            // Skip null entries - these are deleted persons or cleared cache entries
+            if (!update) {
+                continue
             }
-        )
+
+            // Skip entries not marked for write - these are read-only cache entries from fetchForUpdate
+            // that were cached but never modified (no events tried to update their properties)
+            if (!update.needs_write) {
+                continue
+            }
+
+            // Determine outcome and track metrics for this person update
+            const outcome = this.getPersonUpdateOutcome(update)
+            personProfileBatchUpdateOutcomeCounter.labels({ outcome }).inc()
+
+            if (outcome === 'changed') {
+                // Track which property keys caused person updates
+                const metricsKeys = new Set<string>()
+                Object.keys(update.properties_to_set).forEach((propertyKey) => {
+                    metricsKeys.add(getMetricKey(propertyKey))
+                })
+                update.properties_to_unset.forEach((propertyKey) => {
+                    metricsKeys.add(getMetricKey(propertyKey))
+                })
+                metricsKeys.forEach((propertyKey) => personPropertyKeyUpdateCounter.labels({ key: propertyKey }).inc())
+
+                updateEntries.push([key, update])
+            }
+
+            // Clear needs_write for every dirty entry we considered, including
+            // ones we decided not to write (ignored / no_change). This is the
+            // linearization point — concurrent batches that mutate the entry
+            // after this point will re-set needs_write=true and the next
+            // flush will pick those changes up.
+            update.needs_write = false
+        }
+        // END synchronous linearization point.
 
         const batchSize = updateEntries.length
         personFlushBatchSizeHistogram.observe({ db_write_mode: this.options.dbWriteMode }, batchSize)
@@ -269,6 +307,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         if (batchSize === 0) {
             personFlushLatencyHistogram.observe({ db_write_mode: this.options.dbWriteMode }, 0)
             personFlushOperationsCounter.inc({ db_write_mode: this.options.dbWriteMode, outcome: 'success' })
+            this.processDeferredEvictions()
             return []
         }
 
@@ -298,6 +337,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             personFlushLatencyHistogram.observe({ db_write_mode: this.options.dbWriteMode }, flushLatency)
             personFlushOperationsCounter.inc({ db_write_mode: this.options.dbWriteMode, outcome: 'success' })
 
+            this.processDeferredEvictions()
             return allKafkaMessages
         } catch (error) {
             // Record failed flush
@@ -642,18 +682,20 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         })
     }
 
-    async fetchForChecking(teamId: Team['id'], distinctId: string): Promise<InternalPerson | null> {
+    async fetchForChecking(teamId: Team['id'], distinctId: string, batchId?: number): Promise<InternalPerson | null> {
         this.incrementCount('fetchForChecking', distinctId)
 
         // First check the main cache
         const cachedPerson = this.getCachedPersonForUpdateByDistinctId(teamId, distinctId)
         if (cachedPerson !== undefined) {
+            this.trackBatchEntry(batchId, teamId, distinctId)
             return cachedPerson === null ? null : toInternalPerson(cachedPerson)
         }
 
         // Then check the checking-specific cache
         const checkCachedPerson = this.getCheckCachedPerson(teamId, distinctId)
         if (checkCachedPerson !== undefined) {
+            this.trackBatchEntry(batchId, teamId, distinctId)
             return checkCachedPerson
         }
 
@@ -670,7 +712,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
                         callerTag: 'ingestion/person-resolution',
                     })
                     observeLatencyByVersion(person, start, 'fetchForChecking')
-                    this.setCheckCachedPerson(teamId, distinctId, person ?? null)
+                    this.setCheckCachedPerson(teamId, distinctId, person ?? null, batchId)
                     return person ?? null
                 } finally {
                     this.fetchPromisesForChecking.delete(cacheKey)
@@ -679,13 +721,20 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             this.fetchPromisesForChecking.set(cacheKey, fetchPromise)
         } else {
             personFetchForCheckingCacheOperationsCounter.inc({ operation: 'hit' })
+            this.trackBatchEntry(batchId, teamId, distinctId)
         }
         return fetchPromise
     }
 
-    async prefetchPersons(teamDistinctIds: { teamId: number; distinctId: string }[]): Promise<void> {
+    async prefetchPersons(teamDistinctIds: { teamId: number; distinctId: string }[], batchId?: number): Promise<void> {
         if (teamDistinctIds.length === 0) {
             return
+        }
+
+        // Register all entries for this batch's eviction tracking — even cache hits
+        // need their refcount incremented so they are evicted when this batch completes.
+        for (const { teamId, distinctId } of teamDistinctIds) {
+            this.trackBatchEntry(batchId, teamId, distinctId)
         }
 
         // Filter out entries that are already cached or have pending fetches
@@ -734,7 +783,9 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
                     personsByKey.set(cacheKey, internalPerson)
                 }
 
-                // Cache all results (found persons and nulls for missing ones)
+                // Cache all results (found persons and nulls for missing ones).
+                // Do not pass batchId here — trackBatchEntry was already called for all
+                // entries at the top of prefetchPersons to avoid double-counting.
                 for (const { teamId, distinctId, cacheKey } of uncachedEntries) {
                     const person = personsByKey.get(cacheKey)
                     if (person) {
@@ -767,11 +818,12 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         await batchFetchPromise
     }
 
-    async fetchForUpdate(teamId: Team['id'], distinctId: string): Promise<InternalPerson | null> {
+    async fetchForUpdate(teamId: Team['id'], distinctId: string, batchId?: number): Promise<InternalPerson | null> {
         this.incrementCount('fetchForUpdate', distinctId)
 
         const cachedPerson = this.getCachedPersonForUpdateByDistinctId(teamId, distinctId)
         if (cachedPerson !== undefined) {
+            this.trackBatchEntry(batchId, teamId, distinctId)
             return cachedPerson === null ? null : toInternalPerson(cachedPerson)
         }
 
@@ -784,6 +836,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             await prefetchPromise
             const prefetchedPerson = this.getCachedPersonForUpdateByDistinctId(teamId, distinctId)
             if (prefetchedPerson !== undefined) {
+                this.trackBatchEntry(batchId, teamId, distinctId)
                 return prefetchedPerson === null ? null : toInternalPerson(prefetchedPerson)
             }
         }
@@ -802,7 +855,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
                     observeLatencyByVersion(person, start, 'fetchForUpdate')
                     if (person !== undefined) {
                         const personUpdate = fromInternalPerson(person, distinctId)
-                        this.setCachedPersonForUpdate(teamId, distinctId, personUpdate)
+                        this.setCachedPersonForUpdate(teamId, distinctId, personUpdate, batchId)
                         return person
                     } else {
                         // Before caching null, check if another async operation populated
@@ -815,9 +868,10 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
                         // From this point, all operations are synchronous to avoid further race conditions.
                         const currentCache = this.getCachedPersonForUpdateByDistinctId(teamId, distinctId)
                         if (currentCache === undefined) {
-                            this.setCachedPersonForUpdate(teamId, distinctId, null)
+                            this.setCachedPersonForUpdate(teamId, distinctId, null, batchId)
                             return null
                         }
+                        this.trackBatchEntry(batchId, teamId, distinctId)
                         return currentCache === null ? null : toInternalPerson(currentCache)
                     }
                 } finally {
@@ -827,6 +881,7 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             this.fetchPromisesForUpdate.set(cacheKey, fetchPromise)
         } else {
             personFetchForUpdateCacheOperationsCounter.inc({ operation: 'hit' })
+            this.trackBatchEntry(batchId, teamId, distinctId)
         }
         return fetchPromise
     }
@@ -885,14 +940,15 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         person: InternalPerson,
         distinctId: string,
         version: number,
-        tx?: PersonRepositoryTransaction
+        tx?: PersonRepositoryTransaction,
+        batchId?: number
     ): Promise<PersonMessage[]> {
         this.incrementCount('addDistinctId', distinctId)
         this.incrementDatabaseOperation('addDistinctId', distinctId)
         const start = performance.now()
         const response = await (tx || this.personRepository).addDistinctId(person, distinctId, version)
         observeLatencyByVersion(person, start, 'addDistinctId')
-        this.setDistinctIdToPersonId(person.team_id, distinctId, person.id)
+        this.setDistinctIdToPersonId(person.team_id, distinctId, person.id, batchId)
         return response
     }
 
@@ -901,7 +957,8 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         target: InternalPerson,
         distinctId: string,
         limit: number | undefined,
-        tx: PersonRepositoryTransaction
+        tx: PersonRepositoryTransaction,
+        batchId?: number
     ): Promise<MoveDistinctIdsResult> {
         this.incrementCount('moveDistinctIds', distinctId)
         this.incrementDatabaseOperation('moveDistinctIds', distinctId)
@@ -919,14 +976,14 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
             // We have existing cached data with merged properties - preserve it
             // Create a new PersonUpdate for this distinctId that preserves the merged data
             const mergedPersonUpdate = { ...existingTargetCache, distinct_id: distinctId }
-            this.setCachedPersonForUpdate(target.team_id, distinctId, mergedPersonUpdate)
+            this.setCachedPersonForUpdate(target.team_id, distinctId, mergedPersonUpdate, batchId)
         } else {
             // No existing cache, create fresh cache from target person
-            this.setCachedPersonForUpdate(target.team_id, distinctId, fromInternalPerson(target, distinctId))
+            this.setCachedPersonForUpdate(target.team_id, distinctId, fromInternalPerson(target, distinctId), batchId)
         }
         if (response.success) {
-            for (const distinctId of response.distinctIdsMoved) {
-                this.setDistinctIdToPersonId(target.team_id, distinctId, target.id)
+            for (const movedDistinctId of response.distinctIdsMoved) {
+                this.setDistinctIdToPersonId(target.team_id, movedDistinctId, target.id, batchId)
             }
         }
 
@@ -973,34 +1030,52 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         const isMerged = await (tx || this.personRepository).addPersonlessDistinctIdForMerge(teamId, distinctId)
         // Update the batch results cache so processPersonlessStep knows this was merged
         if (isMerged) {
-            this.personlessBatchResults.set(`${teamId}|${distinctId}`, true)
+            this.personlessBatchResults.set(this.getDistinctCacheKey(teamId, distinctId), true)
         }
         return isMerged
     }
 
-    async processPersonlessDistinctIdsBatch(entries: { teamId: number; distinctId: string }[]): Promise<void> {
+    async processPersonlessDistinctIdsBatch(
+        entries: { teamId: number; distinctId: string }[],
+        batchId?: number
+    ): Promise<void> {
         if (entries.length === 0) {
             return
         }
 
+        for (const { teamId, distinctId } of entries) {
+            this.trackBatchEntry(batchId, teamId, distinctId)
+        }
+
         const results = await this.personRepository.addPersonlessDistinctIdsBatch(entries)
-        // Only store merged distinct IDs - these need force_upgrade handling
-        for (const [key, isMerged] of results) {
-            if (isMerged) {
-                this.personlessBatchResults.set(key, true)
+        // Only store merged distinct IDs - these need force_upgrade handling.
+        // Iterate entries (not result keys) to use the ':' cache key format consistently.
+        for (const { teamId, distinctId } of entries) {
+            if (results.get(`${teamId}|${distinctId}`)) {
+                this.personlessBatchResults.set(this.getDistinctCacheKey(teamId, distinctId), true)
             }
         }
     }
 
     getPersonlessBatchResult(teamId: number, distinctId: string): boolean | undefined {
-        return this.personlessBatchResults.get(`${teamId}|${distinctId}`)
+        return this.personlessBatchResults.get(this.getDistinctCacheKey(teamId, distinctId))
     }
 
     async personPropertiesSize(personId: string, teamId: number): Promise<number> {
         return await this.personRepository.personPropertiesSize(personId, teamId)
     }
 
-    reportBatch(): void {
+    /**
+     * Emit the accumulated per-distinct_id metric samples to Prometheus and
+     * reset the in-memory accumulators. Runs on a fixed-interval timer in
+     * production; tests may invoke it directly via `shutdown()`.
+     *
+     * Under concurrentBatches > 1, per-batch attribution is unreliable
+     * (first-flush-wins), so emission is decoupled from batch boundaries.
+     * The histogram names retain a "...PerBatch..." suffix for dashboard
+     * compatibility but the window is now the emission interval.
+     */
+    private emitAccumulatedMetrics(): void {
         for (const [_, methodCounts] of this.methodCountsPerDistinctId.entries()) {
             for (const [method, count] of methodCounts.entries()) {
                 personMethodCallsPerBatchHistogram.observe({ method }, count)
@@ -1023,24 +1098,62 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         personCacheOperationsCounter.inc({ cache: 'update', operation: 'miss' }, this.cacheMetrics.updateCacheMisses)
         personCacheOperationsCounter.inc({ cache: 'check', operation: 'hit' }, this.cacheMetrics.checkCacheHits)
         personCacheOperationsCounter.inc({ cache: 'check', operation: 'miss' }, this.cacheMetrics.checkCacheMisses)
-    }
 
-    reset(): void {
-        this.personCheckCache.clear()
-        this.distinctIdToPersonId.clear()
-        this.personUpdateCache.clear()
-        this.fetchPromisesForUpdate.clear()
-        this.fetchPromisesForChecking.clear()
         this.methodCountsPerDistinctId.clear()
         this.databaseOperationCountsPerDistinctId.clear()
         this.updateLatencyPerDistinctIdSeconds.clear()
-        this.personlessBatchResults.clear()
         this.cacheMetrics = {
             updateCacheHits: 0,
             updateCacheMisses: 0,
             checkCacheHits: 0,
             checkCacheMisses: 0,
         }
+    }
+
+    /**
+     * Flush any remaining dirty cache entries to the DB and produce their
+     * Kafka messages, stop the metric-emission timer, and emit accumulated
+     * metrics. Idempotent.
+     *
+     * Dirty entries at shutdown indicate a drain-ordering bug upstream
+     * (the pipeline drain should have run flushBatchStoresStep for every
+     * in-flight batch before reaching shutdown). We flush them anyway so
+     * data is not lost, and log loudly so the bug is visible.
+     *
+     * Does NOT clear the data caches (personUpdateCache et al.). Those
+     * persist for the worker's lifetime; eviction is intentionally
+     * decoupled from this lifecycle hook.
+     */
+    async shutdown(): Promise<void> {
+        if (this.metricEmissionTimer) {
+            clearInterval(this.metricEmissionTimer)
+            this.metricEmissionTimer = undefined
+        }
+
+        const dirtyCount = Array.from(this.personUpdateCache.values()).filter((u) => u?.needs_write).length
+        if (dirtyCount > 0) {
+            logger.warn('⚠️', 'BatchWritingPersonsStore.shutdown() flushing remaining dirty entries', {
+                dirtyCount,
+            })
+            try {
+                const flushResults = await this.flush()
+                await Promise.all(
+                    flushResults.flatMap((record) =>
+                        record.messages.map((message) =>
+                            this.ingestionWarningsOutputs.produce(message.output, {
+                                key: null,
+                                value: message.value,
+                                teamId: record.teamId,
+                            })
+                        )
+                    )
+                )
+            } catch (error) {
+                logger.error('🚨', 'BatchWritingPersonsStore.shutdown() failed to flush dirty entries', { error })
+            }
+        }
+
+        this.emitAccumulatedMetrics()
     }
 
     // Private implementation methods
@@ -1156,7 +1269,8 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         return this.getCachedPersonForUpdateByPersonId(teamId, personId)
     }
 
-    setCachedPersonForUpdate(teamId: number, distinctId: string, person: PersonUpdate | null): void {
+    setCachedPersonForUpdate(teamId: number, distinctId: string, person: PersonUpdate | null, batchId?: number): void {
+        this.trackBatchEntry(batchId, teamId, distinctId)
         const cacheKey = this.getDistinctCacheKey(teamId, distinctId)
 
         if (person === null) {
@@ -1226,12 +1340,14 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         }
     }
 
-    setCheckCachedPerson(teamId: number, distinctId: string, person: InternalPerson | null): void {
+    setCheckCachedPerson(teamId: number, distinctId: string, person: InternalPerson | null, batchId?: number): void {
+        this.trackBatchEntry(batchId, teamId, distinctId)
         const cacheKey = this.getDistinctCacheKey(teamId, distinctId)
         this.personCheckCache.set(cacheKey, person)
     }
 
-    setDistinctIdToPersonId(teamId: number, distinctId: string, personId: string): void {
+    setDistinctIdToPersonId(teamId: number, distinctId: string, personId: string, batchId?: number): void {
+        this.trackBatchEntry(batchId, teamId, distinctId)
         const cacheKey = this.getDistinctCacheKey(teamId, distinctId)
         this.distinctIdToPersonId.set(cacheKey, personId)
     }
@@ -1247,7 +1363,8 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         uuid: string,
         primaryDistinctId: { distinctId: string; version?: number },
         extraDistinctIds?: { distinctId: string; version?: number }[],
-        tx?: PersonRepositoryTransaction
+        tx?: PersonRepositoryTransaction,
+        batchId?: number
     ): Promise<CreatePersonResult> {
         this.incrementCount('createPerson', primaryDistinctId.distinctId)
         this.incrementDatabaseOperation('createPerson', primaryDistinctId.distinctId)
@@ -1266,18 +1383,20 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
 
         if (result.success) {
             const { person } = result
-            this.setCheckCachedPerson(teamId, primaryDistinctId.distinctId, person)
+            this.setCheckCachedPerson(teamId, primaryDistinctId.distinctId, person, batchId)
             this.setCachedPersonForUpdate(
                 teamId,
                 primaryDistinctId.distinctId,
-                fromInternalPerson(person, primaryDistinctId.distinctId)
+                fromInternalPerson(person, primaryDistinctId.distinctId),
+                batchId
             )
             for (const extraDistinctId of extraDistinctIds || []) {
-                this.setDistinctIdToPersonId(teamId, extraDistinctId.distinctId, person.id)
+                this.setDistinctIdToPersonId(teamId, extraDistinctId.distinctId, person.id, batchId)
                 this.setCachedPersonForUpdate(
                     teamId,
                     extraDistinctId.distinctId,
-                    fromInternalPerson(person, extraDistinctId.distinctId)
+                    fromInternalPerson(person, extraDistinctId.distinctId),
+                    batchId
                 )
             }
         }
@@ -1626,6 +1745,93 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
 
         // This should never be reached, but TypeScript requires it
         throw new Error('Unexpected end of retry loop')
+    }
+
+    /**
+     * Registers a (batchId, teamId, distinctId) association for later eviction.
+     * The per-batch Set prevents double-counting the same distinct ID from multiple
+     * events within the same batch.
+     */
+    private trackBatchEntry(batchId: number | undefined, teamId: number, distinctId: string): void {
+        if (batchId === undefined) {
+            return
+        }
+        const distinctKey = this.getDistinctCacheKey(teamId, distinctId)
+        let keys = this.batchDistinctKeys.get(batchId)
+        if (!keys) {
+            keys = new Set()
+            this.batchDistinctKeys.set(batchId, keys)
+        }
+        if (!keys.has(distinctKey)) {
+            keys.add(distinctKey)
+            this.distinctKeyRefCount.set(distinctKey, (this.distinctKeyRefCount.get(distinctKey) ?? 0) + 1)
+        }
+    }
+
+    /**
+     * Releases cache entries associated with the given batch ID, using reference
+     * counting so entries shared across concurrent batches are only evicted when
+     * all referencing batches have completed.
+     */
+    releaseBatch(batchId: number): void {
+        const keys = this.batchDistinctKeys.get(batchId)
+        if (!keys) {
+            return
+        }
+
+        for (const distinctKey of keys) {
+            const refCount = (this.distinctKeyRefCount.get(distinctKey) ?? 1) - 1
+            if (refCount <= 0) {
+                this.distinctKeyRefCount.delete(distinctKey)
+                this.evictDistinctKey(distinctKey)
+            } else {
+                this.distinctKeyRefCount.set(distinctKey, refCount)
+            }
+        }
+
+        this.batchDistinctKeys.delete(batchId)
+    }
+
+    private evictDistinctKey(distinctKey: string): void {
+        const colonIdx = distinctKey.indexOf(':')
+        const teamId = Number(distinctKey.slice(0, colonIdx))
+        const personId = this.distinctIdToPersonId.get(distinctKey)
+
+        if (personId !== undefined) {
+            const personIdKey = this.getPersonIdCacheKey(teamId, personId)
+            const update = this.personUpdateCache.get(personIdKey)
+            if (!update || !update.needs_write) {
+                this.personUpdateCache.delete(personIdKey)
+                this.distinctIdToPersonId.delete(distinctKey)
+            } else {
+                // Entry is dirty: keep both the cache and the distinctId→personId mapping alive
+                // so the personUpdateCache isn't orphaned after the next flush.
+                // processDeferredEvictions() will retry after needs_write is cleared.
+                this.deferredEvictions.add(distinctKey)
+            }
+        }
+
+        this.personCheckCache.delete(distinctKey)
+        this.personlessBatchResults.delete(distinctKey)
+    }
+
+    private processDeferredEvictions(): void {
+        for (const distinctKey of this.deferredEvictions) {
+            const colonIdx = distinctKey.indexOf(':')
+            const teamId = Number(distinctKey.slice(0, colonIdx))
+            const personId = this.distinctIdToPersonId.get(distinctKey)
+            if (personId === undefined) {
+                this.deferredEvictions.delete(distinctKey)
+                continue
+            }
+            const personIdKey = this.getPersonIdCacheKey(teamId, personId)
+            const update = this.personUpdateCache.get(personIdKey)
+            if (!update || !update.needs_write) {
+                this.personUpdateCache.delete(personIdKey)
+                this.distinctIdToPersonId.delete(distinctKey)
+                this.deferredEvictions.delete(distinctKey)
+            }
+        }
     }
 
     /**

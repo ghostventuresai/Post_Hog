@@ -111,7 +111,11 @@ describe('BatchWritingGroupStore', () => {
         groupStore = new BatchWritingGroupStore(mockOutputs, groupRepository, clickhouseGroupRepository)
     })
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Clear the metric-emission interval started in the constructor;
+        // unref() prevents it from blocking process exit, but we still want
+        // a clean slate between tests.
+        await groupStore?.shutdown()
         jest.clearAllMocks()
     })
 
@@ -363,5 +367,118 @@ describe('BatchWritingGroupStore', () => {
             {},
             {}
         )
+    })
+
+    describe('persistent cache (concurrentBatches > 1)', () => {
+        it('clears needsWrite on dirty entries synchronously during flush', async () => {
+            // Linearization point: flush() must clear needsWrite BEFORE awaiting
+            // any DB I/O. Any code path that introduces an await between the
+            // dirty-filter pass and the clear would re-open the cross-batch
+            // race documented in the design doc — this test guards against it.
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: 'test' }, DateTime.now())
+
+            const groupCache = groupStore.getGroupCache()
+            const dirtyBefore = Array.from(groupCache.entries()).filter(([_, u]) => u && u.needsWrite)
+            expect(dirtyBefore.length).toBeGreaterThan(0)
+
+            // Kick off flush WITHOUT awaiting it, then synchronously inspect
+            // needsWrite. If flush yields before clearing the flag, this will
+            // catch it — the assertion runs at the first microtask boundary.
+            const flushPromise = groupStore.flush()
+
+            const stillDirty = Array.from(groupCache.entries()).filter(([_, u]) => u && u.needsWrite)
+            expect(stillDirty).toHaveLength(0)
+
+            await flushPromise
+        })
+
+        it('re-dirty during flush window drives the next flush', async () => {
+            // After an entry is written and cleaned by a flush, a subsequent
+            // upsert with new properties re-dirties it, and the next flush picks
+            // up the delta.
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+            await groupStore.flush()
+            ;(groupRepository.updateGroupOptimistically as jest.Mock).mockClear()
+
+            // Re-dirty via a second update with new properties; this triggers a
+            // fresh DB fetch (cache was evicted by evictClean() after the first flush).
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { b: '2' }, DateTime.now())
+            const dirtyAfter = Array.from(groupStore.getGroupCache().entries()).filter(([_, u]) => u && u.needsWrite)
+            expect(dirtyAfter.length).toBeGreaterThan(0)
+
+            await groupStore.flush()
+
+            // Second flush wrote the updated properties
+            expect(groupRepository.updateGroupOptimistically).toHaveBeenCalled()
+        })
+    })
+
+    describe('evictClean()', () => {
+        it('removes clean entries from cache after flush', async () => {
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+
+            await groupStore.flush()
+
+            expect(groupStore.getGroupCache().getSize()).toBe(0)
+        })
+
+        it('keeps entries that were re-dirtied during the DB write', async () => {
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+
+            // Re-dirty the entry during the async DB write (after the linearization point
+            // clears needsWrite but before evictClean() runs).
+            jest.spyOn(groupRepository, 'updateGroupOptimistically').mockImplementationOnce(() => {
+                const entry = groupStore.getGroupCache().get(teamId, 'test')
+                if (entry) {
+                    entry.needsWrite = true
+                }
+                return Promise.resolve(2)
+            })
+
+            await groupStore.flush()
+
+            expect(groupStore.getGroupCache().getSize()).toBe(1)
+            expect(groupStore.getGroupCache().get(teamId, 'test')?.needsWrite).toBe(true)
+        })
+    })
+
+    describe('shutdown()', () => {
+        it('does not flush when no dirty entries exist', async () => {
+            const flushSpy = jest.spyOn(groupStore, 'flush')
+
+            await groupStore.shutdown()
+
+            expect(flushSpy).not.toHaveBeenCalled()
+        })
+
+        it('flushes dirty entries when they exist', async () => {
+            // upsertGroup on an existing group with new properties marks the cache entry dirty
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+
+            const flushSpy = jest.spyOn(groupStore, 'flush')
+
+            await groupStore.shutdown()
+
+            expect(flushSpy).toHaveBeenCalledTimes(1)
+        })
+
+        it('does not throw when flush rejects', async () => {
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+
+            jest.spyOn(groupStore, 'flush').mockRejectedValue(new Error('flush failed'))
+
+            await expect(groupStore.shutdown()).resolves.not.toThrow()
+        })
+
+        it('emits accumulated metrics even when flush rejects', async () => {
+            await groupStore.upsertGroup(teamId, projectId, 1, 'test', { a: '1' }, DateTime.now())
+
+            jest.spyOn(groupStore, 'flush').mockRejectedValue(new Error('flush failed'))
+            const emitSpy = jest.spyOn(groupStore as any, 'emitAccumulatedMetrics')
+
+            await groupStore.shutdown()
+
+            expect(emitSpy).toHaveBeenCalledTimes(1)
+        })
     })
 })

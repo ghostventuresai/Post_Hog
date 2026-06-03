@@ -16,6 +16,7 @@ import {
     createEventFiltersBatchAppMetricsBeforeBatchStep,
     createFlushEventFiltersBatchAppMetricsStep,
 } from '../common/steps/event-filters-steps'
+import { PersonsStoreBatchContext, createPersonsStoreBeforeBatchStep } from '../common/steps/persons-store-batch-step'
 import { CookielessManager } from '../cookieless/cookieless-manager'
 import {
     createApplyEventRestrictionsStep,
@@ -103,6 +104,8 @@ export interface JoinedIngestionPipelineDeps {
     topHog: TopHogRegistry
 }
 
+type IngestionBatchContext = EventFiltersBatchContext & PersonsStoreBatchContext
+
 export interface JoinedIngestionPipelineInput {
     message: Message
 }
@@ -178,7 +181,6 @@ export function createJoinedIngestionPipeline<
         preservePartitionLocality,
         overflowRedirectService,
         overflowLaneTTLRefreshService,
-        personsStore,
         personsPrefetchEnabled,
         hogTransformer,
         cdpHogWatcherSampleRate,
@@ -191,21 +193,16 @@ export function createJoinedIngestionPipeline<
         teamManager,
         groupTypeManager,
         hogTransformer,
-        personsStore,
         groupStore,
         groupId,
         topHog: topHogWrapper,
     }
 
-    return newBatchingPipeline<
-        TInput,
-        void,
-        TContext,
-        EventFiltersBatchContext,
-        TContext,
-        OverflowOutput | AsyncOutput
-    >(
-        (beforeBatch) => beforeBatch.pipe(createEventFiltersBatchAppMetricsBeforeBatchStep(outputs)),
+    return newBatchingPipeline<TInput, void, TContext, IngestionBatchContext, TContext, OverflowOutput | AsyncOutput>(
+        (beforeBatch) =>
+            beforeBatch
+                .pipe(createEventFiltersBatchAppMetricsBeforeBatchStep(outputs))
+                .pipe(createPersonsStoreBeforeBatchStep(personsStore)),
         (batch) =>
             batch
                 .messageAware((b) =>

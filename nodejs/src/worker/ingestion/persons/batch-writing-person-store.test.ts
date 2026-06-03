@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon'
 
+import { PERSONS_OUTPUT, PersonDistinctIdsOutput, PersonsOutput } from '~/ingestion/analytics/outputs'
 import { INGESTION_WARNINGS_OUTPUT } from '~/ingestion/common/outputs'
-import { IngestionOutputs } from '~/ingestion/outputs/ingestion-outputs'
 import { createMockIngestionOutputs } from '~/tests/helpers/mock-ingestion-outputs'
 import { InternalPerson, TeamId } from '~/types'
 import { MessageSizeTooLarge } from '~/utils/db/error'
@@ -46,7 +46,13 @@ jest.mock('./metrics', () => ({
 
 describe('BatchWritingPersonStore', () => {
     // let db: DB
-    let mockIngestionWarningsOutputs: IngestionOutputs<typeof INGESTION_WARNINGS_OUTPUT>
+    let mockIngestionWarningsOutputs: jest.Mocked<
+        ReturnType<
+            typeof createMockIngestionOutputs<
+                PersonsOutput | PersonDistinctIdsOutput | typeof INGESTION_WARNINGS_OUTPUT
+            >
+        >
+    >
     let mockPostgres: PostgresRouter
     let personStore: BatchWritingPersonsStore
     let mockRepo: any
@@ -77,13 +83,19 @@ describe('BatchWritingPersonStore', () => {
             }),
         } as unknown as PostgresRouter
 
-        mockIngestionWarningsOutputs = createMockIngestionOutputs<typeof INGESTION_WARNINGS_OUTPUT>()
+        mockIngestionWarningsOutputs = createMockIngestionOutputs<
+            PersonsOutput | PersonDistinctIdsOutput | typeof INGESTION_WARNINGS_OUTPUT
+        >()
 
         mockRepo = createMockRepository()
         personStore = new BatchWritingPersonsStore(mockRepo, mockIngestionWarningsOutputs)
     })
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Clear the metric-emission interval started in the constructor;
+        // unref() prevents it from blocking process exit, but we still want
+        // a clean slate between tests.
+        await personStore?.shutdown()
         jest.clearAllMocks()
     })
 
@@ -2321,8 +2333,8 @@ describe('BatchWritingPersonStore', () => {
         })
     })
 
-    describe('reset', () => {
-        it('should clear all caches and metrics after reset', async () => {
+    describe('persistent cache (concurrentBatches > 1)', () => {
+        it('cache data persists across batch boundaries (no reset)', async () => {
             const personStore = getPersonsStore()
 
             // Populate caches by fetching and updating a person
@@ -2330,29 +2342,28 @@ describe('BatchWritingPersonStore', () => {
             await personStore.fetchForChecking(teamId, 'distinct-2')
             await personStore.updatePersonWithPropertiesDiffForUpdate(person, { name: 'test' }, [], {}, 'distinct-1')
 
-            // Verify caches are populated
-            expect(personStore.getUpdateCache().size).toBeGreaterThan(0)
-            expect(personStore.getCheckCache().size).toBeGreaterThan(0)
+            const updateCacheSizeBefore = personStore.getUpdateCache().size
+            const checkCacheSizeBefore = personStore.getCheckCache().size
+            expect(updateCacheSizeBefore).toBeGreaterThan(0)
+            expect(checkCacheSizeBefore).toBeGreaterThan(0)
 
-            // Reset the store
-            personStore.reset()
+            // No reset() method; caches persist for the worker's lifetime.
+            // Flushing writes dirty entries but does not evict.
+            await personStore.flush()
 
-            // Verify all caches are cleared
-            expect(personStore.getUpdateCache().size).toBe(0)
-            expect(personStore.getCheckCache().size).toBe(0)
+            expect(personStore.getUpdateCache().size).toBe(updateCacheSizeBefore)
+            expect(personStore.getCheckCache().size).toBe(checkCacheSizeBefore)
         })
 
-        it('should allow reuse of the store after reset', async () => {
+        it('subsequent flushes pick up only newly-dirtied entries', async () => {
             const personStore = getPersonsStore()
 
             // First batch: populate and flush
             await personStore.fetchForUpdate(teamId, 'distinct-1')
             await personStore.updatePersonWithPropertiesDiffForUpdate(person, { batch: '1' }, [], {}, 'distinct-1')
             await personStore.flush()
-            personStore.reportBatch()
-            personStore.reset()
 
-            // Second batch: should work normally without stale data
+            // Second batch: same persistent cache, new write to a different distinct_id
             const person2 = { ...person, id: '2', properties: { original: 'value' } }
             mockRepo.fetchPerson.mockResolvedValueOnce(person2)
 
@@ -2360,7 +2371,7 @@ describe('BatchWritingPersonStore', () => {
             await personStore.updatePersonWithPropertiesDiffForUpdate(person2, { batch: '2' }, [], {}, 'distinct-2')
             await personStore.flush()
 
-            // Verify second batch wrote correctly (NO_ASSERT mode uses batch updates)
+            // Two flushes, second one wrote the round 2 delta
             expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(2)
             expect(mockRepo.updatePersonsBatch).toHaveBeenLastCalledWith([
                 expect.objectContaining({
@@ -2369,7 +2380,7 @@ describe('BatchWritingPersonStore', () => {
             ])
         })
 
-        it('should not share cached person data between batches', async () => {
+        it('reuses cached person data across batches (persistent-cache model)', async () => {
             const personStore = getPersonsStore()
 
             // First batch: cache person with specific properties
@@ -2378,18 +2389,81 @@ describe('BatchWritingPersonStore', () => {
 
             await personStore.fetchForUpdate(teamId, 'user-1')
             await personStore.flush()
-            personStore.reportBatch()
-            personStore.reset()
 
-            // Second batch: same distinct_id should fetch fresh from DB
-            const personBatch2 = { ...person, properties: { name: 'Batch2Person', newProp: 'value' } }
-            mockRepo.fetchPerson.mockResolvedValueOnce(personBatch2)
-
+            // Second batch: same distinct_id should hit the persisted cache and
+            // NOT re-fetch from DB. This is the cross-batch caching benefit
+            // unlocked by the persistent-cache model.
             const fetchedPerson = await personStore.fetchForUpdate(teamId, 'user-1')
 
-            // Should have fetched from DB again, not used stale cache
-            expect(mockRepo.fetchPerson).toHaveBeenCalledTimes(2)
-            expect(fetchedPerson?.properties).toEqual({ name: 'Batch2Person', newProp: 'value' })
+            expect(mockRepo.fetchPerson).toHaveBeenCalledTimes(1)
+            expect(fetchedPerson?.properties).toEqual({ name: 'Batch1Person' })
+        })
+
+        it('clears needs_write on dirty entries synchronously during flush', async () => {
+            // Linearization point: flush() must clear needs_write BEFORE awaiting
+            // any DB I/O. Any code path that introduces an await between the
+            // dirty-filter pass and the clear would re-open the cross-batch race
+            // documented in the design doc — this test guards against that.
+            const personStore = getPersonsStore()
+
+            await personStore.fetchForUpdate(teamId, 'distinct-1')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { name: 'test' }, [], {}, 'distinct-1')
+
+            const updateCache = personStore.getUpdateCache()
+            const dirtyEntriesBefore = Array.from(updateCache.values()).filter((u) => u?.needs_write)
+            expect(dirtyEntriesBefore.length).toBeGreaterThan(0)
+
+            // Kick off flush WITHOUT awaiting it, then synchronously inspect
+            // needs_write. If flush yields before clearing the bit, this will
+            // catch it — the assertion runs at the first microtask boundary.
+            const flushPromise = personStore.flush()
+
+            const stillDirty = Array.from(updateCache.values()).filter((u) => u?.needs_write)
+            expect(stillDirty).toHaveLength(0)
+
+            await flushPromise
+        })
+
+        it('persists update cache across flushes; re-dirty drives the next flush', async () => {
+            // The persistent-cache model: flushing does NOT remove entries from
+            // personUpdateCache. A subsequent write to the same distinct_id
+            // re-dirties the existing entry, and the next flush picks up the
+            // delta.
+            const personStore = getPersonsStore()
+
+            await personStore.fetchForUpdate(teamId, 'distinct-1')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { round: '1' }, [], {}, 'distinct-1')
+
+            const updateCacheKeyBefore = Array.from(personStore.getUpdateCache().keys())
+            expect(updateCacheKeyBefore.length).toBeGreaterThan(0)
+
+            await personStore.flush()
+
+            // Cache entries persist
+            expect(Array.from(personStore.getUpdateCache().keys())).toEqual(updateCacheKeyBefore)
+            // All entries are clean after flush
+            for (const entry of personStore.getUpdateCache().values()) {
+                if (entry) {
+                    expect(entry.needs_write).toBe(false)
+                }
+            }
+
+            // Re-dirty via a second update
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { round: '2' }, [], {}, 'distinct-1')
+            const dirtyAfterSecondWrite = Array.from(personStore.getUpdateCache().values()).filter(
+                (u) => u?.needs_write
+            )
+            expect(dirtyAfterSecondWrite.length).toBeGreaterThan(0)
+
+            mockRepo.updatePersonsBatch.mockClear()
+            await personStore.flush()
+
+            // Second flush wrote the round 2 delta
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledWith([
+                expect.objectContaining({
+                    properties_to_set: expect.objectContaining({ round: '2' }),
+                }),
+            ])
         })
     })
 
@@ -2651,6 +2725,442 @@ describe('BatchWritingPersonStore', () => {
             // Only the batch fetch should have been called, not individual fetchPerson
             expect(mockRepo.fetchPersonsByDistinctIds).toHaveBeenCalledTimes(1)
             expect(mockRepo.fetchPerson).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('cross-batch cache scenarios (persistent-cache model)', () => {
+        // These tests simulate the pipeline calling flush() at the end of each
+        // "batch" while the store's caches persist. They verify that the data
+        // we care about — accumulated person updates, distinct_id→person_id
+        // mappings, merge results — survive across flush() boundaries and are
+        // correctly merged into the next batch's writes.
+
+        it('accumulates property updates for the same person across two batches', async () => {
+            const personStore = getPersonsStore()
+
+            // BATCH 1 — set props {a, b} on distinct_id_1's person
+            await personStore.fetchForUpdate(teamId, 'distinct_id_1')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(
+                person,
+                { a: '1', b: '2' },
+                [],
+                {},
+                'distinct_id_1'
+            )
+            await personStore.flush()
+
+            expect(mockRepo.fetchPerson).toHaveBeenCalledTimes(1)
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(1)
+            expect(mockRepo.updatePersonsBatch).toHaveBeenLastCalledWith([
+                expect.objectContaining({
+                    properties_to_set: expect.objectContaining({ a: '1', b: '2' }),
+                }),
+            ])
+
+            // BATCH 2 — add prop {c}, unset {a}. Cache for distinct_id_1 should
+            // already have the merged state from batch 1 (no re-fetch).
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { c: '3' }, ['a'], {}, 'distinct_id_1')
+            await personStore.flush()
+
+            // No second fetch — persistent cache had the person
+            expect(mockRepo.fetchPerson).toHaveBeenCalledTimes(1)
+            // Second flush writes the accumulated state — which includes the
+            // batch 1 changes still in the cache (`a`, `b`) merged with batch
+            // 2 changes (`c` added, `a` unset).
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(2)
+            const secondCallPayload = mockRepo.updatePersonsBatch.mock.calls[1][0][0]
+            expect(secondCallPayload.properties_to_set).toEqual(expect.objectContaining({ b: '2', c: '3' }))
+            expect(secondCallPayload.properties_to_unset).toContain('a')
+        })
+
+        it('two distinct_ids pointing to the same person share a single cache entry across batches', async () => {
+            const personStore = getPersonsStore()
+
+            // Both fetches resolve to the SAME underlying person (same uuid / id).
+            // Simulates the case where distinct_id_a and distinct_id_b have
+            // already been merged to one person in the DB.
+            mockRepo.fetchPerson.mockResolvedValue(person)
+
+            // BATCH 1 — write via distinct_id_a
+            await personStore.fetchForUpdate(teamId, 'distinct_id_a')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { via: 'a' }, [], {}, 'distinct_id_a')
+            await personStore.flush()
+
+            // BATCH 2 — write via distinct_id_b. The store maintains a per-
+            // distinct_id update cache, so this hits a separate cache slot,
+            // but both slots map to the same person id internally (via
+            // distinctIdToPersonId resolution).
+            await personStore.fetchForUpdate(teamId, 'distinct_id_b')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { via: 'b' }, [], {}, 'distinct_id_b')
+            await personStore.flush()
+
+            // Both batches landed updates targeting the same person.uuid.
+            const allUpdatePayloads = mockRepo.updatePersonsBatch.mock.calls.flatMap((call: any) => call[0])
+            expect(allUpdatePayloads).toHaveLength(2)
+            for (const payload of allUpdatePayloads) {
+                expect(payload.uuid).toBe(person.uuid)
+            }
+        })
+
+        it('does not double-write a stale entry when the same person is touched in batch A, untouched in batch B', async () => {
+            const personStore = getPersonsStore()
+
+            // BATCH 1 — write
+            await personStore.fetchForUpdate(teamId, 'distinct_id_1')
+            await personStore.updatePersonWithPropertiesDiffForUpdate(
+                person,
+                { name: 'first' },
+                [],
+                {},
+                'distinct_id_1'
+            )
+            await personStore.flush()
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(1)
+
+            // BATCH 2 — no writes. Just reads from the cache.
+            const cachedPerson = await personStore.fetchForUpdate(teamId, 'distinct_id_1')
+            expect(cachedPerson).toBeTruthy()
+            await personStore.flush()
+
+            // Batch 2 must NOT have triggered another DB write — needs_write
+            // was cleared by the first flush and no mutation re-dirtied it.
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(1)
+        })
+
+        it('preserves distinctId→personId mapping after addDistinctId across batches', async () => {
+            const personStore = getPersonsStore()
+            mockRepo.fetchPerson.mockResolvedValue(person)
+
+            // BATCH 1 — primary distinct_id fetched, then a new distinct_id
+            // is added to the same person.
+            await personStore.fetchForUpdate(teamId, 'distinct_id_primary')
+            await personStore.addDistinctId(person, 'distinct_id_secondary', 0)
+            await personStore.flush()
+
+            const distinctIdToPersonId = (personStore as any).distinctIdToPersonId as Map<string, string>
+            const secondaryMappingAfterBatch1 = distinctIdToPersonId.get(`${teamId}:distinct_id_secondary`)
+            expect(secondaryMappingAfterBatch1).toBe(person.id)
+
+            // BATCH 2 — write via the newly-added distinct_id. It should
+            // resolve to the same person via the persistent mapping; no
+            // additional fetchPerson roundtrip.
+            mockRepo.fetchPerson.mockClear()
+            await personStore.updatePersonWithPropertiesDiffForUpdate(
+                person,
+                { from: 'secondary' },
+                [],
+                {},
+                'distinct_id_secondary'
+            )
+            await personStore.flush()
+
+            // The mapping is preserved
+            expect(distinctIdToPersonId.get(`${teamId}:distinct_id_secondary`)).toBe(person.id)
+            // ...and we didn't re-fetch the person for the secondary distinct_id
+            expect(mockRepo.fetchPerson).not.toHaveBeenCalled()
+        })
+
+        it('moveDistinctIds in batch A makes batch B writes target the merged person', async () => {
+            const personStore = getPersonsStore()
+
+            const sourcePerson: InternalPerson = {
+                ...person,
+                id: 'source-id',
+                uuid: 'source-uuid',
+                properties: { source: 'true' },
+            }
+            const targetPerson: InternalPerson = {
+                ...person,
+                id: 'target-id',
+                uuid: 'target-uuid',
+                properties: { target: 'true' },
+            }
+
+            // BATCH 1 — fetch both persons into the cache, then merge source
+            // → target by moving the source's distinct_ids onto the target.
+            mockRepo.fetchPerson.mockResolvedValueOnce(sourcePerson).mockResolvedValueOnce(targetPerson)
+
+            await personStore.fetchForUpdate(teamId, 'distinct_id_source')
+            await personStore.fetchForUpdate(teamId, 'distinct_id_target')
+
+            const tx = createMockTransaction() as any
+            tx.moveDistinctIds.mockResolvedValueOnce({
+                success: true,
+                messages: [],
+                distinctIdsMoved: ['distinct_id_source'],
+            })
+
+            await personStore.moveDistinctIds(sourcePerson, targetPerson, 'distinct_id_target', undefined, tx)
+            await personStore.flush()
+
+            // BATCH 2 — write via the previously-source distinct_id.
+            // distinctIdToPersonId now maps it to the target.
+            const distinctIdToPersonId = (personStore as any).distinctIdToPersonId as Map<string, string>
+            expect(distinctIdToPersonId.get(`${teamId}:distinct_id_source`)).toBe(targetPerson.id)
+
+            mockRepo.fetchPerson.mockClear()
+            mockRepo.updatePersonsBatch.mockClear()
+            await personStore.updatePersonWithPropertiesDiffForUpdate(
+                targetPerson,
+                { post_merge: 'yes' },
+                [],
+                {},
+                'distinct_id_source'
+            )
+            await personStore.flush()
+
+            // We should NOT have re-fetched (mapping cached) and the write
+            // should be attributed to the target person, not the source.
+            expect(mockRepo.fetchPerson).not.toHaveBeenCalled()
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(1)
+            const payload = mockRepo.updatePersonsBatch.mock.calls[0][0][0]
+            expect(payload.uuid).toBe(targetPerson.uuid)
+            expect(payload.properties_to_set).toEqual(expect.objectContaining({ post_merge: 'yes' }))
+        })
+    })
+
+    describe('shutdown()', () => {
+        it('does not flush when no dirty entries exist', async () => {
+            const flushSpy = jest.spyOn(personStore, 'flush')
+
+            await personStore.shutdown()
+
+            expect(flushSpy).not.toHaveBeenCalled()
+            expect(mockIngestionWarningsOutputs.produce).not.toHaveBeenCalled()
+        })
+
+        it('flushes dirty entries and produces Kafka messages', async () => {
+            const cache = (personStore as any).personUpdateCache as Map<string, any>
+            cache.set(`${teamId}:${person.id}`, {
+                id: person.id,
+                uuid: person.uuid,
+                team_id: teamId,
+                distinct_id: 'test',
+                needs_write: true,
+                properties: person.properties,
+                properties_to_set: { new_prop: 'value' },
+                properties_to_unset: [],
+                version: person.version,
+                created_at: person.created_at,
+                is_identified: false,
+                is_user_id: null,
+            })
+
+            const message = { output: PERSONS_OUTPUT, value: Buffer.from('{}') }
+            const flushSpy = jest
+                .spyOn(personStore, 'flush')
+                .mockResolvedValue([{ messages: [message], teamId, distinctId: 'test', uuid: person.uuid }])
+
+            await personStore.shutdown()
+
+            expect(flushSpy).toHaveBeenCalledTimes(1)
+            expect(mockIngestionWarningsOutputs.produce).toHaveBeenCalledTimes(1)
+            expect(mockIngestionWarningsOutputs.produce).toHaveBeenCalledWith(PERSONS_OUTPUT, {
+                key: null,
+                value: message.value,
+                teamId,
+            })
+
+            // Remove injected entry so afterEach shutdown does not re-trigger a flush
+            cache.delete(`${teamId}:${person.id}`)
+        })
+
+        it('does not throw when flush rejects', async () => {
+            const cache = (personStore as any).personUpdateCache as Map<string, any>
+            cache.set(`${teamId}:${person.id}`, {
+                ...fromInternalPerson(person, 'test'),
+                needs_write: true,
+                properties_to_set: { x: '1' },
+            })
+
+            jest.spyOn(personStore, 'flush').mockRejectedValue(new Error('flush failed'))
+
+            await expect(personStore.shutdown()).resolves.not.toThrow()
+
+            cache.delete(`${teamId}:${person.id}`)
+        })
+
+        it('emits accumulated metrics even when flush rejects', async () => {
+            const cache = (personStore as any).personUpdateCache as Map<string, any>
+            cache.set(`${teamId}:${person.id}`, {
+                ...fromInternalPerson(person, 'test'),
+                needs_write: true,
+                properties_to_set: { x: '1' },
+            })
+
+            jest.spyOn(personStore, 'flush').mockRejectedValue(new Error('flush failed'))
+            const emitSpy = jest.spyOn(personStore as any, 'emitAccumulatedMetrics')
+
+            await personStore.shutdown()
+
+            expect(emitSpy).toHaveBeenCalledTimes(1)
+
+            cache.delete(`${teamId}:${person.id}`)
+        })
+    })
+
+    describe('releaseBatch', () => {
+        it('is a no-op for an unknown batchId', () => {
+            expect(() => personStore.releaseBatch(999)).not.toThrow()
+        })
+
+        it('evicts check cache and distinctId mapping after single batch is released', () => {
+            personStore.setCheckCachedPerson(teamId, 'user-a', person, 0)
+            personStore.setCachedPersonForUpdate(teamId, 'user-a', fromInternalPerson(person, 'user-a'), 0)
+
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(true)
+
+            personStore.releaseBatch(0)
+
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(false)
+            expect(personStore.getCachedPersonForUpdateByDistinctId(teamId, 'user-a')).toBeUndefined()
+        })
+
+        it('only evicts when the last referencing batch is released', () => {
+            personStore.setCheckCachedPerson(teamId, 'user-a', person, 0)
+            personStore.setCheckCachedPerson(teamId, 'user-a', person, 1)
+
+            personStore.releaseBatch(0)
+            // Still held by batch 1
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(true)
+
+            personStore.releaseBatch(1)
+            // Now unreferenced
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(false)
+        })
+
+        it('defers eviction of dirty person update entries until after flush', async () => {
+            const personUpdate = { ...fromInternalPerson(person, 'user-a'), needs_write: true }
+            personStore.setCachedPersonForUpdate(teamId, 'user-a', personUpdate, 0)
+
+            personStore.releaseBatch(0)
+
+            // Both the cache entry AND the distinctId mapping are kept alive while dirty —
+            // evicting the mapping would orphan the cache entry after the next flush.
+            expect(personStore.getCachedPersonForUpdateByDistinctId(teamId, 'user-a')).toBeDefined()
+            expect(personStore.getCachedPersonForUpdateByPersonId(teamId, person.id)).toBeDefined()
+
+            // After flush clears needs_write, processDeferredEvictions() runs and
+            // cleans up both the cache entry and the mapping.
+            await personStore.flush()
+
+            expect(personStore.getCachedPersonForUpdateByDistinctId(teamId, 'user-a')).toBeUndefined()
+            expect(personStore.getCachedPersonForUpdateByPersonId(teamId, person.id)).toBeUndefined()
+        })
+
+        it('deferred eviction is skipped if entry is re-dirtied during the DB write', async () => {
+            // properties_to_set must be non-empty so getPersonUpdateOutcome returns 'changed'
+            // and the entry is included in the batch (otherwise the mock is never called).
+            const personUpdate = {
+                ...fromInternalPerson(person, 'user-a'),
+                needs_write: true,
+                properties_to_set: { new_prop: 'new_value' },
+            }
+            personStore.setCachedPersonForUpdate(teamId, 'user-a', personUpdate, 0)
+            personStore.releaseBatch(0)
+
+            // Simulate a concurrent batch re-dirtying the entry during the async DB write
+            // (i.e., after the linearization point clears needs_write but before processDeferredEvictions).
+            // kafkaMessage must be truthy to avoid the fallback individual-update path.
+            mockRepo.updatePersonsBatch.mockImplementationOnce((updates: any[]) => {
+                const results = new Map()
+                for (const update of updates) {
+                    results.set(update.uuid, { success: true, version: update.version + 1, kafkaMessage: {} })
+                }
+                // getCachedPersonForUpdateByPersonId returns a deep copy, so we must access the
+                // internal map directly to simulate a concurrent batch re-dirtying the entry.
+                const cache: Map<string, any> = (personStore as any)['personUpdateCache']
+                const actualUpdate = cache.get(`${teamId}:${person.id}`)
+                if (actualUpdate) {
+                    actualUpdate.needs_write = true
+                }
+                return Promise.resolve(results)
+            })
+
+            await personStore.flush()
+
+            // Entry is still alive because it was re-dirtied during the DB write
+            expect(personStore.getCachedPersonForUpdateByPersonId(teamId, person.id)).toBeDefined()
+
+            // A second flush clears it properly
+            await personStore.flush()
+            expect(personStore.getCachedPersonForUpdateByPersonId(teamId, person.id)).toBeUndefined()
+            expect(personStore.getCachedPersonForUpdateByDistinctId(teamId, 'user-a')).toBeUndefined()
+        })
+
+        it('evicts clean person update entries from personUpdateCache', () => {
+            const personUpdate = { ...fromInternalPerson(person, 'user-a'), needs_write: false }
+            personStore.setCachedPersonForUpdate(teamId, 'user-a', personUpdate, 0)
+
+            personStore.releaseBatch(0)
+
+            expect(personStore.getCachedPersonForUpdateByPersonId(teamId, person.id)).toBeUndefined()
+        })
+
+        it('clears personlessBatchResults for evicted distinct IDs', () => {
+            personStore.setCheckCachedPerson(teamId, 'user-a', null, 0)
+            ;(personStore as any)['personlessBatchResults'].set(`${teamId}|user-a`, true)
+
+            personStore.releaseBatch(0)
+
+            expect(personStore.getPersonlessBatchResult(teamId, 'user-a')).toBeUndefined()
+        })
+
+        it('only evicts entries for the released batch, leaving other batch entries intact', () => {
+            personStore.setCheckCachedPerson(teamId, 'user-a', person, 0)
+            personStore.setCheckCachedPerson(teamId, 'user-b', person, 1)
+
+            personStore.releaseBatch(0)
+
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(false)
+            expect(personStore.getCheckCache().has(`${teamId}:user-b`)).toBe(true)
+        })
+
+        it('cleans up batch tracking data after release', () => {
+            personStore.setCheckCachedPerson(teamId, 'user-a', person, 0)
+
+            personStore.releaseBatch(0)
+
+            const batchDistinctKeys = (personStore as any)['batchDistinctKeys'] as Map<number, Set<string>>
+            expect(batchDistinctKeys.has(0)).toBe(false)
+            const distinctKeyRefCount = (personStore as any)['distinctKeyRefCount'] as Map<string, number>
+            expect(distinctKeyRefCount.has(`${teamId}:user-a`)).toBe(false)
+        })
+
+        it('overlapping prefetches keep entry alive through first flush, evict on second', async () => {
+            // Simulate batch 0 and batch 1 both prefetching the same distinct ID
+            // before either has flushed (the concurrent-batches scenario).
+            mockRepo.fetchPersonsByDistinctIds.mockResolvedValueOnce([{ ...person, distinct_id: 'user-a' }])
+            await personStore.prefetchPersons([{ teamId, distinctId: 'user-a' }], 0)
+            // Batch 1 prefetches same user — already in cache, just bumps refcount
+            await personStore.prefetchPersons([{ teamId, distinctId: 'user-a' }], 1)
+
+            const distinctKeyRefCount = (personStore as any)['distinctKeyRefCount'] as Map<string, number>
+            expect(distinctKeyRefCount.get(`${teamId}:user-a`)).toBe(2)
+
+            // Batch 0 per-event work: update user-a
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { prop0: 'batch0' }, [], {}, 'user-a')
+
+            // Batch 0 flushes — writes the dirty entry, clears needs_write
+            await personStore.flush()
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(1)
+
+            // Release batch 0 — refcount drops to 1, entry survives for batch 1
+            personStore.releaseBatch(0)
+            expect(distinctKeyRefCount.get(`${teamId}:user-a`)).toBe(1)
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(true)
+
+            // Batch 1 per-event work: update user-a (reuses the cached entry, no DB re-fetch)
+            await personStore.updatePersonWithPropertiesDiffForUpdate(person, { prop1: 'batch1' }, [], {}, 'user-a')
+
+            // Batch 1 flushes — writes batch 1's dirty entry
+            await personStore.flush()
+            expect(mockRepo.updatePersonsBatch).toHaveBeenCalledTimes(2)
+
+            // Release batch 1 — refcount drops to 0, entry evicted
+            personStore.releaseBatch(1)
+            expect(distinctKeyRefCount.has(`${teamId}:user-a`)).toBe(false)
+            expect(personStore.getCheckCache().has(`${teamId}:user-a`)).toBe(false)
         })
     })
 })
