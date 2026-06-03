@@ -25,12 +25,14 @@ import requests
 import structlog
 import posthoganalytics
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from posthog.api.authentication import password_reset_token_generator
+from posthog.api.email_verification import EmailVerifier, is_email_verification_disabled
+from posthog.email import is_email_available
 from posthog.exceptions_capture import capture_exception
 from posthog.models.integration import StripeIntegration
 from posthog.models.oauth import (
@@ -736,6 +738,16 @@ def _handle_new_user(
         send_provisioning_welcome.delay(user.id, reset_token, partner_label)
     except Exception:
         capture_exception(additional_properties={"user_id": user.id, "step": "provisioning_welcome_email"})
+
+    if is_email_available() and not user.is_email_verified and not is_email_verification_disabled(user):
+        try:
+            EmailVerifier.create_token_and_send_email_verification(user)
+        except APIException:
+            # Send failures are already captured inside EmailVerifier; swallow so a mail
+            # problem doesn't fail provisioning, and avoid a duplicate error report.
+            pass
+        except Exception:
+            capture_exception(additional_properties={"user_id": user.id, "step": "provisioning_email_verification"})
 
     code = secrets.token_urlsafe(32)
     cache_key = f"{AUTH_CODE_CACHE_PREFIX}{code}"
