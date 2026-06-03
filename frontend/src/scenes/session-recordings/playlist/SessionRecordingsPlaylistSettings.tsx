@@ -369,6 +369,11 @@ export function SessionRecordingsPlaylistTopSettings({
         AccessControlLevel.Editor
     )
 
+    const isSyntheticCollection = Boolean(shortId?.startsWith('synthetic-'))
+    const syntheticCollectionDisabledReason = isSyntheticCollection
+        ? "This is a computed collection and can't be edited"
+        : undefined
+
     const getActionsMenuItems = (): LemonMenuItem[] => {
         const menuItems: LemonMenuItem[] = [
             {
@@ -384,7 +389,7 @@ export function SessionRecordingsPlaylistTopSettings({
                 label: 'Remove from this collection',
                 onClick: () => handleBulkDeleteFromPlaylist(shortId),
                 'data-attr': 'remove-from-collection',
-                disabledReason: accessControlDisabledReason,
+                disabledReason: syntheticCollectionDisabledReason ?? accessControlDisabledReason,
             })
         }
 
