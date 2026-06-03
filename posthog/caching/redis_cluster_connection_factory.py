@@ -27,26 +27,43 @@ class RedisClusterConnectionFactory(ConnectionFactory):
     discovery. We wrap that construction in a "redis_cluster.discovery" span so
     its place in a trace is visible: nested under a request span means discovery
     is on a user's critical path; a parentless span means it ran during warmup.
+
+    Discovered clients are cached at class scope (process-global), mirroring
+    django_redis's ConnectionFactory._pools. Django builds a new cache client --
+    and therefore a new factory instance -- per request, and `caches` is
+    thread-local, so per-instance state would be discarded constantly and every
+    request thread would re-run discovery. Class-level state is shared across all
+    instances, so discovery runs once per process and the post-fork prewarm
+    populates the same client the request threads read.
+
+    This relies on the client being long-lived: do not enable CLOSE_CONNECTION
+    on the query_cache alias. django_redis closes connections per request when
+    it is set, which would tear down and rediscover the shared client on every
+    request -- the exact per-request discovery this class exists to avoid.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._cluster_clients: dict[str, RedisCluster] = {}
-        self._lock = threading.Lock()
+    # Class scope (process-global), not per-instance -- see the class docstring.
+    _cluster_clients: dict[str, RedisCluster] = {}
+    _lock = threading.Lock()
 
     def connect(self, url: str) -> RedisCluster:
-        if url not in self._cluster_clients:
+        client = self._cluster_clients.get(url)
+        if client is None:
             with self._lock:
-                if url not in self._cluster_clients:
-                    self._cluster_clients[url] = self._discover_cluster(url)
-        return self._cluster_clients[url]
+                client = self._cluster_clients.get(url)
+                if client is None:
+                    client = self._discover_cluster(url)
+                    self._cluster_clients[url] = client
+        return client
 
     @tracer.start_as_current_span("redis_cluster.discovery")
     def _discover_cluster(self, url: str) -> RedisCluster:
-        return RedisCluster.from_url(url)
-
-    def disconnect(self, connection) -> None:
-        connection.close()
+        # socket_keepalive enables TCP keepalive on the long-lived pooled
+        # connections -- best-effort protection against an idle LB/NAT silently
+        # dropping them and forcing a reconnect (and fresh discovery) mid-request.
+        # With OS-default keepalive timing this isn't a hard guarantee; tune
+        # socket_keepalive_options below the real idle timeout if drops persist.
+        return RedisCluster.from_url(url, socket_keepalive=True)
 
 
 def prewarm_query_cache_cluster() -> None:
