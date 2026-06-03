@@ -123,7 +123,7 @@ impl GroupStorage for PostgresStorage {
         }
 
         let client = current_client_name();
-        let pool_label = PostgresStorage::pool_label(consistency);
+        let pool_label = PostgresStorage::bulk_pool_label(consistency);
         let labels = [
             ("operation".to_string(), "get_groups_batch".to_string()),
             ("pool".to_string(), pool_label.to_string()),
@@ -131,7 +131,7 @@ impl GroupStorage for PostgresStorage {
         ];
         let _timer = common_metrics::timing_guard(DB_QUERY_DURATION, &labels);
 
-        let pool = self.pool_for_consistency(consistency);
+        let pool = self.bulk_pool_for_consistency(consistency);
         let mut conn = PostgresStorage::acquire_timed(pool, pool_label).await?;
 
         let team_ids: Vec<i32> = keys.iter().map(|k| k.team_id as i32).collect();
@@ -243,7 +243,7 @@ impl GroupStorage for PostgresStorage {
         }
 
         let client = current_client_name();
-        let pool_label = PostgresStorage::pool_label(consistency);
+        let pool_label = PostgresStorage::bulk_pool_label(consistency);
         let labels = [
             (
                 "operation".to_string(),
@@ -254,7 +254,7 @@ impl GroupStorage for PostgresStorage {
         ];
         let _timer = common_metrics::timing_guard(DB_QUERY_DURATION, &labels);
 
-        let pool = self.pool_for_consistency(consistency);
+        let pool = self.bulk_pool_for_consistency(consistency);
         let mut conn = PostgresStorage::acquire_timed(pool, pool_label).await?;
 
         let team_ids_i32: Vec<i32> = team_ids.iter().map(|&id| id as i32).collect();
@@ -351,7 +351,7 @@ impl GroupStorage for PostgresStorage {
         }
 
         let client = current_client_name();
-        let pool_label = PostgresStorage::pool_label(consistency);
+        let pool_label = PostgresStorage::bulk_pool_label(consistency);
         let labels = [
             (
                 "operation".to_string(),
@@ -362,7 +362,7 @@ impl GroupStorage for PostgresStorage {
         ];
         let _timer = common_metrics::timing_guard(DB_QUERY_DURATION, &labels);
 
-        let pool = self.pool_for_consistency(consistency);
+        let pool = self.bulk_pool_for_consistency(consistency);
         let mut conn = PostgresStorage::acquire_timed(pool, pool_label).await?;
 
         let rows = sqlx::query_as!(
@@ -497,7 +497,7 @@ impl GroupStorage for PostgresStorage {
         include_properties: bool,
     ) -> StorageResult<(Vec<Group>, bool)> {
         let client = current_client_name();
-        let pool_label = PostgresStorage::pool_label(consistency);
+        let pool_label = PostgresStorage::bulk_pool_label(consistency);
         let labels = [
             ("operation".to_string(), "list_groups".to_string()),
             ("pool".to_string(), pool_label.to_string()),
@@ -505,7 +505,7 @@ impl GroupStorage for PostgresStorage {
         ];
         let _timer = common_metrics::timing_guard(DB_QUERY_DURATION, &labels);
 
-        let pool = self.pool_for_consistency(consistency);
+        let pool = self.bulk_pool_for_consistency(consistency);
         let mut conn = PostgresStorage::acquire_timed(pool, pool_label).await?;
 
         let fetch_limit = (limit as i64) + 1;
