@@ -55,6 +55,7 @@ export interface SavedInsightFilters {
     dashboardId: number | undefined | null
     events: string[] | undefined | null
     hideFeatureFlagInsights: boolean | undefined | null
+    hideOnDashboard: boolean | undefined | null
     favorited: boolean | undefined | null
 }
 
@@ -76,6 +77,7 @@ export function cleanFilters(values: Partial<SavedInsightFilters>): SavedInsight
         dashboardId: values.dashboardId,
         events: values.events,
         hideFeatureFlagInsights: values.hideFeatureFlagInsights || false,
+        hideOnDashboard: values.hideOnDashboard || false,
         favorited: values.favorited || false,
     }
 }
@@ -279,6 +281,7 @@ export const savedInsightsLogic = kea<savedInsightsLogicType>([
                     dashboards: [filters.dashboardId],
                 }),
                 ...(filters.hideFeatureFlagInsights && { hide_feature_flag_insights: true }),
+                ...(filters.hideOnDashboard && { hide_on_dashboard: true }),
             }),
         ],
         pagination: [
