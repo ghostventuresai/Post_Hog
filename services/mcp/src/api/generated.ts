@@ -23355,15 +23355,6 @@ export namespace Schemas {
       results: HealthIssue[];
     }
 
-    export interface PaginatedHeatmapsResponseList {
-      count: number;
-      /** @nullable */
-      next?: string | null;
-      /** @nullable */
-      previous?: string | null;
-      results: HeatmapsResponse[];
-    }
-
     export interface PaginatedHogFlowMinimalList {
       count: number;
       /** @nullable */
@@ -24413,21 +24404,6 @@ export namespace Schemas {
       /** @nullable */
       previous?: string | null;
       results: SandboxEnvironmentList[];
-    }
-
-    export interface SavedHeatmapListResponse {
-      results: HeatmapScreenshotResponse[];
-      /** Total number of saved heatmaps matching the filters. */
-      count: number;
-    }
-
-    export interface PaginatedSavedHeatmapListResponseList {
-      count: number;
-      /** @nullable */
-      next?: string | null;
-      /** @nullable */
-      previous?: string | null;
-      results: SavedHeatmapListResponse[];
     }
 
     /**
@@ -36682,6 +36658,12 @@ export namespace Schemas {
       readonly updated_at: string;
     }
 
+    export interface SavedHeatmapListResponse {
+      results: HeatmapScreenshotResponse[];
+      /** Total number of saved heatmaps matching the filters. */
+      count: number;
+    }
+
     export interface SavedHeatmapRequest {
       /**
          * Human-readable label for the saved heatmap.
@@ -41389,14 +41371,6 @@ export namespace Schemas {
      * When true (default), drop interactions recorded at the (0, 0) origin, which are usually noise.
      */
     hide_zero_coordinates?: boolean;
-    /**
-     * Number of results to return per page.
-     */
-    limit?: number;
-    /**
-     * The initial index from which to return the results.
-     */
-    offset?: number;
     /**
      * The interaction type to return. One of: 'click' (default), 'rageclick', 'mousemove', or 'scrolldepth'. Scrolldepth returns scroll buckets instead of x/y coordinates.
      * @minLength 1
@@ -46939,14 +46913,6 @@ export namespace Schemas {
      * When true (default), drop interactions recorded at the (0, 0) origin, which are usually noise.
      */
     hide_zero_coordinates?: boolean;
-    /**
-     * Number of results to return per page.
-     */
-    limit?: number;
-    /**
-     * The initial index from which to return the results.
-     */
-    offset?: number;
     /**
      * The interaction type to return. One of: 'click' (default), 'rageclick', 'mousemove', or 'scrolldepth'. Scrolldepth returns scroll buckets instead of x/y coordinates.
      * @minLength 1
