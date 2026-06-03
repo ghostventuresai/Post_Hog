@@ -1,9 +1,11 @@
+import { DateTime } from 'luxon'
 import { Counter } from 'prom-client'
 import express from 'ultimate-express'
 
 import { ModifiedRequest } from '~/api/router'
-import { CyclotronJobInvocationHogFunction, MinimalAppMetric } from '~/cdp/types'
+import { CyclotronJobInvocationHogFunction, LogEntry, LogEntryLevel, MinimalAppMetric } from '~/cdp/types'
 import { defaultConfig } from '~/config/config'
+import { HogFlow } from '~/schema/hogflow'
 import { parseJSON } from '~/utils/json-parse'
 
 import { logger } from '../../../utils/logger'
@@ -32,6 +34,14 @@ const emailTrackingErrorsCounter = new Counter({
     name: 'email_tracking_errors_total',
     help: 'Total number of email tracking processing errors',
     labelNames: ['error_type', 'source'],
+})
+
+// Skips here are expected (e.g. SES webhook for a hog_function rather than a hog_flow),
+// kept separate so alerts on `email_tracking_errors_total` don't fire on normal traffic.
+const emailTrackingLogSkipsCounter = new Counter({
+    name: 'email_tracking_log_skips_total',
+    help: 'Total number of email tracking log entries skipped (expected, non-error)',
+    labelNames: ['reason', 'source'],
 })
 
 export const generateTrackingRedirectUrl = (
@@ -140,13 +150,75 @@ export class EmailTrackingService {
         })
     }
 
+    public async trackLogs(
+        entries: {
+            functionId?: string
+            invocationId?: string
+            level: LogEntryLevel
+            message: string
+        }[]
+    ): Promise<void> {
+        if (entries.length === 0) {
+            return
+        }
+
+        const uniqueFunctionIds = Array.from(
+            new Set(entries.map((e) => e.functionId).filter((id): id is string => Boolean(id)))
+        )
+
+        let hogFlows: Record<string, HogFlow | null> = {}
+        try {
+            hogFlows = await this.hogFlowManager.getHogFlows(uniqueFunctionIds)
+        } catch (error) {
+            logger.error('[EmailTrackingService] trackLogs: Failed to load hog flows', { error })
+            emailTrackingErrorsCounter.inc({ error_type: 'hog_flow_lookup_failed', source: 'ses' })
+            return
+        }
+
+        const now = DateTime.utc()
+        const logEntries: LogEntry[] = []
+        for (const entry of entries) {
+            if (!entry.functionId || !entry.invocationId) {
+                logger.error('[EmailTrackingService] trackLogs: Invalid custom ID', {
+                    functionId: entry.functionId,
+                    invocationId: entry.invocationId,
+                })
+                emailTrackingErrorsCounter.inc({ error_type: 'invalid_custom_id', source: 'ses' })
+                continue
+            }
+
+            const hogFlow = hogFlows[entry.functionId]
+            if (!hogFlow) {
+                emailTrackingLogSkipsCounter.inc({ reason: 'non_flow', source: 'ses' })
+                continue
+            }
+
+            logEntries.push({
+                team_id: hogFlow.team_id,
+                log_source: 'hog_flow',
+                log_source_id: hogFlow.id,
+                instance_id: entry.invocationId,
+                timestamp: now,
+                level: entry.level,
+                message: entry.message,
+            })
+        }
+
+        if (logEntries.length === 0) {
+            return
+        }
+
+        this.hogFunctionMonitoringService.queueLogs(logEntries, 'hog_flow')
+        await this.hogFunctionMonitoringService.flush()
+    }
+
     public async handleSesWebhook(req: ModifiedRequest): Promise<{ status: number; message?: string }> {
         if (!req.body) {
             return { status: 403, message: 'Missing request body' }
         }
 
         try {
-            const { status, body, metrics, optOutRecipients } = await this.sesWebhookHandler.handleWebhook({
+            const { status, body, metrics, logEntries, optOutRecipients } = await this.sesWebhookHandler.handleWebhook({
                 body: parseJSON(req.body),
                 headers: req.headers,
                 verifySignature: true,
@@ -161,6 +233,21 @@ export class EmailTrackingService {
                     metricName: metric.metricName,
                     source: 'ses',
                 })
+            }
+
+            // Wrapped so a failure here doesn't skip the opt-out processing below.
+            try {
+                await this.trackLogs(
+                    (logEntries || []).map((entry) => ({
+                        functionId: entry.functionId,
+                        invocationId: entry.invocationId,
+                        level: entry.level,
+                        message: entry.message,
+                    }))
+                )
+            } catch (error) {
+                logger.error('[EmailTrackingService] handleSesWebhook: Failed to track logs', { error })
+                emailTrackingErrorsCounter.inc({ error_type: 'track_logs_failed', source: 'ses' })
             }
 
             // Collect all emails to opt out per team, then batch each team's opt-out in one query
