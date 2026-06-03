@@ -35,6 +35,13 @@ import { isNonFailureStatus } from '../utils/non-failure-status-codes'
 import { HogInputsService } from './hog-inputs.service'
 import { EmailService } from './messaging/email.service'
 import { RecipientTokensService } from './messaging/recipient-tokens.service'
+import {
+    EXECUTION_COUNT_PROPERTY,
+    SELF_LOOP_MAX_DEPTH,
+    SelfLoopGuardMode,
+    evaluateSelfLoopGuard,
+    isPostHogIngestUrl,
+} from './self-loop-guard'
 
 /** Narrowed config type for CDP fetch retry settings, used by native/segment destination executors */
 export type CdpFetchConfig = Pick<
@@ -48,6 +55,7 @@ export interface HogExecutorConfig {
     fetchRetries: number
     fetchBackoffBaseMs: number
     fetchBackoffMaxMs: number
+    selfLoopGuardMode: SelfLoopGuardMode
     emailQueueRouting: string
 }
 
@@ -744,6 +752,41 @@ export class HogExecutorService {
                     )
                     params.url = replace(params.url)
                 }
+            }
+        }
+
+        // Break event-forwarding loops: a fetch back into this project's own ingestion
+        // endpoint re-enters the pipeline and can re-trigger this same function. Bounded
+        // by the same hop counter that protects `postHogCapture`. The ingest-URL check
+        // gates the team lookup so external fetches (the common case) pay nothing.
+        if (this.config.selfLoopGuardMode !== 'disabled' && isPostHogIngestUrl(params.url)) {
+            const eventProperties = invocation.state.globals.event?.properties
+            const givenCount = eventProperties?.[EXECUTION_COUNT_PROPERTY]
+            const executionCount = typeof givenCount === 'number' ? givenCount : 0
+
+            const decision = evaluateSelfLoopGuard({
+                mode: this.config.selfLoopGuardMode,
+                url: params.url,
+                body: params.body,
+                team: await this.asyncContext.teamManager.getTeam(invocation.teamId),
+                executionCount,
+            })
+
+            if (decision.action === 'block') {
+                addLog(
+                    'error',
+                    `Refusing to fetch a PostHog ingestion endpoint using this project's own API key - this would form an event-forwarding loop that has already repeated ${SELF_LOOP_MAX_DEPTH} times. To capture an event back into this project use the 'postHogCapture' helper, or to enrich incoming events use a transformation.`
+                )
+                result.error = new Error('Self-referential event-forwarding loop detected')
+                result.finished = true
+                return result
+            } else if (decision.action === 'warn') {
+                addLog(
+                    'warn',
+                    `This fetch targets a PostHog ingestion endpoint using this project's own API key (hop ${decision.depth}). It would be blocked if the self-loop guard were enforcing.`
+                )
+            } else if (decision.action === 'allow_with_counter') {
+                params.body = decision.body
             }
         }
 

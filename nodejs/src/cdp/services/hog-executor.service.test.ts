@@ -19,6 +19,7 @@ import { compileHog } from '../templates/compiler'
 import { HOG_EXAMPLES, HOG_FILTERS_EXAMPLES, HOG_INPUTS_EXAMPLES } from '../_tests/examples'
 import { createExampleInvocation, createHogExecutionGlobals, createHogFunction } from '../_tests/fixtures'
 import { EXTEND_OBJECT_KEY, isConnectionLevelError } from './hog-executor.service'
+import { EXECUTION_COUNT_PROPERTY, SELF_LOOP_MAX_DEPTH } from './self-loop-guard'
 
 // Mock before importing fetch
 jest.mock('~/utils/request', () => {
@@ -71,6 +72,7 @@ describe('Hog Executor', () => {
                 fetchBackoffBaseMs: hub.CDP_FETCH_BACKOFF_BASE_MS,
                 fetchBackoffMaxMs: hub.CDP_FETCH_BACKOFF_MAX_MS,
                 emailQueueRouting: hub.CDP_EMAIL_QUEUE_ROUTING,
+                selfLoopGuardMode: hub.CDP_SELF_LOOP_GUARD_MODE,
             },
             { teamManager: hub.teamManager, siteUrl: hub.SITE_URL },
             hogInputsService,
@@ -1664,6 +1666,120 @@ describe('Hog Executor', () => {
                 expect(result.error.message).toContain('status code 400')
             })
         })
+
+        describe('self-loop guard', () => {
+            const OWN_TOKEN = 'phc_synthetic_own_0000000000000000'
+            const INGEST_URL = 'https://us.i.posthog.com/capture/'
+
+            const mockOwnTeam = (): void => {
+                jest.spyOn(hub.teamManager, 'getTeam').mockResolvedValue({
+                    id: 1,
+                    api_token: OWN_TOKEN,
+                    secret_api_token: null,
+                } as any)
+            }
+
+            const setMode = (mode: 'disabled' | 'warn' | 'enforce'): void => {
+                ;(executor as any).config.selfLoopGuardMode = mode
+            }
+
+            const setExecutionCount = (invocation: CyclotronJobInvocationHogFunction, count: number): void => {
+                invocation.state.globals.event.properties = {
+                    ...invocation.state.globals.event.properties,
+                    [EXECUTION_COUNT_PROPERTY]: count,
+                }
+            }
+
+            const ownTokenCaptureBody = (): string =>
+                JSON.stringify({ api_key: OWN_TOKEN, event: 'replicated', distinct_id: 'u1', properties: {} })
+
+            // Capture the body sent to the (mocked) ingest endpoint without a real network call.
+            const captureIngestFetch = (): { getBody: () => string | undefined } => {
+                let sentBody: string | undefined
+                ;(fetch as jest.Mock).mockImplementationOnce((_url: string, options: any) => {
+                    sentBody = options.body
+                    return Promise.resolve({
+                        status: 200,
+                        headers: {},
+                        text: () => Promise.resolve('ok'),
+                        json: () => Promise.resolve({}),
+                        dump: () => Promise.resolve(),
+                    })
+                })
+                return { getBody: () => sentBody }
+            }
+
+            it('blocks a self-capture loop once it reaches the depth cap (enforce)', async () => {
+                setMode('enforce')
+                mockOwnTeam()
+                const invocation = await createFetchInvocation({
+                    url: INGEST_URL,
+                    method: 'POST',
+                    body: ownTokenCaptureBody(),
+                })
+                setExecutionCount(invocation, SELF_LOOP_MAX_DEPTH)
+                mockRequest.mockClear()
+
+                const result = await executor.executeFetch(invocation)
+
+                expect(result.error).toBeInstanceOf(Error)
+                expect(result.finished).toBe(true)
+                expect(mockRequest).not.toHaveBeenCalled()
+                expect(cleanLogs(result.logs.map((l) => l.message))).toEqual(
+                    expect.arrayContaining([expect.stringContaining('event-forwarding loop')])
+                )
+            })
+
+            it('stamps the incremented hop counter onto the captured payload below the cap (enforce)', async () => {
+                setMode('enforce')
+                mockOwnTeam()
+                const invocation = await createFetchInvocation({
+                    url: INGEST_URL,
+                    method: 'POST',
+                    body: ownTokenCaptureBody(),
+                })
+                setExecutionCount(invocation, 2)
+                const sent = captureIngestFetch()
+
+                const result = await executor.executeFetch(invocation)
+
+                expect(result.error).toBeUndefined()
+                expect(parseJSON(sent.getBody()!).properties[EXECUTION_COUNT_PROPERTY]).toBe(3)
+            })
+
+            it('observes but does not block or rewrite in warn mode', async () => {
+                setMode('warn')
+                mockOwnTeam()
+                const invocation = await createFetchInvocation({
+                    url: INGEST_URL,
+                    method: 'POST',
+                    body: ownTokenCaptureBody(),
+                })
+                setExecutionCount(invocation, SELF_LOOP_MAX_DEPTH)
+                const sent = captureIngestFetch()
+
+                const result = await executor.executeFetch(invocation)
+
+                expect(result.error).toBeUndefined()
+                expect(parseJSON(sent.getBody()!).properties[EXECUTION_COUNT_PROPERTY]).toBeUndefined()
+            })
+
+            it('leaves a normal external fetch untouched even with the project token in the body (enforce)', async () => {
+                setMode('enforce')
+                mockOwnTeam()
+                const invocation = await createFetchInvocation({
+                    url: `${baseUrl}/test`,
+                    method: 'POST',
+                    body: ownTokenCaptureBody(),
+                })
+                mockRequest.mockClear()
+
+                const result = await executor.executeFetch(invocation)
+
+                expect(result.error).toBeUndefined()
+                expect(mockRequest).toHaveBeenCalled()
+            })
+        })
     })
 
     describe('isConnectionLevelError', () => {
@@ -1782,6 +1898,7 @@ describe('Hog Executor', () => {
                     fetchBackoffBaseMs: hub.CDP_FETCH_BACKOFF_BASE_MS,
                     fetchBackoffMaxMs: hub.CDP_FETCH_BACKOFF_MAX_MS,
                     emailQueueRouting,
+                    selfLoopGuardMode: hub.CDP_SELF_LOOP_GUARD_MODE,
                 },
                 { teamManager: hub.teamManager, siteUrl: hub.SITE_URL },
                 hogInputsService,
