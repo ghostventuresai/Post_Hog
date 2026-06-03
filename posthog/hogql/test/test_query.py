@@ -339,6 +339,22 @@ class TestQuery(ClickhouseTestMixin, APIBaseTest):
         self.assertEqual(str(error.exception), INVALID_CONNECTION_ID_ERROR)
         mock_sync_execute.assert_not_called()
 
+    @patch("posthog.hogql.query.sync_execute")
+    def test_execute_hogql_query_raises_when_prepared_ast_is_none(self, mock_sync_execute):
+        from posthog.hogql.query import prepare_ast_for_printing as real_prepare_ast
+
+        def fake_prepare(*args, **kwargs):
+            if kwargs.get("dialect") == "clickhouse":
+                return None
+            return real_prepare_ast(*args, **kwargs)
+
+        with patch("posthog.hogql.query.prepare_ast_for_printing", side_effect=fake_prepare):
+            with self.assertRaises(QueryError) as error:
+                execute_hogql_query("select 1", team=self.team)
+
+        self.assertIn("Could not prepare the query AST", str(error.exception))
+        mock_sync_execute.assert_not_called()
+
     @pytest.mark.usefixtures("unittest_snapshot")
     def test_query_joins_pdi_persons(self):
         with freeze_time("2020-01-10"):
