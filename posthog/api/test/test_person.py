@@ -1045,17 +1045,30 @@ class TestPerson(ClickhouseTestMixin, APIBaseTest, QueryMatchingTest):
             process_person_profile=True,
         )
 
+    @parameterized.expand(
+        [
+            ("string_property", "foo", "bar", {"foo": "bar"}),
+            ("null_property", "existing_prop", None, {"existing_prop": None}),
+        ]
+    )
     @mock.patch("posthog.api.person.capture_internal")
-    def test_update_person_property_by_numeric_id(self, mock_capture) -> None:
+    def test_update_person_property(
+        self, _name, key: str, value: object, expected_set: dict[str, object], mock_capture
+    ) -> None:
         person = _create_person(
             team=self.team,
             distinct_ids=["some_distinct_id"],
-            properties={"$browser": "whatever", "$os": "Mac OS X"},
+            properties={"existing_prop": "some_value"},
             immediate=True,
         )
 
-        self.client.post(f"/api/person/{person.id}/update_property", {"key": "foo", "value": "bar"})
+        response = self.client.post(
+            f"/api/person/{person.uuid}/update_property",
+            {"key": key, "value": value},
+            content_type="application/json",
+        )
 
+        assert response.status_code == 202
         mock_capture.assert_called_once_with(
             token=self.team.api_token,
             event_name="$set",
@@ -1063,10 +1076,26 @@ class TestPerson(ClickhouseTestMixin, APIBaseTest, QueryMatchingTest):
             distinct_id="some_distinct_id",
             timestamp=mock.ANY,
             properties={
-                "$set": {"foo": "bar"},
+                "$set": expected_set,
             },
             process_person_profile=True,
         )
+
+    def test_update_person_property_missing_value_returns_400(self) -> None:
+        person = _create_person(
+            team=self.team,
+            distinct_ids=["some_distinct_id"],
+            properties={"existing_prop": "some_value"},
+            immediate=True,
+        )
+
+        response = self.client.post(
+            f"/api/person/{person.uuid}/update_property",
+            {"key": "foo"},
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+        assert response.json()["attr"] == "value"
 
     @mock.patch("posthog.api.person.capture_internal")
     def test_delete_person_property_by_numeric_id(self, mock_capture) -> None:
