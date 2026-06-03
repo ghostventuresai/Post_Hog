@@ -15,7 +15,7 @@ import {
     Team,
 } from '../../../types'
 import { CreatePersonResult, MoveDistinctIdsResult } from '../../../utils/db/db'
-import { MessageSizeTooLarge } from '../../../utils/db/error'
+import { DependencyUnavailableError, MessageSizeTooLarge } from '../../../utils/db/error'
 import { logger } from '../../../utils/logger'
 import { BatchWritingStore } from '../stores/batch-writing-store'
 import {
@@ -683,6 +683,14 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
         return fetchPromise
     }
 
+    /**
+     * Best-effort cache warmer for the given distinct IDs. Callers fire this without awaiting it,
+     * so any rejection becomes an unhandled rejection that exits the worker. It therefore recovers
+     * from transient persons-Postgres unavailability (DependencyUnavailableError) by resolving to an
+     * empty cache — fetchForChecking/fetchForUpdate fall back to an on-demand fetch (with their own
+     * retry/error handling). Any other error is rethrown: an unexpected prefetch failure (e.g. a
+     * broken query) should crash loudly rather than be silently masked.
+     */
     async prefetchPersons(teamDistinctIds: { teamId: number; distinctId: string }[]): Promise<void> {
         if (teamDistinctIds.length === 0) {
             return
@@ -748,6 +756,21 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
 
                 return personsByKey
             })
+            .catch((error) => {
+                // Only recover from transient persons-Postgres/PgBouncer unavailability, which is the
+                // known crash cause: this step is fired without being awaited, so a rejection becomes
+                // an unhandled rejection and exits the worker. On a transient failure leave the caches
+                // empty and resolve to an empty map — fetchForChecking/fetchForUpdate then fall back to
+                // an on-demand fetch, which carries its own retry/error handling in the per-distinct-id
+                // pipeline. Any other error is unexpected and rethrown rather than silently masked.
+                if (error instanceof DependencyUnavailableError) {
+                    logger.warn('⚠️', 'prefetchPersons failed on transient persons-Postgres error', {
+                        error: String(error),
+                    })
+                    return new Map<string, InternalPerson>()
+                }
+                throw error
+            })
             .finally(() => {
                 // Clean up the promises after completion
                 for (const { cacheKey } of uncachedEntries) {
@@ -755,15 +778,20 @@ export class BatchWritingPersonsStore implements PersonsStore, BatchWritingStore
                 }
             })
 
-        // Register per-key promises so fetchForChecking/fetchForUpdate will wait on them
+        // Register per-key promises so fetchForChecking/fetchForUpdate will wait on them.
+        // These resolve to null on any fetch failure so they never dangle as rejected promises:
+        // consumers fall back to an on-demand fetch, and the single source of truth for surfacing an
+        // unexpected failure is the awaited batch fetch below.
         for (const { cacheKey } of uncachedEntries) {
-            const keyPromise = batchFetchPromise.then((personsByKey) => {
-                return personsByKey.get(cacheKey) ?? null
-            })
+            const keyPromise = batchFetchPromise
+                .then((personsByKey) => personsByKey.get(cacheKey) ?? null)
+                .catch(() => null)
             this.fetchPromisesForChecking.set(cacheKey, keyPromise)
         }
 
-        // Await the batch fetch so callers who await prefetchPersons() get blocking behavior
+        // Await the batch fetch so callers who await prefetchPersons() get blocking behavior.
+        // On an unexpected (non-transient) failure this rethrows, surfacing the error instead of
+        // silently masking it.
         await batchFetchPromise
     }
 
