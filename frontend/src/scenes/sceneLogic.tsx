@@ -199,6 +199,7 @@ const pathPrefixesOnboardingNotRequiredFor = [
     '/cli',
     '/startups',
     '/coupons',
+    '/legal',
 ]
 
 const DelayedLoadingSpinner = (): JSX.Element => {
