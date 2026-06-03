@@ -116,7 +116,7 @@ First, analyze the entire session and divide it into sequential chronological se
 
 - A concise, descriptive name that captures the user's primary activities in that timeframe
   ✓ GOOD NAMES: "Logged into application," "Filtered products," "Created a project"
-  ✗ BAD NAMES: "Page loading," "Error occurence," "Session start"
+  ✗ BAD NAMES: "Page loading," "Error occurrence," "Session start"
 - Start and end `event_id`s to clearly mark the segment boundaries
 
 1.3. Segment Boundary Guidelines:
