@@ -62,20 +62,19 @@ class SQLSource(SimpleSource[ConfigType], Generic[ConfigType]):
 
     @classmethod
     def default_non_retryable_errors(cls) -> dict[str, str | None]:
-        """Non-retryable error patterns shared by multiple SQL sources.
+        """Non-retryable error patterns shared by every SQL source.
 
-        Subclasses opt in by merging this into their own
-        `get_non_retryable_errors` return dict, e.g.
-        `return {**self.default_non_retryable_errors(), ...}`. The base
-        `SQLSource` itself does not call this — every existing source's
-        behavior is preserved until it explicitly opts in.
+        Returned by the base `get_non_retryable_errors`; subclasses merge
+        these back in via `{**super().get_non_retryable_errors(), ...}`.
+        All are raised in shared pipeline/delta code, so they can occur
+        for any SQL source and the fix is always a reset + re-sync:
 
-        The two entries here are the ones currently duplicated across
-        ≥2 SQL sources today:
-
-        - "Source column type changed" (MySQL, MSSQL, Snowflake,
-          BigQuery, Redshift)
-        - "Cannot build decimal array from values" (MySQL, MSSQL)
+        - "Source column type changed" — an integer column was widened
+          upstream past its stored type
+        - "Cannot build decimal array from values" — a value exceeds the
+          Delta decimal budget
+        - "rows failed validation check" — incoming rows no longer match
+          the stored columns (schema drift)
         """
         return {
             "Source column type changed": (
@@ -88,7 +87,23 @@ class SQLSource(SimpleSource[ConfigType], Generic[ConfigType]):
                 "(max precision 76, max scale 32). Please constrain the column with a lower precision/scale, "
                 "cast it to text in a view, or round the values at the source."
             ),
+            # Raised in the shared delta-write/merge layer when the incoming rows no longer match the
+            # stored table columns — typically a column added or its type changed in the source after
+            # the table was first synced. Retrying never repairs the divergent files.
+            "rows failed validation check": (
+                "The table's data no longer matches the columns we stored — usually because a column was added or "
+                "its type changed since the last sync. Please delete and resync the table to resolve the issue."
+            ),
         }
+
+    def get_non_retryable_errors(self) -> dict[str, str | None]:
+        """The shared SQL non-retryable errors.
+
+        Subclasses add their own by overriding and merging the shared set
+        back in: `return {**super().get_non_retryable_errors(), ...}`.
+        On key collision the source's own entry wins.
+        """
+        return self.default_non_retryable_errors()
 
     def _default_primary_key_from_columns(self, columns: list[tuple[str, str, bool]]) -> list[str] | None:
         """Fallback: use `id` when the driver didn't detect a PK but one is present.
