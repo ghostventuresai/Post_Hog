@@ -24949,6 +24949,20 @@ export namespace Schemas {
     }
 
     /**
+     * * `insight` - Insight
+    * `dashboard` - Dashboard
+    * `ai_prompt` - AI prompt
+     */
+    export type ResourceTypeEnum = typeof ResourceTypeEnum[keyof typeof ResourceTypeEnum];
+
+
+    export const ResourceTypeEnum = {
+      Insight: 'insight',
+      Dashboard: 'dashboard',
+      AiPrompt: 'ai_prompt',
+    } as const;
+
+    /**
      * * `email` - Email
     * `slack` - Slack
     * `webhook` - Webhook
@@ -25005,6 +25019,12 @@ export namespace Schemas {
      */
     export interface Subscription {
       readonly id: number;
+      /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Read-only — derived from the populated target (insight → insight, dashboard → dashboard, prompt → ai_prompt).
+
+      * `insight` - Insight
+      * `dashboard` - Dashboard
+      * `ai_prompt` - AI prompt */
+      readonly resource_type: ResourceTypeEnum;
       /**
          * Dashboard ID to subscribe to (mutually exclusive with insight on create).
          * @nullable
@@ -25021,6 +25041,11 @@ export namespace Schemas {
       readonly resource_name: string | null;
       /** List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6. */
       dashboard_export_insights?: number[];
+      /**
+         * Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters.
+         * @nullable
+         */
+      prompt?: string | null;
       /** Delivery channel: email, slack, or webhook.
 
       * `email` - Email
@@ -30857,6 +30882,12 @@ export namespace Schemas {
      */
     export interface PatchedSubscription {
       readonly id?: number;
+      /** What the subscription delivers: 'insight' (snapshot of one insight), 'dashboard' (snapshot of one dashboard), or 'ai_prompt' (LLM-generated report). Read-only — derived from the populated target (insight → insight, dashboard → dashboard, prompt → ai_prompt).
+
+      * `insight` - Insight
+      * `dashboard` - Dashboard
+      * `ai_prompt` - AI prompt */
+      readonly resource_type?: ResourceTypeEnum;
       /**
          * Dashboard ID to subscribe to (mutually exclusive with insight on create).
          * @nullable
@@ -30873,6 +30904,11 @@ export namespace Schemas {
       readonly resource_name?: string | null;
       /** List of insight IDs from the dashboard to include. Required for dashboard subscriptions, max 6. */
       dashboard_export_insights?: number[];
+      /**
+         * Free-text prompt that drives the AI-generated report. Required when resource_type is 'ai_prompt'. Max 4000 characters.
+         * @nullable
+         */
+      prompt?: string | null;
       /** Delivery channel: email, slack, or webhook.
 
       * `email` - Email
@@ -43376,7 +43412,7 @@ export namespace Schemas {
      */
     ordering?: string;
     /**
-     * Filter by subscription resource: insight vs dashboard export.
+     * Filter by subscription resource: insight, dashboard export, or AI report.
      */
     resource_type?: EnvironmentsSubscriptionsListResourceType;
     /**
@@ -43393,6 +43429,7 @@ export namespace Schemas {
 
 
     export const EnvironmentsSubscriptionsListResourceType = {
+      AiPrompt: 'ai_prompt',
       Dashboard: 'dashboard',
       Insight: 'insight',
     } as const;
@@ -49224,7 +49261,7 @@ export namespace Schemas {
      */
     ordering?: string;
     /**
-     * Filter by subscription resource: insight vs dashboard export.
+     * Filter by subscription resource: insight, dashboard export, or AI report.
      */
     resource_type?: SubscriptionsListResourceType;
     /**
@@ -49241,6 +49278,7 @@ export namespace Schemas {
 
 
     export const SubscriptionsListResourceType = {
+      AiPrompt: 'ai_prompt',
       Dashboard: 'dashboard',
       Insight: 'insight',
     } as const;
