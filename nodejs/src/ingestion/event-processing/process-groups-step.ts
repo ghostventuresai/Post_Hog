@@ -20,6 +20,7 @@ export interface ProcessGroupsStepInput {
     preparedEvent: PreIngestionEvent
     team: Team
     processPerson: boolean
+    historicalMigration: boolean
 }
 
 export type ProcessGroupsStepResult<TInput> = TInput
@@ -31,11 +32,11 @@ export function createProcessGroupsStep<TInput extends ProcessGroupsStepInput>(
     options: Pick<EventPipelineRunnerOptions, 'SKIP_UPDATE_EVENT_AND_PROPERTIES_STEP'>
 ): ProcessingStep<TInput, ProcessGroupsStepResult<TInput>> {
     return async function processGroupsStep(input: TInput) {
-        const { preparedEvent, team, processPerson } = input
+        const { preparedEvent, team, processPerson, historicalMigration } = input
 
         if (!options.SKIP_UPDATE_EVENT_AND_PROPERTIES_STEP) {
             try {
-                await updateGroupsAndFirstEvent(teamManager, groupTypeManager, team, preparedEvent)
+                await updateGroupsAndFirstEvent(teamManager, groupTypeManager, team, preparedEvent, historicalMigration)
             } catch (err) {
                 captureException(err, { tags: { team_id: team.id } })
                 logger.warn('⚠️', 'Failed to update groups and first event for event ', {
@@ -51,7 +52,8 @@ export function createProcessGroupsStep<TInput extends ProcessGroupsStepInput>(
                 team.id,
                 team.project_id,
                 preparedEvent.properties,
-                groupTypeManager
+                groupTypeManager,
+                historicalMigration
             )
 
             if (preparedEvent.event === '$groupidentify') {
@@ -61,7 +63,8 @@ export function createProcessGroupsStep<TInput extends ProcessGroupsStepInput>(
                     team.id,
                     team.project_id,
                     preparedEvent.properties,
-                    DateTime.fromISO(preparedEvent.timestamp)
+                    DateTime.fromISO(preparedEvent.timestamp),
+                    historicalMigration
                 )
             }
         }
@@ -74,7 +77,8 @@ async function updateGroupsAndFirstEvent(
     teamManager: TeamManager,
     groupTypeManager: GroupTypeManager,
     team: Team,
-    preparedEvent: PreIngestionEvent
+    preparedEvent: PreIngestionEvent,
+    historicalMigration: boolean
 ): Promise<void> {
     if (EVENTS_WITHOUT_EVENT_DEFINITION.includes(preparedEvent.event)) {
         return
@@ -85,7 +89,9 @@ async function updateGroupsAndFirstEvent(
     if (preparedEvent.event === '$groupidentify') {
         const { $group_type: groupType, $group_set: groupPropertiesToSet } = preparedEvent.properties
         if (groupType != null && groupPropertiesToSet != null) {
-            promises.push(groupTypeManager.fetchGroupTypeIndex(team.id, team.project_id, groupType))
+            promises.push(
+                groupTypeManager.fetchGroupTypeIndex(team.id, team.project_id, groupType, historicalMigration)
+            )
         }
     }
 
@@ -98,14 +104,15 @@ async function upsertGroup(
     teamId: TeamId,
     projectId: ProjectId,
     properties: Properties,
-    timestamp: DateTime
+    timestamp: DateTime,
+    historicalMigration: boolean
 ): Promise<void> {
     if (!properties['$group_type'] || !properties['$group_key']) {
         return
     }
 
     const { $group_type: groupType, $group_key: groupKey, $group_set: groupPropertiesToSet } = properties
-    const groupTypeIndex = await groupTypeManager.fetchGroupTypeIndex(teamId, projectId, groupType)
+    const groupTypeIndex = await groupTypeManager.fetchGroupTypeIndex(teamId, projectId, groupType, historicalMigration)
     if (groupTypeIndex !== null) {
         await groupStore.upsertGroup(
             teamId,

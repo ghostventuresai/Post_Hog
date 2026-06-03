@@ -58,7 +58,8 @@ export class GroupTypeManager {
     public async fetchGroupTypeIndex(
         teamId: TeamId,
         projectId: ProjectId,
-        groupType: string
+        groupType: string,
+        historicalMigration: boolean = false
     ): Promise<GroupTypeIndex | null> {
         const groupTypes = await this.fetchGroupTypes(projectId)
         if (groupType in groupTypes) {
@@ -79,7 +80,8 @@ export class GroupTypeManager {
             teamId,
             projectId,
             groupType,
-            nextAvailableIndex
+            nextAvailableIndex,
+            historicalMigration
         )
         if (groupTypeIndex !== null) {
             this.loader.markForRefresh(projectId.toString())
