@@ -37,6 +37,7 @@ import { DashboardLoadAction, dashboardLogic } from 'scenes/dashboard/dashboardL
 import { databaseTableListLogic } from 'scenes/data-management/database/databaseTableListLogic'
 import { parseQueryTablesAndColumns, queryUsesFiltersPlaceholder } from 'scenes/data-warehouse/editor/sql-utils'
 import { insightLogic } from 'scenes/insights/insightLogic'
+import { markInsightStale } from 'scenes/insights/staleInsights'
 import { insightsApi } from 'scenes/insights/utils/api'
 import { urls } from 'scenes/urls'
 import { userLogic } from 'scenes/userLogic'
@@ -1745,16 +1746,6 @@ export const sqlEditorLogic = kea<sqlEditorLogicType>([
                     })
                 }
                 insightsModel.findMounted()?.actions.renameInsightSuccess(savedInsight)
-                const loadedLogic = insightLogic.findMounted({
-                    dashboardItemId: values.editingInsight.short_id,
-                    dashboardId: undefined,
-                })
-                if (loadedLogic) {
-                    loadedLogic.actions.setInsight(savedInsight, {
-                        overrideQuery: true,
-                        fromPersistentApi: true,
-                    })
-                }
 
                 const dashboardId = values.dashboardId
                 if (dashboardId) {
@@ -1771,6 +1762,11 @@ export const sqlEditorLogic = kea<sqlEditorLogicType>([
                     actions.setDashboardId(null)
                     router.actions.push(urls.dashboard(dashboardId, savedInsight.short_id))
                 } else {
+                    // The query changed, so the server's cached result for this insight is now
+                    // stale. Mark it so the insight view forces a fresh recompute on load —
+                    // otherwise its GET (refresh=async) would render the pre-edit cached result.
+                    // (The dashboard branch above refreshes via loadDashboard instead.)
+                    markInsightStale(savedInsight.short_id)
                     lemonToast.info(
                         `You're now viewing ${savedInsight.name || savedInsight.derived_name || insightName || 'Untitled'}`
                     )
