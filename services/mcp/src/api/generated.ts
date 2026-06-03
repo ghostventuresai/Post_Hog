@@ -1268,6 +1268,7 @@ export namespace Schemas {
 
     export interface LogPropertyFilter {
       key: string;
+      keys?: string[] | null;
       label?: string | null;
       operator: PropertyOperator;
       type: LogPropertyFilterType;

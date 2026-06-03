@@ -274,6 +274,7 @@ export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnefiveVal
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesixLabelDefault = null
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesixTypeDefault = `error_tracking_issue`
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesixValueDefault = null
+export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesevenKeysDefault = null
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesevenLabelDefault = null
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesevenValueDefault = null
 export const endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOneeightLabelDefault = null
@@ -1294,6 +1295,11 @@ export const EndpointsRunCreateBody = /* @__PURE__ */ zod.object({
                                 }),
                                 zod.object({
                                     key: zod.string(),
+                                    keys: zod
+                                        .union([zod.array(zod.string()), zod.null()])
+                                        .default(
+                                            endpointsRunCreateBodyFiltersOverrideOnePropertiesOneItemOnesevenKeysDefault
+                                        ),
                                     label: zod
                                         .union([zod.string(), zod.null()])
                                         .default(
