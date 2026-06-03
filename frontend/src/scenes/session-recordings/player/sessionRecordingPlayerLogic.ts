@@ -1544,7 +1544,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
         syncSnapshotsWithPlayer: async (_, breakpoint) => {
             // On loading more of the recording, trigger some state changes
             const currentEvents = values.player?.replayer?.service.state.context.events ?? []
-            const eventsToAdd: eventWithTime[] = []
+            let eventsToAdd: eventWithTime[] = []
 
             if (values.isWaitingForPlayableFullSnapshot) {
                 actions.checkBufferingCompleted()
@@ -1554,7 +1554,10 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
 
             if (values.currentSegment?.windowId !== undefined) {
                 const allSnapshots = values.sessionPlayerData.snapshotsByWindowId[values.currentSegment?.windowId] ?? []
-                eventsToAdd.push(...findNewEvents(allSnapshots, currentEvents))
+                // Assign directly rather than `push(...findNewEvents(...))`: spreading an array with hundreds
+                // of thousands of elements into push arguments exceeds the JS engine's stack/argument limit
+                // and throws `RangeError: Maximum call stack size exceeded`.
+                eventsToAdd = findNewEvents(allSnapshots, currentEvents)
             }
 
             // If replayer isn't initialized, it will be initialized with the already loaded snapshots.
