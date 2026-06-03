@@ -171,6 +171,10 @@ from products.logs.backend.temporal import (
     ACTIVITIES as LOGS_ALERTING_ACTIVITIES,
     WORKFLOWS as LOGS_ALERTING_WORKFLOWS,
 )
+from products.logs.backend.temporal.retention_entitlements import (
+    ACTIVITIES as LOGS_RETENTION_ENTITLEMENTS_ACTIVITIES,
+    WORKFLOWS as LOGS_RETENTION_ENTITLEMENTS_WORKFLOWS,
+)
 from products.replay_vision.backend.temporal import (
     ACTIVITIES as REPLAY_VISION_ACTIVITIES,
     WORKFLOWS as REPLAY_VISION_WORKFLOWS,
@@ -228,6 +232,7 @@ _task_queue_specs = [
         + EXPERIMENTS_WORKFLOWS
         + CLEANUP_PROPDEFS_WORKFLOWS
         + INGESTION_ACCEPTANCE_TEST_WORKFLOWS
+        + LOGS_RETENTION_ENTITLEMENTS_WORKFLOWS
         + WAREHOUSE_SOURCES_QUEUE_PARTITION_WORKFLOWS,
         PROXY_SERVICE_ACTIVITIES
         + DELETE_PERSONS_ACTIVITIES
@@ -240,6 +245,7 @@ _task_queue_specs = [
         + EXPERIMENTS_ACTIVITIES
         + CLEANUP_PROPDEFS_ACTIVITIES
         + INGESTION_ACCEPTANCE_TEST_ACTIVITIES
+        + LOGS_RETENTION_ENTITLEMENTS_ACTIVITIES
         + WAREHOUSE_SOURCES_QUEUE_PARTITION_ACTIVITIES,
     ),
     (
@@ -357,7 +363,7 @@ _task_queue_specs = [
 _workflows: defaultdict[str, set[type[PostHogWorkflow]]] = defaultdict(set)
 _activities: defaultdict[str, set[typing.Callable[..., typing.Any]]] = defaultdict(set)
 for task_queue_name, workflows_for_queue, activities_for_queue in _task_queue_specs:
-    _workflows[task_queue_name].update(workflows_for_queue)  # type: ignore
+    _workflows[task_queue_name].update(workflows_for_queue)
     _activities[task_queue_name].update(activities_for_queue)
 
 WORKFLOWS_DICT = _workflows
