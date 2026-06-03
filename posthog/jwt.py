@@ -15,6 +15,7 @@ class PosthogJwtAudience(Enum):
     EXPORT_RENDERER = "posthog:export_renderer"
     LIVESTREAM = "posthog:livestream"
     SHARING_PASSWORD_PROTECTED = "posthog:sharing_password_protected"
+    INVITE_POSTPONE = "posthog:invite_postpone"
 
 
 def encode_jwt(payload: dict, expiry_delta: timedelta, audience: PosthogJwtAudience) -> str:

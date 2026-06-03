@@ -21,6 +21,7 @@ from posthog.api import (
     hog_flow,
     hog_flow_template,
     hog_function_template,
+    invite_postpone,
     playwright_setup,
     report,
     router,
@@ -250,6 +251,7 @@ urlpatterns = [
     path("api/environments/<int:team_id>/query/<str:query_uuid>/progress/", progress),
     path("api/environments/<int:team_id>/query/<str:query_uuid>/progress", progress),
     path("api/unsubscribe", unsubscribe.unsubscribe),
+    path("api/invite_postpone", invite_postpone.InvitePostponeView.as_view()),
     path("api/alerts/github", github.SecretAlert.as_view()),
     path(
         "api/legal_documents/pandadoc",
