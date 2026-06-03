@@ -46,6 +46,7 @@ export type SettingSectionId =
     | 'environment-secret-api-keys'
     | 'environment-surveys'
     | 'environment-web-analytics'
+    | 'environment-workflows'
     | 'environment-danger-zone'
     // Project (backward compat – remove when Environments are rolled out)
     | 'project-details'
@@ -240,6 +241,7 @@ export type SettingId =
     | 'web-analytics-pre-aggregated-tables'
     | 'web-revenue-events'
     | 'web-vitals-autocapture'
+    | 'workflows-engagement-events'
 
 type FeatureFlagKey = keyof typeof FEATURE_FLAGS
 
