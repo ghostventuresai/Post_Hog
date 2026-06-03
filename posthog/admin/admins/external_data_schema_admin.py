@@ -1,4 +1,6 @@
 import time
+import uuid
+from dataclasses import asdict
 from typing import Any, assert_never, get_args
 
 from django.conf import settings
@@ -12,7 +14,9 @@ from asgiref.sync import async_to_sync
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 
+from posthog.models.activity_logging.activity_log import Detail, log_activity
 from posthog.temporal.common.client import sync_connect
+from posthog.temporal.data_imports.compact_delta_table_job import CompactDeltaTableWorkflowInputs
 from posthog.temporal.data_imports.pipelines.pipeline.typings import PartitionFormat
 from posthog.temporal.utils import ExternalDataWorkflowInputs
 
@@ -77,8 +81,9 @@ class ExternalDataSchemaAdmin(admin.ModelAdmin):
     search_fields = ("id", "name", "team__name", "team__organization__name")
     autocomplete_fields = ("team",)
     raw_id_fields = ("table", "source")
-    readonly_fields = ("table", "source", "created_by")
+    readonly_fields = ("table", "source", "created_by", "delta_fragmentation_stats")
     ordering = ("-created_at",)
+    actions = ("trigger_compact_delta_table",)
 
     change_form_template = "admin/data_warehouse/externaldataschema/change_form.html"
 
@@ -406,3 +411,191 @@ class ExternalDataSchemaAdmin(admin.ModelAdmin):
     @admin.display(description="Source type")
     def source_type(self, schema: ExternalDataSchema):
         return schema.source.source_type
+
+    @admin.display(description="Delta fragmentation stats")
+    def delta_fragmentation_stats(self, schema: ExternalDataSchema):
+        """Compute total file count + per-partition average for the Delta target.
+
+        Hits S3 to list files, so it's only rendered on the change-detail page
+        (not the changelist) and tolerates failure — surfacing the error inline
+        rather than blowing up the admin page.
+        """
+        try:
+            stats = _get_delta_fragmentation_stats(schema)
+        except Exception as e:
+            return format_html("<em>error reading Delta files: {}</em>", str(e))
+
+        if stats is None:
+            return format_html("<em>no Delta target found</em>")
+
+        # Pre-format the float; `format_html` wraps args as SafeString and
+        # SafeString rejects numeric format codes like `{:.1f}` at format time.
+        fpp = f"{stats['files_per_partition_avg']:.1f}"
+        return format_html(
+            "total_files={} | partition_count={} | files_per_partition_avg={} | total_size_bytes={}",
+            stats["total_files"],
+            stats["partition_count"],
+            fpp,
+            stats["total_size_bytes"],
+        )
+
+    @admin.action(description="Compact + vacuum Delta target")
+    def trigger_compact_delta_table(self, request, queryset):
+        """Queue one Temporal workflow per selected schema. Compaction runs
+        asynchronously — the admin response returns immediately with a count
+        of workflows started."""
+        temporal = sync_connect()
+        started = 0
+        failed: list[tuple[str, str]] = []
+
+        for schema in queryset:
+            ok, err = queue_compact_for_schema(
+                temporal=temporal,
+                schema=schema,
+                request=request,
+                audit_item_id=schema.id,
+                audit_scope="ExternalDataSchema",
+                audit_name=schema.name,
+            )
+            if ok:
+                started += 1
+            else:
+                failed.append((str(schema.id), err or "unknown error"))
+
+        if started:
+            self.message_user(
+                request,
+                f"Queued compaction workflow for {started} schema(s). Check Temporal UI for progress.",
+                level=messages.INFO,
+            )
+        for schema_id, err in failed:
+            self.message_user(request, f"Failed to queue compaction for {schema_id}: {err}", level=messages.ERROR)
+
+
+def queue_compact_for_schema(
+    *,
+    temporal: Any,
+    schema: ExternalDataSchema,
+    request,
+    audit_item_id,
+    audit_scope: str,
+    audit_name: str,
+) -> tuple[bool, str | None]:
+    """Queue one compaction workflow for a schema and write an audit log row.
+
+    Shared helper so both ExternalDataSchemaAdmin and DataWarehouseTableAdmin
+    can trigger the same workflow without duplicating the start + audit
+    bookkeeping. The two admins exist as separate operator entry points
+    (schema list vs table list) — they only differ in the audit `scope` /
+    `item_id` they record, which is what makes the trigger surface
+    discoverable from either admin section.
+
+    Returns `(True, None)` on success, `(False, error_message)` on failure.
+    Audit log is only written on success — we don't want half-trigger noise
+    in the audit trail.
+    """
+    workflow_id = f"compact-delta-{schema.id}-{uuid.uuid4()}"
+    inputs = CompactDeltaTableWorkflowInputs(
+        team_id=schema.team_id,
+        schema_id=str(schema.id),
+    )
+    try:
+        _start_compact_workflow(temporal, asdict(inputs), workflow_id)
+    except Exception as e:
+        return False, str(e)
+
+    log_activity(
+        organization_id=schema.team.organization_id,
+        team_id=schema.team_id,
+        user=request.user,
+        was_impersonated=False,
+        item_id=audit_item_id,
+        scope=audit_scope,
+        activity="admin_compact_triggered",
+        detail=Detail(
+            name=audit_name,
+            short_id=str(audit_item_id),
+            type="admin_compact_delta",
+        ),
+    )
+    return True, None
+
+
+def _start_compact_workflow(temporal: Any, inputs_dict: dict, workflow_id: str) -> None:
+    """Sync wrapper around `temporal.start_workflow` for the compact-delta job.
+
+    `temporal.start_workflow` is heavily overloaded; running it through
+    `async_to_sync` erases the overloads and confuses mypy. Localising the
+    call here keeps a single typed-ignore in one place rather than scattered
+    through every admin action.
+    """
+    async_to_sync(temporal.start_workflow)(
+        "dwh-compact-delta-table",
+        inputs_dict,
+        id=workflow_id,
+        task_queue=settings.DATA_WAREHOUSE_TASK_QUEUE,
+    )
+
+
+def _get_delta_fragmentation_stats(schema: ExternalDataSchema) -> dict | None:
+    """Inspect the Delta target for one schema and return file/partition stats.
+
+    Returns None when no Delta target exists.
+
+    Implemented synchronously (no `async_to_sync`) because the admin runs under
+    an ASGI server in dev — calling `async_to_sync` from inside the already-
+    running event loop raises `RuntimeError: You cannot use AsyncToSync in the
+    same thread as an async event loop` and Django renders the field as `-`.
+    The DeltaTableHelper internals only `await` two sync operations: the DB
+    folder_path lookup and the deltalake constructor. We replicate them inline.
+    """
+    from django.conf import settings
+
+    import deltalake
+
+    from posthog.temporal.common.logger import get_logger
+    from posthog.temporal.data_imports.naming_convention import NamingConvention
+    from posthog.temporal.data_imports.pipelines.pipeline.delta_table_helper import DeltaTableHelper
+
+    job = ExternalDataJob.objects.filter(schema_id=schema.id, team_id=schema.team_id).order_by("-created_at").first()
+    if job is None:
+        return None
+
+    # Build the URI exactly like DeltaTableHelper._get_delta_table_uri does.
+    normalized_resource_name = NamingConvention.normalize_identifier(schema.name)
+    folder_path = job.folder_path()
+    delta_uri = f"{settings.BUCKET_URL}/{folder_path}/{normalized_resource_name}"
+
+    # Borrow DeltaTableHelper just for its credentials helper — that part is sync.
+    storage_options = DeltaTableHelper(
+        resource_name=schema.name, job=job, logger=get_logger(__name__)
+    )._get_credentials()
+
+    if not deltalake.DeltaTable.is_deltatable(table_uri=delta_uri, storage_options=storage_options):
+        return None
+
+    delta_table = deltalake.DeltaTable(table_uri=delta_uri, storage_options=storage_options)
+    file_uris = delta_table.file_uris()
+    total_files = len(file_uris)
+    partition_count = schema.partition_count or 1
+
+    total_size_bytes: int | None
+    try:
+        # delta-rs ships `get_add_actions(flatten=True)` typed as a pyarrow
+        # RecordBatch, but at runtime it's an arro3 RecordBatch (delta-rs uses
+        # arro3 internally). The two are not interchangeable — the arro3
+        # variant lacks `to_pydict()` / `to_pylist()` and isn't accepted by
+        # `pa.Table.from_batches`. Column-by-name access via `__getitem__`
+        # does work on both, so we go through that path.
+        add_actions: Any = delta_table.get_add_actions(flatten=True)
+        size_bytes_col = add_actions["size_bytes"].to_pylist()
+        total_size_bytes = sum(int(v or 0) for v in size_bytes_col)
+    except Exception:
+        total_size_bytes = None
+
+    return {
+        "total_files": total_files,
+        "partition_count": partition_count,
+        "files_per_partition_avg": total_files / partition_count,
+        "total_size_bytes": total_size_bytes if total_size_bytes is not None else "n/a",
+    }
