@@ -11,6 +11,9 @@ import { apiMutator } from '../../../../frontend/src/lib/api-orval-mutator'
 import type {
     NotebookApi,
     NotebookCollabSaveApi,
+    NotebookDebugConvertApi,
+    NotebookDebugConvertResponseApi,
+    NotebookMarkdownSaveApi,
     NotebooksListParams,
     PaginatedNotebookMinimalListApi,
     PatchedNotebookApi,
@@ -187,8 +190,8 @@ export const notebooksCollabSaveCreate = async (
     shortId: string,
     notebookCollabSaveApi: NotebookCollabSaveApi,
     options?: RequestInit
-): Promise<void> => {
-    return apiMutator<void>(getNotebooksCollabSaveCreateUrl(projectId, shortId), {
+): Promise<NotebookApi> => {
+    return apiMutator<NotebookApi>(getNotebooksCollabSaveCreateUrl(projectId, shortId), {
         ...options,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -211,6 +214,27 @@ export const notebooksCollabStreamRetrieve = async (
     return apiMutator<void>(getNotebooksCollabStreamRetrieveUrl(projectId, shortId), {
         ...options,
         method: 'GET',
+    })
+}
+
+export const getNotebooksDebugConvertCreateUrl = (projectId: string, shortId: string) => {
+    return `/api/projects/${projectId}/notebooks/${shortId}/debug/convert/`
+}
+
+/**
+ * The API for interacting with Notebooks. This feature is in early access and the API can have breaking changes without announcement.
+ */
+export const notebooksDebugConvertCreate = async (
+    projectId: string,
+    shortId: string,
+    notebookDebugConvertApi: NotebookDebugConvertApi,
+    options?: RequestInit
+): Promise<NotebookDebugConvertResponseApi> => {
+    return apiMutator<NotebookDebugConvertResponseApi>(getNotebooksDebugConvertCreateUrl(projectId, shortId), {
+        ...options,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        body: JSON.stringify(notebookDebugConvertApi),
     })
 }
 
@@ -394,6 +418,27 @@ export const notebooksKernelStopCreate = async (
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...options?.headers },
         body: JSON.stringify(notebookApi),
+    })
+}
+
+export const getNotebooksMarkdownSaveCreateUrl = (projectId: string, shortId: string) => {
+    return `/api/projects/${projectId}/notebooks/${shortId}/markdown/save/`
+}
+
+/**
+ * The API for interacting with Notebooks. This feature is in early access and the API can have breaking changes without announcement.
+ */
+export const notebooksMarkdownSaveCreate = async (
+    projectId: string,
+    shortId: string,
+    notebookMarkdownSaveApi: NotebookMarkdownSaveApi,
+    options?: RequestInit
+): Promise<NotebookApi> => {
+    return apiMutator<NotebookApi>(getNotebooksMarkdownSaveCreateUrl(projectId, shortId), {
+        ...options,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        body: JSON.stringify(notebookMarkdownSaveApi),
     })
 }
 

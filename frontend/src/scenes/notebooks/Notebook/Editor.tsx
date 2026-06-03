@@ -5,6 +5,7 @@ import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import TableOfContents, { getHierarchicalIndexes } from '@tiptap/extension-table-of-contents'
 import { Placeholder } from '@tiptap/extensions'
+import { Markdown } from '@tiptap/markdown'
 import { collab } from '@tiptap/pm/collab'
 import StarterKit, { StarterKitOptions } from '@tiptap/starter-kit'
 import { useActions, useValues } from 'kea'
@@ -177,6 +178,9 @@ export function Editor(): JSX.Element {
         NotebookTrailingParagraph,
         NotebookDefaultBlockOnEnter,
         RangeSelectedNodes,
+        Markdown.configure({
+            indentation: { style: 'space', size: 2 },
+        }),
     ]
 
     if (useCollab) {
@@ -211,6 +215,7 @@ export function Editor(): JSX.Element {
                     findCommentPosition: (markId: string) => findCommentPosition(editor, markId),
                     getAllCommentTexts: () => getAllCommentTexts(editor),
                     removeComment: (pos: number) => removeCommentMark(editor, pos),
+                    getMarkdown: () => editor.getMarkdown(),
                     getText: () => textContent(editor.state.doc),
                 }
 

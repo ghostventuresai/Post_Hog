@@ -20,12 +20,15 @@ export type NotebookListItemType = {
     short_id: string
     title?: string
     is_template?: boolean
+    content_storage?: NotebookContentStorage
     created_at: string
     created_by: UserBasicType | null
     last_modified_at?: string
     last_modified_by?: UserBasicType | null
     _create_in_folder?: string
 }
+
+export type NotebookContentStorage = 'json' | 'markdown'
 
 export type NotebookParentResource = {
     type: 'account'
@@ -35,6 +38,8 @@ export type NotebookParentResource = {
 export type NotebookType = NotebookListItemType &
     WithAccessControl & {
         content: JSONContent | null
+        content_storage?: NotebookContentStorage
+        markdown_content?: string | null
         version: number
         // used to power text-based search
         text_content?: string | null
@@ -165,6 +170,7 @@ export interface NotebookEditor extends RichContentEditorType {
     findCommentPosition: (markId: string) => number | null
     getAllCommentTexts: () => Record<string, string>
     removeComment: (pos: number) => void
+    getMarkdown: () => string
     getText: () => string
 }
 
