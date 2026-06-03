@@ -231,13 +231,51 @@ services:
             DYNAMIC_CONFIG_ENABLED: 'true'
 
     objectstorage:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        # SeaweedFS, S3-compatible, exposing the same objectstorage:19000 endpoint MinIO did.
+        # Run in default open-access mode (no -s3.config) so every legacy MinIO credential
+        # pair our test/CI/dev code uses just works — including object_storage_root_user
+        # and any/any. Identity-based auth (-s3.config) was tried first but triggers known
+        # SeaweedFS SigV4 signature failures and presigned-URL regressions; see
+        # seaweedfs/seaweedfs #6635 and discussion #3976.
+        image: chrislusf/seaweedfs:4.03
         restart: on-failure
-        environment:
-            MINIO_ROOT_USER: object_storage_root_user
-            MINIO_ROOT_PASSWORD: object_storage_root_password
-        entrypoint: sh
-        command: -c 'mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address ":19000" --console-address ":19001" /data' # create the 'posthog', 'ducklake-dev', and 'ai-blobs' buckets before starting the service
+        entrypoint:
+            - /bin/sh
+            - -c
+            # Background a create-and-verify loop and exec weed as PID 1 so SIGTERM
+            # reaches it directly. `weed shell` exits 0 as long as the master is
+            # reachable, even if individual `s3.bucket.create` commands fail (e.g. while
+            # the filer is still coming up), so we run create+list in one session and
+            # only touch the sentinel once `s3.bucket.list` reports every required bucket.
+            - |
+                (
+                    while true; do
+                        OUT=$$(printf 's3.bucket.create -name posthog\ns3.bucket.create -name ducklake-dev\ns3.bucket.create -name ai-blobs\ns3.bucket.list\n' \
+                                | /usr/bin/weed shell -master=localhost:19001 2>&1 || true)
+                        if echo "$$OUT" | grep -q posthog \
+                                && echo "$$OUT" | grep -q ducklake-dev \
+                                && echo "$$OUT" | grep -q ai-blobs; then
+                            touch /tmp/objectstorage-ready
+                            echo "Objectstorage SeaweedFS ready with required buckets"
+                            break
+                        fi
+                        sleep 1
+                    done
+                ) &
+                exec /usr/bin/weed "$$@"
+            - --
+        command: ['server', '-master.port=19001', '-s3', '-s3.port=19000', '-dir=/data']
+        # Without this, bin/wait-for-docker treats the container as ready the instant
+        # weed execs, which races the bucket bootstrap. The previous MinIO config
+        # `mkdir -p ... && minio server` created buckets BEFORE the server started, so
+        # there was no race; SeaweedFS creates them after startup via the background loop
+        # above, which `touch`es this sentinel once all buckets exist.
+        healthcheck:
+            test: ['CMD', 'test', '-f', '/tmp/objectstorage-ready']
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 10s
 
     objectstorage-azure:
         image: mcr.microsoft.com/azure-storage/azurite:3.35.0
@@ -720,6 +758,7 @@ services:
             - '/var/run/docker.sock:/var/run/docker.sock'
 
     seaweedfs:
+        # Default open-access mode; see the `objectstorage` service above for rationale.
         image: chrislusf/seaweedfs:4.03
         entrypoint:
             - /bin/sh
