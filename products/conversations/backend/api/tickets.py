@@ -12,6 +12,7 @@ from django.http import Http404
 from django.utils import timezone
 
 import structlog
+from django_display_ids.contrib.rest_framework import DisplayIDField
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from loginas.utils import is_impersonated_session
@@ -167,11 +168,16 @@ class TicketSerializer(TaggedItemSerializerMixin, serializers.ModelSerializer):
     assignee = TicketAssignmentSerializer(source="assignment", read_only=True)
     person = TicketPersonSerializer(read_only=True, allow_null=True)
     email_to = serializers.SerializerMethodField()
+    display_id = DisplayIDField(
+        help_text="Stripe-style human-readable identifier (e.g. `tkt_2aUyqjCzEIiEcYMKj7TZtw`). "
+        "Encodes the ticket UUID and can be used in place of it on detail endpoints."
+    )
 
     class Meta:
         model = Ticket
         fields = [
             "id",
+            "display_id",
             "ticket_number",
             "channel_source",
             "channel_detail",
@@ -207,6 +213,7 @@ class TicketSerializer(TaggedItemSerializerMixin, serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "display_id",
             "ticket_number",
             "channel_source",
             "channel_detail",
@@ -396,33 +403,18 @@ class TicketViewSet(TaggedItemViewSetMixin, TeamAndOrgViewSetMixin, viewsets.Mod
 
     def safely_get_object(self, queryset):
         """
-        Support looking up tickets by either UUID or ticket_number.
-        This allows URLs like /tickets/123/ (ticket_number) alongside /tickets/<uuid>/ for backward compatibility.
+        Resolve tickets by ticket_number (a Conversations-specific integer identifier), and defer
+        display ID and UUID lookups to the base resolver (TeamAndOrgViewSetMixin.safely_get_object,
+        enabled by Ticket.display_id_prefix). This is all the per-view code display IDs require.
         """
         lookup_value: str | None = self.kwargs.get("pk")
-
-        if not lookup_value:
-            raise Http404("Ticket not found")
-
-        # Try to parse as UUID first
-        try:
-            uuid.UUID(lookup_value)
-            # It's a valid UUID - look up by id
+        if lookup_value and lookup_value.isdigit():
             try:
-                return queryset.get(id=lookup_value)
+                return queryset.get(ticket_number=int(lookup_value))
             except Ticket.DoesNotExist:
                 raise Http404("Ticket not found")
-        except (ValueError, AttributeError):
-            # Not a UUID - try as ticket_number (integer)
-            try:
-                ticket_num = int(lookup_value)
-                try:
-                    return queryset.get(ticket_number=ticket_num)
-                except Ticket.DoesNotExist:
-                    raise Http404("Ticket not found")
-            except (ValueError, TypeError):
-                # Neither UUID nor integer
-                raise Http404("Ticket not found")
+
+        return super().safely_get_object(queryset)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
