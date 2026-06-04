@@ -66,6 +66,13 @@ Any_Source_Errors: dict[str, str | None] = {
     "Primary key required for incremental syncs": None,
     "The primary keys for this table are not unique": None,
     "Integration matching query does not exist": None,
+    # Raised by WebhookSourceManager — keep the key byte-equal to
+    # `WEBHOOK_DELIVERY_FAILING_ERROR` in sources/common/webhook_s3.py.
+    "Webhook delivery is failing": (
+        "Your webhook is failing to deliver — PostHog rejected recent deliveries. "
+        "Check your signing secret and webhook configuration in the source settings, "
+        "then re-enable syncing."
+    ),
 }
 
 
