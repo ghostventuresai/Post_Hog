@@ -1,6 +1,8 @@
 import uuid
+from typing import Any
 
 from django.db.models import QuerySet
+from django.http import StreamingHttpResponse
 
 import structlog
 import django_filters
@@ -8,11 +10,15 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_field, extend_schema_view
 from pydantic import ValidationError as PydanticValidationError
 from rest_framework import mixins, serializers, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.request import Request
 
 from posthog.api.routing import TeamAndOrgViewSetMixin
 from posthog.api.shared import UserBasicSerializer
+from posthog.renderers import ServerSentEventRenderer
 
+from products.replay_vision.backend.api.observation_progress import stream_observation_progress
 from products.replay_vision.backend.feature_flag import ReplayVisionEnabledPermission
 from products.replay_vision.backend.models.replay_observation import (
     ObservationStatus,
@@ -279,3 +285,20 @@ class SessionReplayObservationViewSet(ReplayObservationViewSet):
                 raise ValidationError("The `session_id` query parameter is required.")
             queryset = queryset.filter(session_id=session_id)
         return queryset
+
+    @extend_schema(exclude=True)
+    @action(detail=True, methods=["POST"], url_path="progress")
+    def progress(self, request: Request, **kwargs: Any) -> StreamingHttpResponse:
+        """Stream live progress (phase + rendering frame counts) for one in-flight observation as SSE.
+
+        `get_object()` applies the same RBAC scoping as retrieve, so this can't leak observations the caller
+        can't read. The stream self-terminates once the observation reaches a terminal state.
+        """
+        observation = self.get_object()
+        response = StreamingHttpResponse(
+            stream_observation_progress(observation),
+            content_type=ServerSentEventRenderer.media_type,
+        )
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
