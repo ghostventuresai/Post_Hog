@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 
 import { errorPropertiesLogic } from 'lib/components/Errors/errorPropertiesLogic'
 import { ErrorTrackingException } from 'lib/components/Errors/types'
-import { formatResolvedName, formatType } from 'lib/components/Errors/utils'
+import { formatFrameResolvedName, formatFrameSource, formatType } from 'lib/components/Errors/utils'
 
 export const useStacktraceDisplay = (): { ready: boolean; stacktraceText: string } => {
     const { exceptionList, stackFrameRecords } = useValues(errorPropertiesLogic)
@@ -24,8 +24,9 @@ function generateExceptionText(exception: ErrorTrackingException, stackFrameReco
 
     for (const frame of frames) {
         const inAppMarker = frame.in_app ? ' [IN-APP]' : ''
-        const resolvedName = formatResolvedName(frame)
-        result += `\n${inAppMarker}  File "${frame.source || 'Unknown Source'}"${frame.line ? `, line: ${frame.line}` : ''}${resolvedName ? `, in: ${resolvedName}` : ''}`
+        const resolvedName = formatFrameResolvedName(frame)
+        const source = formatFrameSource(frame)
+        result += `\n${inAppMarker}  ${source}${frame.line ? `, line: ${frame.line}` : ''}${resolvedName ? `, in: ${resolvedName}` : ''}`
 
         const frameRecord = stackFrameRecords[frame.raw_id]
         if (frameRecord?.context?.line?.line) {

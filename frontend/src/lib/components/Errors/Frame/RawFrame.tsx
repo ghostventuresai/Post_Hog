@@ -1,5 +1,5 @@
 import { ErrorTrackingStackFrame, ErrorTrackingStackFrameRecord } from '../types'
-import { formatResolvedName } from '../utils'
+import { formatFrameResolvedName, formatFrameSource } from '../utils'
 
 export function RawFrame({
     frame,
@@ -8,11 +8,13 @@ export function RawFrame({
     frame: ErrorTrackingStackFrame
     record?: ErrorTrackingStackFrameRecord
 }): JSX.Element {
-    const resolvedName = formatResolvedName(frame)
+    const resolvedName = formatFrameResolvedName(frame)
+    const source = formatFrameSource(frame)
     return (
         <>
             <p className="font-mono indent-[1rem] whitespace-no-wrap mb-0 line-clamp-1">
-                File "{frame.source || 'Unknown Source'}"{frame.line ? `, line: ${frame.line}` : ''}
+                {source}
+                {frame.line ? `, line: ${frame.line}` : ''}
                 {resolvedName ? `, in: ${resolvedName}` : ''}
             </p>
             {record && record.context?.line.line && (

@@ -230,9 +230,9 @@ export function formatFunctionName(
     frame: Pick<ErrorTrackingStackFrame, 'module' | 'resolved_name' | 'lang' | 'mangled_name'>
 ): string | undefined {
     const functionName: string | undefined = frame.resolved_name ?? frame.mangled_name ?? undefined
-    return match([frame.lang, frame.module, functionName])
-        .with(['java', P.string, P.string], ([_, module, functionName]) => `${module}.${functionName}`)
-        .with(['java', P.string, P.nullish], ([_, module]) => `${module}`)
+    return match([shouldQualifyFunctionName(frame.lang), frame.module, functionName])
+        .with([true, P.string, P.string], ([_, module, functionName]) => qualifyFunctionName(module, functionName))
+        .with([true, P.string, P.nullish], ([_, module]) => `${module}`)
         .otherwise(() => functionName)
 }
 
@@ -242,7 +242,41 @@ export function formatResolvedName(
     if (!frame.resolved_name || frame.resolved_name === '?') {
         return null
     }
-    return frame.module && frame.lang === 'java' ? `${frame.module}.${frame.resolved_name}` : frame.resolved_name
+    return frame.module && frame.lang === 'java'
+        ? qualifyFunctionName(frame.module, frame.resolved_name)
+        : frame.resolved_name
+}
+
+export function formatFrameSource(frame: Pick<ErrorTrackingStackFrame, 'source' | 'module'>): string {
+    if (frame.source) {
+        return `File "${frame.source}"`
+    }
+
+    if (frame.module) {
+        return `Module "${frame.module}"`
+    }
+
+    return 'Unknown Source'
+}
+
+export function formatFrameResolvedName(
+    frame: Pick<ErrorTrackingStackFrame, 'module' | 'resolved_name' | 'lang' | 'source'>
+): string | null {
+    const resolvedName = formatResolvedName(frame)
+
+    if (!frame.source && frame.module && resolvedName?.startsWith(`${frame.module}.`)) {
+        return resolvedName.slice(frame.module.length + 1)
+    }
+
+    return resolvedName
+}
+
+function shouldQualifyFunctionName(lang: string): boolean {
+    return lang === 'java' || lang === 'dotnet'
+}
+
+function qualifyFunctionName(module: string, functionName: string): string {
+    return functionName === module || functionName.startsWith(`${module}.`) ? functionName : `${module}.${functionName}`
 }
 
 export function formatType(exception: Pick<ErrorTrackingException, 'module' | 'type' | 'stacktrace'>): string {

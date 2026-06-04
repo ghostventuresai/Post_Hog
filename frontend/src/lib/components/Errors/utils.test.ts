@@ -1,5 +1,12 @@
 import { ExceptionAttributes } from './types'
-import { getExceptionAttributes, getExceptionList } from './utils'
+import {
+    formatFrameResolvedName,
+    formatFrameSource,
+    formatFunctionName,
+    formatResolvedName,
+    getExceptionAttributes,
+    getExceptionList,
+} from './utils'
 
 describe('Error Display', () => {
     it('can read sentry stack trace when $exception_list is not present', () => {
@@ -169,5 +176,33 @@ describe('Error Display', () => {
             ingestionErrors: undefined,
             handled: true,
         })
+    })
+
+    it('uses the module as a source fallback when a frame has no source path', () => {
+        expect(formatFrameSource({ source: 'Program.cs', module: 'NoPdbLib.Thrower' })).toEqual('File "Program.cs"')
+        expect(formatFrameSource({ source: null, module: 'NoPdbLib.Thrower' })).toEqual('Module "NoPdbLib.Thrower"')
+        expect(formatFrameSource({ source: null, module: null })).toEqual('Unknown Source')
+    })
+
+    it('qualifies dotnet function names with the frame module', () => {
+        expect(formatResolvedName({ lang: 'dotnet', module: 'NoPdbLib.Thrower', resolved_name: 'Boom' })).toEqual(
+            'Boom'
+        )
+        expect(
+            formatFrameResolvedName({
+                lang: 'dotnet',
+                module: 'NoPdbLib.Thrower',
+                source: null,
+                resolved_name: 'NoPdbLib.Thrower.Boom',
+            })
+        ).toEqual('Boom')
+        expect(
+            formatFunctionName({
+                lang: 'dotnet',
+                module: 'NoPdbLib.Thrower',
+                resolved_name: null,
+                mangled_name: 'Boom',
+            })
+        ).toEqual('NoPdbLib.Thrower.Boom')
     })
 })
